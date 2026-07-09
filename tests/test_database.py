@@ -72,44 +72,6 @@ def test_set_lesson_status_cancel_excludes_from_progress():
     assert db.get_lesson(lid)["status"] == "cancelled"  # запись не удалена
 
 
-def test_get_and_update_subject():
-    """Редактирование карточки предмета: название, план, группа; занятия сохраняются."""
-    db = make_db()
-    sid = db.add_subject("Математика", planned_lessons=10, group_name="ИС-11")
-    db.add_lesson(sid, "2026-09-01T09:00:00", status="held")
-
-    card = db.get_subject(sid)
-    assert card["name"] == "Математика"
-    assert card["planned"] == 10
-    assert card["group_name"] == "ИС-11"
-
-    db.update_subject(sid, "Высшая математика", 15, "ИС-12")
-    card = db.get_subject(sid)
-    assert card["name"] == "Высшая математика"
-    assert card["planned"] == 15
-    assert card["group_name"] == "ИС-12"
-
-    # Проведённое занятие осталось привязанным — учёт не потерян.
-    m = {s["id"]: s for s in db.list_subjects()}[sid]
-    assert m["held"] == 1
-    assert m["remaining"] == 14
-
-
-def test_update_subject_rejects_duplicate():
-    """Нельзя переименовать предмет так, чтобы совпал с другим (имя+группа)."""
-    db = make_db()
-    db.add_subject("Высшая математика", 5, "ИС-12")
-    sid2 = db.add_subject("Физика", 5, "ИС-12")
-    import pytest
-    with pytest.raises(ValueError):
-        db.update_subject(sid2, "Высшая математика", 5, "ИС-12")
-
-
-def test_get_subject_missing_returns_none():
-    db = make_db()
-    assert db.get_subject(999) is None
-
-
 def test_multiple_lessons_same_day_same_subject():
     """По одному предмету в день может быть несколько занятий (в т.ч. параллельных)."""
     db = make_db()

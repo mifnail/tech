@@ -76,7 +76,6 @@ class Database:
                 grade      INTEGER,                      -- NULL, если только «галочка»
                 UNIQUE(lesson_id, student_id)
             );
-
             """
         )
         self._conn.commit()
@@ -173,99 +172,6 @@ class Database:
             "SELECT id FROM subjects WHERE name = ? AND group_id = ?", (name, gid)
         ).fetchone()
         return int(row["id"])
-
-    def get_subject(self, subject_id: int) -> Optional[dict]:
-        """Карточка предмета: id, name, planned (план в занятиях), group_name. None, если нет."""
-        row = self._conn.execute(
-            """
-            SELECT sub.id, sub.name, sub.planned_lessons AS planned, g.name AS group_name
-            FROM subjects sub JOIN groups g ON g.id = sub.group_id
-            WHERE sub.id = ?
-            """,
-            (int(subject_id),),
-        ).fetchone()
-        return dict(row) if row else None
-
-    def update_subject(self, subject_id: int, name: str, planned_lessons: int,
-                       group_name: str) -> None:
-        """
-        Редактирует карточку предмета (название, план в занятиях, группа).
-        Группа при необходимости создаётся (неповторяемость). Существующие занятия
-        остаются привязанными по subject_id, поэтому учёт не теряется.
-        Бросает ValueError, если другой предмет с таким же названием и группой уже есть.
-        """
-        name = name.strip()
-        gid = self.add_group(group_name)
-        dup = self._conn.execute(
-            "SELECT id FROM subjects WHERE name = ? AND group_id = ? AND id != ?",
-            (name, gid, int(subject_id)),
-        ).fetchone()
-        if dup:
-            raise ValueError(f"Предмет «{name}» в группе «{group_name.strip()}» уже существует.")
-        self._conn.execute(
-            "UPDATE subjects SET name = ?, planned_lessons = ?, group_id = ? WHERE id = ?",
-            (name, int(planned_lessons), gid, int(subject_id)),
-        )
-        self._conn.commit()
-
-    def subject_plans_map(self) -> dict:
-        """
-        Возвращает {(имя_предмета, имя_группы): план_в_занятиях} по всем предметам.
-        Нужен генератору расписания (schedule_file.generate_occurrences), чтобы знать
-        сколько занятий генерировать (план+1) для каждого предмета.
-        """
-        rows = self._conn.execute(
-            """
-            SELECT sub.name AS subject, g.name AS grp, sub.planned_lessons AS plan
-            FROM subjects sub JOIN groups g ON g.id = sub.group_id
-            """
-        ).fetchall()
-        return {(r["subject"], r["grp"]): int(r["plan"]) for r in rows}
-
-    def find_subject_id(self, name: str, group_name: str) -> Optional[int]:
-        """Находит id предмета по названию и группе; None, если такого нет."""
-        row = self._conn.execute(
-            """
-            SELECT sub.id FROM subjects sub
-            JOIN groups g ON g.id = sub.group_id
-            WHERE sub.name = ? AND g.name = ?
-            """,
-            (name.strip(), group_name.strip()),
-        ).fetchone()
-        return int(row["id"]) if row else None
-
-    def replace_scheduled_lessons(self, occurrences: list[dict]) -> dict:
-        """
-        Загружает занятия из расписания (см. schedule_file.generate_occurrences).
-
-        Каждый occurrence — dict {subject, group, pair, held_at}. Логика:
-          * СНАЧАЛА удаляются все прежние занятия со статусом 'scheduled'
-            (проведённые 'held' и отменённые 'cancelled' НЕ трогаются — учёт сохраняется);
-          * затем вставляются новые занятия со статусом 'scheduled'.
-        Предметы из расписания, не заведённые в карточках, пропускаются и возвращаются
-        в списке 'skipped'.
-
-        Возвращает {"added": N, "removed": M, "skipped": [ "Предмет (Группа)", ... ]}.
-        """
-        cur = self._conn.cursor()
-        removed = cur.execute(
-            "DELETE FROM lessons WHERE status = 'scheduled'"
-        ).rowcount
-
-        added = 0
-        skipped = set()
-        for occ in occurrences:
-            sid = self.find_subject_id(occ["subject"], occ["group"])
-            if sid is None:
-                skipped.add(f"{occ['subject']} ({occ['group']})")
-                continue
-            cur.execute(
-                "INSERT INTO lessons(subject_id, held_at, status) VALUES (?, ?, 'scheduled')",
-                (sid, occ["held_at"]),
-            )
-            added += 1
-        self._conn.commit()
-        return {"added": added, "removed": removed, "skipped": sorted(skipped)}
 
     def list_subjects(self) -> list[dict]:
         """

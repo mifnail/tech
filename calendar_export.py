@@ -11,13 +11,11 @@ calendar_export.py — выгрузка занятий из БД в формат
 
 Формат held_at в БД: ISO-строка 'YYYY-MM-DDTHH:MM:SS' (время локальное).
 Длительность одного занятия по умолчанию — LESSON_DURATION_MIN минут.
-Одна «пара» = 1 час 45 минут (105 мин), пары считаются начиная с 09:00
-(см. schedule_file.py).
 """
 from datetime import datetime, timedelta
 
-# Длительность одного занятия («пары») для события календаря — 1 ч 45 мин.
-LESSON_DURATION_MIN = 105
+# Длительность одного занятия для события календаря (в минутах).
+LESSON_DURATION_MIN = 90
 
 
 def _parse_dt(value: str) -> datetime:

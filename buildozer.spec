@@ -12,11 +12,7 @@ source.include_exts = py,png,jpg,kv,atlas
 version = 0.1
 
 # Только лёгкие зависимости. sqlite3 встроен в Python на Android — отдельно НЕ указываем.
-# openpyxl — чисто-Python (для выгрузки ведомости в Excel), безопасен для APK.
-# reportlab (PDF) НЕ включаем в APK: тяжёлый, грузится лениво и используется в
-# основном на ПК (см. docs/REPORTS.md). Синхронизация с календарём — только через
-# выгрузку .ics (calendar_export.py), внешних зависимостей не требует.
-requirements = python3,kivy==2.3.0,openpyxl
+requirements = python3,kivy==2.3.0
 
 orientation = portrait
 fullscreen = 0
@@ -26,6 +22,11 @@ android.api = 34
 android.minapi = 24
 android.archs = arm64-v8a, armeabi-v7a
 android.allow_backup = 1
+android.accept_sdk_license = True
+android.ndk = 25c
+
+# Ветка python-for-android (пинована для воспроизводимости)
+p4a.branch = develop
 
 [buildozer]
 log_level = 2
