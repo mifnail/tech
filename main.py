@@ -145,10 +145,17 @@ class HomeScreen(Screen):
         # Кнопка перехода на ОТДЕЛЬНЫЙ экран расписания сегодняшнего дня.
         # Главный экран — СВОДНЫЙ (прогресс по всем занятиям предмета); экран
         # «Сегодня» — детальный список занятий за сегодня (в т.ч. параллельных).
-        today_btn = Button(text="📅 Расписание на сегодня", size_hint_y=None, height=44,
+        nav = BoxLayout(orientation="horizontal", size_hint_y=None, height=44,
+                        spacing=8, padding=(8, 0))
+        today_btn = Button(text="📅 Расписание на сегодня",
                            background_color=(0.35, 0.55, 0.85, 1))
         today_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "today"))
-        root.add_widget(today_btn)
+        grades_btn = Button(text="📊 Ведомость",
+                            background_color=(0.55, 0.45, 0.75, 1))
+        grades_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "gradebook"))
+        nav.add_widget(today_btn)
+        nav.add_widget(grades_btn)
+        root.add_widget(nav)
 
         db = get_db()
         subjects = db.list_subjects()
@@ -829,6 +836,205 @@ class TodayScheduleScreen(Screen):
               size_hint=(0.9, 0.4)).open()
 
 
+# ------------------------------------------------------- ведомость (v0.5)
+class GradeBarChart(BoxLayout):
+    """
+    Простая СТОЛБЧАТАЯ диаграмма среднего балла по студентам средствами Kivy `canvas`
+    (без matplotlib). Высота столбца пропорциональна среднему баллу по шкале 2..5.
+    Рисуется в canvas.after поверх виджета; подписи (ФИО/балл) — отдельными Label.
+    """
+
+    # Цвета столбцов по «зоне» среднего балла (наглядность, без внешних библиотек).
+    def __init__(self, data: list[dict], **kwargs):
+        super().__init__(orientation="vertical", size_hint_y=None, height=220, **kwargs)
+        # data — только студенты, у которых есть средний балл (avg_grade не None).
+        self._data = [d for d in data if d.get("avg_grade") is not None]
+        with self.canvas.before:
+            Color(1, 1, 1, 1)
+            self._bg = Rectangle(pos=self.pos, size=self.size)
+        self.bind(pos=self._redraw, size=self._redraw)
+
+    def _redraw(self, *_):
+        self._bg.pos = self.pos
+        self._bg.size = self.size
+        self.canvas.after.clear()
+        # Удаляем прежние подписи (пересоздаём при каждом перерисовывании).
+        self.clear_widgets()
+        if not self._data:
+            self.add_widget(Label(text="Нет выставленных оценок для диаграммы.",
+                                  color=(0.5, 0.5, 0.5, 1)))
+            return
+
+        n = len(self._data)
+        pad = 10
+        gap = 8
+        base_y = self.y + 34            # место снизу под подписи ФИО
+        top_pad = 24                    # место сверху под цифру балла
+        avail_w = self.width - 2 * pad
+        avail_h = self.height - 34 - top_pad
+        bar_w = max(8.0, (avail_w - gap * (n - 1)) / n)
+
+        # Шкала: 2..5 → 0..1 (минимальная оценка 2 = «дно» столбца).
+        def norm(v):
+            return max(0.0, min(1.0, (v - 2.0) / 3.0))
+
+        grade_color = {
+            5: (0.20, 0.60, 0.25),   # зелёный
+            4: (0.30, 0.55, 0.85),   # синий
+            3: (0.85, 0.65, 0.20),   # жёлто-оранжевый
+            2: (0.80, 0.25, 0.25),   # красный
+        }
+        with self.canvas.after:
+            for i, d in enumerate(self._data):
+                avg = float(d["avg_grade"])
+                x = self.x + pad + i * (bar_w + gap)
+                h = avail_h * norm(avg)
+                r, g, b = grade_color.get(int(round(avg)), (0.4, 0.4, 0.4))
+                Color(r, g, b, 1)
+                Rectangle(pos=(x, base_y), size=(bar_w, h))
+                # Подпись балла над столбцом.
+                lbl = Label(text=f"{avg:.2f}", font_size=11, color=(0.1, 0.1, 0.1, 1),
+                            size_hint=(None, None), size=(bar_w + gap, 20),
+                            halign="center", valign="middle")
+                lbl.pos = (x - gap / 2, base_y + h + 2)
+                self.add_widget(lbl)
+                # Короткая подпись ФИО под столбцом (фамилия).
+                short = d["name"].split()[0] if d["name"] else ""
+                name_lbl = Label(text=short, font_size=10, color=(0.3, 0.3, 0.3, 1),
+                                 size_hint=(None, None), size=(bar_w + gap, 30),
+                                 halign="center", valign="top")
+                name_lbl.text_size = (bar_w + gap, 30)
+                name_lbl.pos = (x - gap / 2, self.y)
+                self.add_widget(name_lbl)
+
+
+class GradebookScreen(Screen):
+    """
+    ВЕДОМОСТЬ УСПЕВАЕМОСТИ (v0.5).
+
+    Сверху — выбор предмета (Spinner). Далее:
+      * СВОДКА по занятиям: план / проведено / осталось (только 'held' идёт в счёт);
+      * ДИАГРАММА среднего балла по студентам (Kivy canvas, без matplotlib);
+      * ПОФАМИЛЬНО: таблица со средним арифметическим баллом, числом оценок и
+        посещаемостью (присут./отсут. на проведённых занятиях).
+    """
+
+    def on_pre_enter(self, *_):
+        self.clear_widgets()
+        self._root = BoxLayout(orientation="vertical")
+
+        header = BoxLayout(orientation="horizontal", size_hint_y=None, height=52,
+                           padding=(12, 6), spacing=8)
+        back = Button(text="← Назад", size_hint_x=None, width=90)
+        back.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
+        header.add_widget(back)
+        header.add_widget(Label(text="[b]Ведомость[/b]", markup=True, font_size=20,
+                                color=(0.1, 0.1, 0.1, 1)))
+        self._root.add_widget(header)
+
+        db = get_db()
+        subjects = db.list_subjects()
+        db.close()
+        self._subjects = subjects
+        self._label_to_id = {
+            f"{s['name']} ({s['group_name']})": s["id"] for s in subjects
+        }
+
+        if not subjects:
+            self._root.add_widget(Label(
+                text="Предметов пока нет.\nДобавьте предмет и проведите занятия.",
+                halign="center", valign="middle", color=(0.5, 0.5, 0.5, 1),
+            ))
+            self.add_widget(self._root)
+            return
+
+        labels = list(self._label_to_id.keys())
+        self._spinner = Spinner(text=labels[0], values=labels,
+                                size_hint_y=None, height=44)
+        self._spinner.bind(text=lambda *_: self._render_subject())
+        self._root.add_widget(self._spinner)
+
+        # Тело ведомости (перестраивается при смене предмета).
+        self._content = BoxLayout(orientation="vertical")
+        self._root.add_widget(self._content)
+        self.add_widget(self._root)
+
+        self._render_subject()
+
+    def _render_subject(self, *_):
+        self._content.clear_widgets()
+        subject_id = self._label_to_id.get(self._spinner.text)
+        if subject_id is None:
+            return
+
+        db = get_db()
+        summary = db.subject_summary(subject_id)
+        gradebook = db.subject_gradebook(subject_id)
+        db.close()
+
+        # --- Сводка по занятиям (план/проведено/осталось) ---
+        if summary:
+            self._content.add_widget(Label(
+                text=f"Занятия: план [b]{summary['planned']}[/b]  •  "
+                     f"проведено [b]{summary['held']}[/b]  •  "
+                     f"осталось [b]{summary['remaining']}[/b]",
+                markup=True, size_hint_y=None, height=30, color=(0.15, 0.15, 0.15, 1),
+            ))
+
+        # --- Средний балл по предмету в целом ---
+        all_avgs = [d["avg_grade"] for d in gradebook if d["avg_grade"] is not None]
+        overall = round(sum(all_avgs) / len(all_avgs), 2) if all_avgs else None
+        self._content.add_widget(Label(
+            text=(f"Средний балл по предмету: [b]{overall}[/b]" if overall is not None
+                  else "Средний балл по предмету: —"),
+            markup=True, size_hint_y=None, height=26, color=(0.15, 0.15, 0.15, 1),
+        ))
+
+        # --- Диаграмма (Kivy canvas) ---
+        self._content.add_widget(Label(text="[b]Средний балл по студентам[/b]",
+                                       markup=True, size_hint_y=None, height=24,
+                                       color=(0.2, 0.2, 0.2, 1)))
+        self._content.add_widget(GradeBarChart(gradebook))
+
+        # --- Пофамильная таблица ---
+        self._content.add_widget(Label(text="[b]Пофамильно[/b]", markup=True,
+                                       size_hint_y=None, height=24,
+                                       color=(0.2, 0.2, 0.2, 1)))
+        # Заголовок таблицы.
+        head = BoxLayout(orientation="horizontal", size_hint_y=None, height=26,
+                         padding=(6, 0))
+        for text, w in (("ФИО", 0.5), ("Ср. балл", 0.2),
+                        ("Оценок", 0.15), ("Прис./Отс.", 0.15)):
+            head.add_widget(Label(text=f"[b]{text}[/b]", markup=True, size_hint_x=w,
+                                  color=(0.3, 0.3, 0.3, 1), font_size=12))
+        self._content.add_widget(head)
+
+        scroll = ScrollView()
+        box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=1)
+        box.bind(minimum_height=box.setter("height"))
+        for d in gradebook:
+            box.add_widget(self._student_row(d))
+        scroll.add_widget(box)
+        self._content.add_widget(scroll)
+
+    def _student_row(self, d: dict):
+        row = BoxLayout(orientation="horizontal", size_hint_y=None, height=32,
+                        padding=(6, 0))
+        avg_text = f"{d['avg_grade']:.2f}" if d["avg_grade"] is not None else "—"
+        cells = (
+            (d["name"], 0.5, "left"),
+            (avg_text, 0.2, "center"),
+            (str(d["grades_count"]), 0.15, "center"),
+            (f"{d['present_count']}/{d['absent_count']}", 0.15, "center"),
+        )
+        for text, w, align in cells:
+            lbl = Label(text=text, size_hint_x=w, color=(0.15, 0.15, 0.15, 1),
+                        halign=align, valign="middle", font_size=13)
+            lbl.bind(size=lambda i, v: setattr(i, "text_size", v))
+            row.add_widget(lbl)
+        return row
+
+
 # ------------------------------------------------------------------------- app
 class LessonTrackerApp(App):
     title = "Учёт занятий"
@@ -840,6 +1046,7 @@ class LessonTrackerApp(App):
         self.sm.add_widget(AddSubjectScreen(name="add_subject"))
         self.sm.add_widget(StudentsScreen(name="students"))
         self.sm.add_widget(TodayScheduleScreen(name="today"))
+        self.sm.add_widget(GradebookScreen(name="gradebook"))
         self.sm.add_widget(LessonScreen(name="lesson"))
 
         # Напоминание раз в час, пока приложение живо/в фоне (см. примечание в шапке файла).

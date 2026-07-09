@@ -199,6 +199,93 @@ class Database:
             result.append(d)
         return result
 
+    # -------------------------------------------------------------- gradebook
+    def subject_summary(self, subject_id: int) -> Optional[dict]:
+        """
+        Сводка по ОДНОМУ предмету: план / проведено / осталось (в ЗАНЯТИЯХ).
+        Проведённые — только занятия со статусом 'held'.
+        """
+        row = self._conn.execute(
+            """
+            SELECT sub.id, sub.name, g.name AS group_name,
+                   sub.planned_lessons AS planned,
+                   (SELECT COUNT(1) FROM lessons l
+                      WHERE l.subject_id = sub.id AND l.status = 'held') AS held
+            FROM subjects sub
+            JOIN groups g ON g.id = sub.group_id
+            WHERE sub.id = ?
+            """,
+            (int(subject_id),),
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["remaining"] = max(0, int(d["planned"]) - int(d["held"]))
+        return d
+
+    def subject_gradebook(self, subject_id: int) -> list[dict]:
+        """
+        ВЕДОМОСТЬ УСПЕВАЕМОСТИ по предмету — ПОФАМИЛЬНО. Для каждого студента группы:
+          name          — ФИО,
+          avg_grade     — среднеарифметический балл по его оценкам (None, если оценок нет),
+          grades_count  — сколько оценок выставлено,
+          present_count — на скольких проведённых занятиях отмечен как присутствующий,
+          absent_count  — на скольких проведённых занятиях отмечен отсутствующим.
+
+        Учитываются ТОЛЬКО занятия со статусом 'held' (отменённые/по расписанию — нет).
+        Список отсортирован по ФИО. Средний балл считаем в Python (по «сырым» оценкам),
+        чтобы избежать различий округления между СУБД.
+        """
+        # Группа предмета.
+        subj = self._conn.execute(
+            "SELECT sub.id, g.name AS group_name FROM subjects sub "
+            "JOIN groups g ON g.id = sub.group_id WHERE sub.id = ?",
+            (int(subject_id),),
+        ).fetchone()
+        if not subj:
+            return []
+        students = self.list_students(subj["group_name"])
+
+        # Все отметки по held-занятиям этого предмета: student_id, present, grade.
+        rows = self._conn.execute(
+            """
+            SELECT a.student_id, a.present, a.grade
+            FROM attendance a
+            JOIN lessons l ON l.id = a.lesson_id
+            WHERE l.subject_id = ? AND l.status = 'held'
+            """,
+            (int(subject_id),),
+        ).fetchall()
+
+        grades_by_student: dict[int, list[int]] = {}
+        present_by_student: dict[int, int] = {}
+        absent_by_student: dict[int, int] = {}
+        for r in rows:
+            sid = int(r["student_id"])
+            if r["present"]:
+                present_by_student[sid] = present_by_student.get(sid, 0) + 1
+            else:
+                absent_by_student[sid] = absent_by_student.get(sid, 0) + 1
+            if r["grade"] is not None:
+                grades_by_student.setdefault(sid, []).append(int(r["grade"]))
+
+        result = []
+        for st in students:
+            sid = st["id"]
+            grades = grades_by_student.get(sid, [])
+            avg = round(sum(grades) / len(grades), 2) if grades else None
+            result.append(
+                {
+                    "student_id": sid,
+                    "name": st["name"],
+                    "avg_grade": avg,
+                    "grades_count": len(grades),
+                    "present_count": present_by_student.get(sid, 0),
+                    "absent_count": absent_by_student.get(sid, 0),
+                }
+            )
+        return result
+
     # ----------------------------------------------------------------- lessons
     #
     # Статусы занятия:
