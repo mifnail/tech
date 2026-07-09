@@ -12,7 +12,7 @@ source.include_exts = py,png,jpg,kv,atlas
 version = 0.1
 
 # Только лёгкие зависимости. sqlite3 встроен в Python на Android — отдельно НЕ указываем.
-requirements = python3,kivy==2.3.0
+requirements = python3,kivy==2.3.1,openpyxl
 
 orientation = portrait
 fullscreen = 0
@@ -20,13 +20,13 @@ fullscreen = 0
 # Android
 android.api = 34
 android.minapi = 24
-android.archs = arm64-v8a, armeabi-v7a
+android.archs = arm64-v8a
 android.allow_backup = 1
 android.accept_sdk_license = True
 android.ndk = 25c
 
-# Ветка python-for-android (пинована для воспроизводимости)
-p4a.branch = develop
+# Ветка python-for-android — не указана, buildozer использует стабильную по умолчанию
+# (было p4a.branch = develop — убрано, т.к. develop нестабилен)
 
 [buildozer]
 log_level = 2

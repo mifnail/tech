@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test deps
-        run: pip install pytest
+        run: pip install pytest openpyxl reportlab
       - name: Run tests
         run: pytest -q
 
@@ -50,13 +50,19 @@ jobs:
           path: ~/.buildozer
           key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
 
-      - name: Build with Buildozer
+      - name: Install Buildozer and Cython
         run: |
-          pip install --user buildozer
+          # Swap: избежать OOM при компиляции Kivy под Android
+          sudo fallocate -l 4G /swapfile 2>/dev/null || true
+          sudo chmod 600 /swapfile 2>/dev/null || true
+          sudo mkswap /swapfile 2>/dev/null || true
+          sudo swapon /swapfile 2>/dev/null || true
+          free -h
+          pip install --user buildozer==1.6.0 cython
           export PATH="$HOME/.local/bin:$PATH"
           echo "--- Tool versions ---"
           java -version 2>&1 || true
-          which buildozer || true
+          buildozer --version 2>&1 || true
           echo "--- Build ---"
           buildozer -v android debug 2>&1
 
