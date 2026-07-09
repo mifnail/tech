@@ -55,11 +55,16 @@ class Database:
                 UNIQUE(name, group_id)
             );
 
-            -- Проведённые занятия (факт).
+            -- Занятия. У КАЖДОГО занятия есть СТАТУС:
+            --   'scheduled' — по расписанию, ещё не проведено;
+            --   'held'      — проведено (ТОЛЬКО такие идут в прогресс/учёт);
+            --   'cancelled' — отменено (остаётся в БД как «не проведено», в учёт НЕ идёт).
+            -- По одному предмету в день может быть НЕСКОЛЬКО занятий (в т.ч. параллельных).
             CREATE TABLE IF NOT EXISTS lessons (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
-                held_at    TEXT NOT NULL        -- ISO-дата/время проведения
+                held_at    TEXT NOT NULL,       -- ISO-дата/время занятия
+                status     TEXT NOT NULL DEFAULT 'held'  -- scheduled | held | cancelled
             );
 
             -- Отметки: присутствие + опциональная оценка.
@@ -74,6 +79,23 @@ class Database:
             """
         )
         self._conn.commit()
+        self._migrate_add_lesson_status()
+
+    def _migrate_add_lesson_status(self) -> None:
+        """
+        Миграция для уже существующих lessons.db (созданных до появления статуса):
+        добавляет колонку lessons.status со значением по умолчанию 'held', чтобы
+        ранее проведённые занятия остались учтёнными. Идемпотентно.
+        """
+        cols = [
+            r["name"]
+            for r in self._conn.execute("PRAGMA table_info(lessons)").fetchall()
+        ]
+        if "status" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lessons ADD COLUMN status TEXT NOT NULL DEFAULT 'held'"
+            )
+            self._conn.commit()
 
     # ------------------------------------------------------------------ groups
     def add_group(self, name: str) -> int:
@@ -163,7 +185,8 @@ class Database:
                 sub.name,
                 g.name AS group_name,
                 sub.planned_lessons AS planned,
-                (SELECT COUNT(1) FROM lessons l WHERE l.subject_id = sub.id) AS held
+                (SELECT COUNT(1) FROM lessons l
+                   WHERE l.subject_id = sub.id AND l.status = 'held') AS held
             FROM subjects sub
             JOIN groups g ON g.id = sub.group_id
             ORDER BY sub.name
@@ -177,38 +200,143 @@ class Database:
         return result
 
     # ----------------------------------------------------------------- lessons
-    def add_lesson(self, subject_id: int, held_at: str) -> int:
-        """Фиксирует факт проведённого занятия (безусловное создание новой записи)."""
+    #
+    # Статусы занятия:
+    #   'scheduled' — по расписанию, ещё не проведено;
+    #   'held'      — проведено (ТОЛЬКО такие идут в прогресс/учёт);
+    #   'cancelled' — отменено (в БД остаётся «не проведено», в учёт НЕ идёт).
+    LESSON_STATUSES = ("scheduled", "held", "cancelled")
+
+    def add_lesson(self, subject_id: int, held_at: str, status: str = "held") -> int:
+        """
+        Создаёт занятие с указанным статусом (по умолчанию 'held' — совместимость с
+        прежним кодом/seed). Для занятия по расписанию используйте status='scheduled',
+        для внеочередного проведённого — 'held'.
+        """
+        if status not in self.LESSON_STATUSES:
+            raise ValueError(f"Недопустимый статус занятия: {status}")
         cur = self._conn.cursor()
         cur.execute(
-            "INSERT INTO lessons(subject_id, held_at) VALUES (?, ?)",
-            (int(subject_id), held_at),
+            "INSERT INTO lessons(subject_id, held_at, status) VALUES (?, ?, ?)",
+            (int(subject_id), held_at, status),
         )
         self._conn.commit()
         return int(cur.lastrowid)
 
-    def get_or_create_lesson(self, subject_id: int, date_str: str, held_at: str) -> int:
-        """
-        Возвращает id занятия для предмета за указанную ДАТУ (date_str = 'YYYY-MM-DD'),
-        создавая его при отсутствии. Именно это защищает от:
-          * дублирования занятий (повторный вход в отметку не плодит новые записи и
-            не завышает счётчик проведённых занятий);
-          * потери введённых отметок (по этому id далее подтягиваются сохранённые оценки).
-        Сопоставление по дате: date(held_at) сравнивается с date_str.
-        """
-        cur = self._conn.cursor()
-        row = cur.execute(
-            "SELECT id FROM lessons WHERE subject_id = ? AND date(held_at) = ?",
-            (int(subject_id), date_str),
-        ).fetchone()
-        if row:
-            return int(row["id"])
-        cur.execute(
-            "INSERT INTO lessons(subject_id, held_at) VALUES (?, ?)",
-            (int(subject_id), held_at),
+    def set_lesson_status(self, lesson_id: int, status: str) -> None:
+        """Меняет статус занятия (scheduled/held/cancelled). Отмена не удаляет запись."""
+        if status not in self.LESSON_STATUSES:
+            raise ValueError(f"Недопустимый статус занятия: {status}")
+        self._conn.execute(
+            "UPDATE lessons SET status = ? WHERE id = ?", (status, int(lesson_id))
         )
         self._conn.commit()
-        return int(cur.lastrowid)
+
+    def change_lesson_subject(self, lesson_id: int, subject_id: int) -> None:
+        """
+        Переносит занятие на другой предмет («заменить на другое»). Отметки
+        посещаемости очищаются, т.к. состав группы у нового предмета может отличаться.
+        """
+        self._conn.execute(
+            "DELETE FROM attendance WHERE lesson_id = ?", (int(lesson_id),)
+        )
+        self._conn.execute(
+            "UPDATE lessons SET subject_id = ? WHERE id = ?",
+            (int(subject_id), int(lesson_id)),
+        )
+        self._conn.commit()
+
+    def get_lesson(self, lesson_id: int) -> Optional[dict]:
+        """Одно занятие с данными предмета и группы (для экрана отметки/расписания)."""
+        row = self._conn.execute(
+            """
+            SELECT l.id, l.subject_id, l.held_at, l.status,
+                   sub.name AS subject_name, g.name AS group_name
+            FROM lessons l
+            JOIN subjects sub ON sub.id = l.subject_id
+            JOIN groups g ON g.id = sub.group_id
+            WHERE l.id = ?
+            """,
+            (int(lesson_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_schedule_for_date(self, date_str: str) -> list[dict]:
+        """
+        РАСПИСАНИЕ НА ДЕНЬ: все занятия ВСЕХ предметов за дату (date_str='YYYY-MM-DD'),
+        независимо от статуса — это отдельный от сводного главного экран.
+        По одному предмету в день может быть НЕСКОЛЬКО занятий (в т.ч. параллельных).
+        Для каждого — статус и счётчики отметок. Отсортировано по времени.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT
+                l.id,
+                l.subject_id,
+                l.held_at,
+                l.status,
+                sub.name AS subject_name,
+                g.name   AS group_name,
+                (SELECT COUNT(1) FROM attendance a
+                   WHERE a.lesson_id = l.id AND a.present = 1) AS present_count,
+                (SELECT COUNT(1) FROM attendance a
+                   WHERE a.lesson_id = l.id AND a.grade IS NOT NULL) AS graded_count
+            FROM lessons l
+            JOIN subjects sub ON sub.id = l.subject_id
+            JOIN groups g ON g.id = sub.group_id
+            WHERE date(l.held_at) = ?
+            ORDER BY l.held_at
+            """,
+            (date_str,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_lessons_by_date(self, subject_id: int, date_str: str) -> list[dict]:
+        """
+        Список занятий ОДНОГО предмета за дату (date_str='YYYY-MM-DD') — со статусом
+        и счётчиками отметок. Отсортировано по времени проведения.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT
+                l.id,
+                l.held_at,
+                l.status,
+                (SELECT COUNT(1) FROM attendance a
+                   WHERE a.lesson_id = l.id AND a.present = 1) AS present_count,
+                (SELECT COUNT(1) FROM attendance a
+                   WHERE a.lesson_id = l.id AND a.grade IS NOT NULL) AS graded_count
+            FROM lessons l
+            WHERE l.subject_id = ? AND date(l.held_at) = ?
+            ORDER BY l.held_at
+            """,
+            (int(subject_id), date_str),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_lessons_for_calendar(self) -> list[dict]:
+        """
+        Данные для выгрузки в календарь (Google/Яндекс через .ics): все занятия, КРОМЕ
+        отменённых, с временем начала и названием предмета/группой. Экспорт формирует
+        calendar_export.py из этих строк.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT l.id, l.held_at, l.status,
+                   sub.name AS subject_name, g.name AS group_name
+            FROM lessons l
+            JOIN subjects sub ON sub.id = l.subject_id
+            JOIN groups g ON g.id = sub.group_id
+            WHERE l.status != 'cancelled'
+            ORDER BY l.held_at
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_lesson(self, lesson_id: int) -> None:
+        """Удаляет занятие (и каскадно его отметки) — например, случайно созданное."""
+        self._conn.execute("DELETE FROM lessons WHERE id = ?", (int(lesson_id),))
+        self._conn.commit()
 
     def get_attendance(self, lesson_id: int) -> dict:
         """

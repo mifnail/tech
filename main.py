@@ -137,10 +137,18 @@ class HomeScreen(Screen):
                            padding=(12, 6), spacing=8)
         header.add_widget(Label(text="[b]Мои предметы[/b]", markup=True, font_size=20,
                                 color=(0.1, 0.1, 0.1, 1), halign="left", valign="middle"))
-        add_btn = Button(text="+ Предмет", size_hint_x=None, width=120)
+        add_btn = Button(text="+ Предмет", size_hint_x=None, width=110)
         add_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "add_subject"))
         header.add_widget(add_btn)
         root.add_widget(header)
+
+        # Кнопка перехода на ОТДЕЛЬНЫЙ экран расписания сегодняшнего дня.
+        # Главный экран — СВОДНЫЙ (прогресс по всем занятиям предмета); экран
+        # «Сегодня» — детальный список занятий за сегодня (в т.ч. параллельных).
+        today_btn = Button(text="📅 Расписание на сегодня", size_hint_y=None, height=44,
+                           background_color=(0.35, 0.55, 0.85, 1))
+        today_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "today"))
+        root.add_widget(today_btn)
 
         db = get_db()
         subjects = db.list_subjects()
@@ -164,10 +172,12 @@ class HomeScreen(Screen):
         self.add_widget(root)
 
     def _open_lesson(self, subject: dict):
-        """Открыть экран проведения занятия для выбранного предмета."""
-        lesson_screen = self.manager.get_screen("lesson")
-        lesson_screen.subject = subject
-        self.manager.current = "lesson"
+        """
+        Тап по предмету на сводном экране → открываем расписание сегодняшнего дня.
+        Отметка присутствия/оценок ведётся уже на экране «Сегодня» по конкретному
+        занятию (несколько занятий по предмету в день — норма).
+        """
+        self.manager.current = "today"
 
 
 # ------------------------------------------------------------- ввод предмета
@@ -447,62 +457,55 @@ class LessonScreen(Screen):
       3) сохранение: неотмеченные записываются как отсутствующие.
     """
 
-    subject = None  # dict выбранного предмета (задаётся перед входом)
+    # id КОНКРЕТНОГО занятия (задаётся перед входом на экране расписания).
+    # Вопрос «Занятие проведено?» теперь задаётся на TodayScheduleScreen; сюда
+    # попадаем уже для проведённого занятия, поэтому при входе статус → 'held'.
+    lesson_id = None
 
     def on_pre_enter(self, *_):
         self.clear_widgets()
         self._rows = []
-        subj = self.subject or {}
         root = BoxLayout(orientation="vertical", padding=16, spacing=10)
-
-        root.add_widget(Label(
-            text=f"[b]{subj.get('name', '')}[/b]  ({subj.get('group_name', '')})",
-            markup=True, font_size=18, color=(0.1, 0.1, 0.1, 1),
+        # Заголовок (название предмета/группа) заполняется в _show_attendance.
+        self._header = Label(
+            text="", markup=True, font_size=18, color=(0.1, 0.1, 0.1, 1),
             size_hint_y=None, height=36,
-        ))
-        root.add_widget(Label(
-            text="Занятие проведено?", font_size=16,
-            color=(0.2, 0.2, 0.2, 1), size_hint_y=None, height=30,
-        ))
-
-        # Кнопки «да/нет»
-        yn = BoxLayout(orientation="horizontal", size_hint_y=None, height=48, spacing=8)
-        no_btn = Button(text="Нет")
-        no_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
-        yes_btn = Button(text="Да, отметить", background_color=(0.4, 0.7, 0.4, 1))
-        yes_btn.bind(on_release=self._show_attendance)
-        yn.add_widget(no_btn)
-        yn.add_widget(yes_btn)
-        root.add_widget(yn)
-
-        # Контейнер, куда после «Да» подставим список студентов.
+        )
+        root.add_widget(self._header)
         self._body = BoxLayout(orientation="vertical", spacing=8)
         root.add_widget(self._body)
-
         self.add_widget(root)
+        self._show_attendance()
 
     def _show_attendance(self, *_):
         """
-        Показать список студентов группы для отметки нажатием на ФИО.
+        Показать список студентов группы КОНКРЕТНОГО занятия (self.lesson_id) для
+        отметки нажатием на ФИО.
 
-        Ключевая логика (по требованию — «каждое нажатие синхронизируется с БД»):
-          1) занятие на СЕГОДНЯ для этого предмета берётся через get_or_create_lesson
-             (один вход = одно занятие в день, повторный вход НЕ плодит дубли и не
-             завышает счётчик проведённых);
-          2) уже сохранённые отметки/оценки подтягиваются из БД и проставляются в строки;
-          3) каждый тап по ФИО тут же пишется в БД (см. _persist_row) — поэтому
-             повторное «Да, отметить» перечитывает актуальные данные и ничего не теряет.
+        Модель: по одному предмету в день может быть НЕСКОЛЬКО занятий, поэтому мы
+        работаем с уже выбранным на расписании занятием (а не «одно занятие в день»).
+          1) при входе занятие помечается как проведённое (status='held') — учитывается;
+          2) сохранённые ранее отметки/оценки подтягиваются из БД в строки;
+          3) каждый тап по ФИО тут же пишется в БД (см. _persist_row) — ничего не теряется
+             при повторном открытии занятия.
         """
         self._body.clear_widgets()
         self._rows = []
 
         db = get_db()
-        # 1) занятие за сегодня (get-or-create) — фиксируем факт проведения.
-        self._lesson_id = db.get_or_create_lesson(
-            self.subject["id"], date.today().isoformat(), datetime.now().isoformat()
-        )
-        students = db.list_students(self.subject.get("group_name", ""))
-        # 2) сохранённые ранее отметки этого занятия.
+        self._lesson_id = self.lesson_id
+        lesson = db.get_lesson(self._lesson_id) if self._lesson_id else None
+        if not lesson:
+            db.close()
+            self._body.add_widget(Label(
+                text="Занятие не найдено.", halign="center", valign="middle",
+                color=(0.7, 0.2, 0.2, 1),
+            ))
+            return
+        # Открыли занятие для отметки → оно считается проведённым.
+        db.set_lesson_status(self._lesson_id, "held")
+        self._header.text = f"[b]{lesson['subject_name']}[/b]  ({lesson['group_name']})"
+        students = db.list_students(lesson["group_name"])
         saved = db.get_attendance(self._lesson_id)
         db.close()
 
@@ -567,7 +570,263 @@ class LessonScreen(Screen):
         Popup(title="Готово",
               content=Label(text="Занятие и отметки сохранены."),
               size_hint=(0.8, 0.3)).open()
-        self.manager.current = "home"
+        # Возврат на экран расписания сегодняшнего дня (откуда мы и пришли).
+        self.manager.current = "today"
+
+
+# --------------------------------------------------- расписание на сегодня
+# Статусы занятия и их отображение на экране расписания.
+LESSON_STATUS_LABEL = {
+    "scheduled": ("по расписанию", (0.35, 0.45, 0.65, 1)),
+    "held":      ("проведено ✓", (0.20, 0.55, 0.20, 1)),
+    "cancelled": ("отменено ✕", (0.65, 0.25, 0.25, 1)),
+}
+
+
+class TodayScheduleScreen(Screen):
+    """
+    ОТДЕЛЬНЫЙ от сводного главного экран: список занятий ЗА СЕГОДНЯ по всем предметам
+    (данные из БД — list_schedule_for_date). По одному предмету в день может быть
+    НЕСКОЛЬКО занятий (в т.ч. параллельных).
+
+    Логика тапа по занятию по расписанию:
+      «Проведено?» → Да  → отметка присутствия/оценок (LessonScreen по этому lesson_id);
+                   → Нет → «Заменить на другое?» (выбор другого предмета) / «Отменить»
+                            (занятие помечается cancelled — в учёт проведённых НЕ идёт).
+    Плюс кнопки: «➕ ДОБАВИТЬ ЗАНЯТИЕ» (внеочередное на сегодня) и выгрузка расписания
+    в .ics (Google/Яндекс).
+    """
+
+    def on_pre_enter(self, *_):
+        self.clear_widgets()
+        root = BoxLayout(orientation="vertical")
+
+        header = BoxLayout(orientation="horizontal", size_hint_y=None, height=52,
+                           padding=(12, 6), spacing=8)
+        back = Button(text="← Назад", size_hint_x=None, width=90)
+        back.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
+        header.add_widget(back)
+        header.add_widget(Label(text="[b]Сегодня[/b]", markup=True, font_size=20,
+                                color=(0.1, 0.1, 0.1, 1)))
+        root.add_widget(header)
+        root.add_widget(Label(
+            text=date.today().strftime("%d.%m.%Y"), size_hint_y=None, height=22,
+            color=(0.4, 0.4, 0.4, 1),
+        ))
+
+        db = get_db()
+        lessons = db.list_schedule_for_date(date.today().isoformat())
+        db.close()
+
+        scroll = ScrollView()
+        box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=6,
+                        padding=(10, 6))
+        box.bind(minimum_height=box.setter("height"))
+        if not lessons:
+            box.add_widget(Label(
+                text="На сегодня занятий нет.\nНажмите «ДОБАВИТЬ ЗАНЯТИЕ».",
+                halign="center", valign="middle", color=(0.5, 0.5, 0.5, 1),
+                size_hint_y=None, height=80,
+            ))
+        else:
+            for les in lessons:
+                box.add_widget(self._lesson_row(les))
+        scroll.add_widget(box)
+        root.add_widget(scroll)
+
+        # Нижняя панель действий.
+        actions = BoxLayout(orientation="horizontal", size_hint_y=None, height=50,
+                            spacing=8, padding=(8, 6))
+        add_les = Button(text="➕ ДОБАВИТЬ ЗАНЯТИЕ",
+                         background_color=(0.4, 0.7, 0.4, 1))
+        add_les.bind(on_release=self._add_lesson_dialog)
+        export = Button(text="📤 В календарь (.ics)", size_hint_x=None, width=170,
+                        background_color=(0.35, 0.55, 0.85, 1))
+        export.bind(on_release=self._export_calendar)
+        actions.add_widget(add_les)
+        actions.add_widget(export)
+        root.add_widget(actions)
+
+        self.add_widget(root)
+
+    def _lesson_row(self, les: dict):
+        """
+        Одна строка занятия: слева — время/предмет(группа)/статус/счётчик отметок,
+        справа — кнопка «Открыть» (тап открывает диалог «Проведено?»).
+        """
+        status_text, status_color = LESSON_STATUS_LABEL.get(
+            les["status"], (les["status"], (0.3, 0.3, 0.3, 1))
+        )
+        held_at = les.get("held_at", "")
+        time_str = held_at.split("T", 1)[1][:5] if "T" in held_at else ""
+
+        wrap = BoxLayout(orientation="horizontal", size_hint_y=None, height=70)
+        with wrap.canvas.before:
+            Color(0.95, 0.95, 0.97, 1)
+            wrap._bg = Rectangle(pos=wrap.pos, size=wrap.size)
+        wrap.bind(pos=lambda i, v: setattr(i._bg, "pos", v),
+                  size=lambda i, v: setattr(i._bg, "size", v))
+
+        inner = BoxLayout(orientation="vertical", padding=(10, 6), spacing=2)
+        title = Label(
+            text=f"[b]{time_str}  {les['subject_name']}[/b]  ({les['group_name']})",
+            markup=True, color=(0.1, 0.1, 0.1, 1), halign="left", valign="middle",
+            size_hint_y=None, height=28,
+        )
+        title.bind(size=lambda i, v: setattr(i, "text_size", v))
+        sub = Label(
+            text=f"{status_text}   •   отмечено: {les['present_count']}, "
+                 f"с оценкой: {les['graded_count']}",
+            color=status_color, halign="left", valign="middle",
+            size_hint_y=None, height=22, font_size=12,
+        )
+        sub.bind(size=lambda i, v: setattr(i, "text_size", v))
+        inner.add_widget(title)
+        inner.add_widget(sub)
+
+        open_btn = Button(text="Открыть", size_hint_x=None, width=90)
+        open_btn.bind(on_release=lambda *_: self._on_lesson_tap(les))
+
+        wrap.add_widget(inner)
+        wrap.add_widget(open_btn)
+        return wrap
+
+    def _on_lesson_tap(self, les: dict):
+        """Тап по занятию: «Проведено?» да/нет (см. описание класса)."""
+        content = BoxLayout(orientation="vertical", spacing=10, padding=10)
+        content.add_widget(Label(
+            text=f"{les['subject_name']} ({les['group_name']})\nЗанятие проведено?"
+        ))
+        btns = BoxLayout(size_hint_y=None, height=44, spacing=8)
+        popup = Popup(title="Занятие", content=content, size_hint=(0.85, 0.4))
+
+        yes = Button(text="Да", background_color=(0.4, 0.7, 0.4, 1))
+        yes.bind(on_release=lambda *_: (popup.dismiss(), self._open_marking(les)))
+        no = Button(text="Нет")
+        no.bind(on_release=lambda *_: (popup.dismiss(), self._not_held_dialog(les)))
+        btns.add_widget(no)
+        btns.add_widget(yes)
+        content.add_widget(btns)
+        popup.open()
+
+    def _open_marking(self, les: dict):
+        """Открыть отметку присутствия для КОНКРЕТНОГО занятия."""
+        lesson_screen = self.manager.get_screen("lesson")
+        lesson_screen.lesson_id = les["id"]
+        self.manager.current = "lesson"
+
+    def _not_held_dialog(self, les: dict):
+        """«Нет» → Заменить на другой предмет / Отменить занятие."""
+        content = BoxLayout(orientation="vertical", spacing=10, padding=10)
+        content.add_widget(Label(text="Занятие не проведено.\nЧто сделать?"))
+        btns = BoxLayout(size_hint_y=None, height=44, spacing=8)
+        popup = Popup(title="Не проведено", content=content, size_hint=(0.85, 0.42))
+
+        replace = Button(text="Заменить на другое")
+        replace.bind(on_release=lambda *_: (popup.dismiss(), self._replace_dialog(les)))
+        cancel = Button(text="Отменить", background_color=(0.8, 0.4, 0.4, 1))
+        cancel.bind(on_release=lambda *_: (popup.dismiss(), self._cancel_lesson(les)))
+        btns.add_widget(replace)
+        btns.add_widget(cancel)
+        content.add_widget(btns)
+        popup.open()
+
+    def _cancel_lesson(self, les: dict):
+        """Пометить занятие отменённым (в учёт проведённых НЕ идёт; запись остаётся)."""
+        db = get_db()
+        db.set_lesson_status(les["id"], "cancelled")
+        db.close()
+        self.on_pre_enter()
+
+    def _replace_dialog(self, les: dict):
+        """Выбор другого предмета для этого занятия (замена)."""
+        db = get_db()
+        subjects = db.list_subjects()
+        db.close()
+        names = [f"{s['name']} ({s['group_name']})" for s in subjects]
+        id_by_label = {f"{s['name']} ({s['group_name']})": s["id"] for s in subjects}
+
+        content = BoxLayout(orientation="vertical", spacing=10, padding=10)
+        content.add_widget(Label(text="Заменить занятие на предмет:",
+                                 size_hint_y=None, height=24))
+        spinner = Spinner(text=names[0] if names else "нет предметов",
+                          values=names, size_hint_y=None, height=44)
+        content.add_widget(spinner)
+        btns = BoxLayout(size_hint_y=None, height=44, spacing=8)
+        popup = Popup(title="Замена", content=content, size_hint=(0.9, 0.45))
+        ok = Button(text="Заменить", background_color=(0.4, 0.7, 0.4, 1))
+
+        def _do(*_):
+            if spinner.text in id_by_label:
+                db2 = get_db()
+                db2.change_lesson_subject(les["id"], id_by_label[spinner.text])
+                db2.close()
+            popup.dismiss()
+            self.on_pre_enter()
+
+        ok.bind(on_release=_do)
+        close = Button(text="Отмена")
+        close.bind(on_release=popup.dismiss)
+        btns.add_widget(close)
+        btns.add_widget(ok)
+        content.add_widget(btns)
+        popup.open()
+
+    def _add_lesson_dialog(self, *_):
+        """➕ Внеочередное занятие на сегодня: выбор предмета + время начала."""
+        db = get_db()
+        subjects = db.list_subjects()
+        db.close()
+        names = [f"{s['name']} ({s['group_name']})" for s in subjects]
+        id_by_label = {f"{s['name']} ({s['group_name']})": s["id"] for s in subjects}
+
+        content = BoxLayout(orientation="vertical", spacing=10, padding=10)
+        content.add_widget(Label(text="Предмет:", size_hint_y=None, height=22))
+        spinner = Spinner(text=names[0] if names else "нет предметов",
+                          values=names, size_hint_y=None, height=44)
+        content.add_widget(spinner)
+        content.add_widget(Label(text="Время начала (ЧЧ:ММ):",
+                                 size_hint_y=None, height=22))
+        time_input = TextInput(text=datetime.now().strftime("%H:%M"),
+                               multiline=False, size_hint_y=None, height=40)
+        content.add_widget(time_input)
+        btns = BoxLayout(size_hint_y=None, height=44, spacing=8)
+        popup = Popup(title="Новое занятие", content=content, size_hint=(0.9, 0.5))
+        ok = Button(text="Добавить", background_color=(0.4, 0.7, 0.4, 1))
+
+        def _do(*_):
+            if spinner.text in id_by_label:
+                hhmm = time_input.text.strip() or datetime.now().strftime("%H:%M")
+                held_at = f"{date.today().isoformat()}T{hhmm}:00"
+                db2 = get_db()
+                # Внеочередное занятие создаём сразу как проведённое (status='held'):
+                # оно фактически проводится и подлежит учёту.
+                db2.add_lesson(id_by_label[spinner.text], held_at, status="held")
+                db2.close()
+            popup.dismiss()
+            self.on_pre_enter()
+
+        ok.bind(on_release=_do)
+        close = Button(text="Отмена")
+        close.bind(on_release=popup.dismiss)
+        btns.add_widget(close)
+        btns.add_widget(ok)
+        content.add_widget(btns)
+        popup.open()
+
+    def _export_calendar(self, *_):
+        """Выгрузить занятия из БД в .ics (Google/Яндекс)."""
+        from calendar_export import export_ics
+
+        db = get_db()
+        lessons = db.list_lessons_for_calendar()
+        db.close()
+        path = "schedule.ics"
+        export_ics(lessons, path)
+        Popup(title="Экспорт в календарь",
+              content=Label(text=f"Расписание выгружено в файл:\n{path}\n\n"
+                                 f"Импортируйте его в Google/Яндекс Календарь."),
+              size_hint=(0.9, 0.4)).open()
 
 
 # ------------------------------------------------------------------------- app
@@ -580,6 +839,7 @@ class LessonTrackerApp(App):
         self.sm.add_widget(HomeScreen(name="home"))
         self.sm.add_widget(AddSubjectScreen(name="add_subject"))
         self.sm.add_widget(StudentsScreen(name="students"))
+        self.sm.add_widget(TodayScheduleScreen(name="today"))
         self.sm.add_widget(LessonScreen(name="lesson"))
 
         # Напоминание раз в час, пока приложение живо/в фоне (см. примечание в шапке файла).
@@ -598,7 +858,7 @@ class LessonTrackerApp(App):
 
         def _go(*_):
             popup.dismiss()
-            self.sm.current = "home"
+            self.sm.current = "today"
 
         go.bind(on_release=_go)
         btns.add_widget(later)
