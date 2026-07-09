@@ -1,0 +1,45 @@
+# Сборка debug-APK на GitHub Actions.
+# Триггер: push/commit. Результат — .apk как artifact сборки.
+# Локально APK НЕ собираем (см. AGENT.md §6).
+name: Build debug APK
+
+on:
+  push:
+    branches: [ "**" ]
+  workflow_dispatch: {}
+
+jobs:
+  tests:
+    name: Unit tests (pure logic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test deps
+        run: pip install pytest
+      - name: Run tests
+        run: pytest -q
+
+  build-apk:
+    name: Build debug APK
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Готовый action, поднимающий buildozer + python-for-android в контейнере.
+      # Версия запинована для воспроизводимости сборки.
+      - name: Build with Buildozer
+        uses: ArtemSBulgakov/buildozer-action@v1
+        with:
+          command: buildozer -v android debug
+          buildozer_version: stable
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lesson-tracker-debug-apk
+          path: bin/*.apk
+          if-no-files-found: error
