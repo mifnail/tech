@@ -26,13 +26,14 @@ def test_ics_structure():
     assert ics.count("BEGIN:VEVENT") == 2
     assert ics.count("END:VEVENT") == 2
     assert "VERSION:2.0" in ics
+    assert "VTIMEZONE" in ics
 
 
 def test_ics_dtstart_and_duration():
     ics = build_ics(_sample())
-    # Начало первого занятия — 09:00, конец через 105 минут (1:45) — 10:45.
-    assert "DTSTART:20260901T090000" in ics
-    assert "DTEND:20260901T104500" in ics
+    # Время в UTC: 09:00 MSK = 06:00 UTC; конец через 90 мин — 07:30 UTC.
+    assert "DTSTART:20260901T060000Z" in ics
+    assert "DTEND:20260901T073000Z" in ics
 
 
 def test_ics_escaping_comma():

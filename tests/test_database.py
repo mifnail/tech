@@ -41,7 +41,7 @@ def test_bulk_students_counts_new_only():
 def test_subject_progress_in_lessons():
     db = make_db()
     sid = db.add_subject("Математика", planned_lessons=3, group_name="ИС-11")
-    db.add_lesson(sid, "2026-09-01T10:00:00")
+    db.add_lesson(sid, "2026-09-01T10:00:00", status="held")
     subjects = {s["name"]: s for s in db.list_subjects()}
     m = subjects["Математика"]
     assert m["planned"] == 3

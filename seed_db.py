@@ -69,7 +69,7 @@ def seed() -> None:
         for i in range(HELD.get(name, 0)):
             # Условная дата занятия: сентябрь, по одному в день
             held_at = f"2026-09-{(i % 28) + 1:02d}T10:00:00"
-            lesson_id = db.add_lesson(sid, held_at)
+            lesson_id = db.add_lesson(sid, held_at, status="held")
             # Отмечаем присутствие: часть студентов с оценкой, часть — просто галочкой,
             # один — отсутствует (для наглядности ведомости).
             for j, st in enumerate(students):

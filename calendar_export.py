@@ -12,28 +12,34 @@ calendar_export.py — выгрузка занятий из БД в формат
 Формат held_at в БД: ISO-строка 'YYYY-MM-DDTHH:MM:SS' (время локальное).
 Длительность одного занятия по умолчанию — LESSON_DURATION_MIN минут.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Длительность одного занятия для события календаря (в минутах).
 LESSON_DURATION_MIN = 90
 
+# Часовой пояс по умолчанию (Европа/Москва, UTC+3). Меняется под регион пользователя.
+DEFAULT_TZ = timezone(timedelta(hours=3))
+
 
 def _parse_dt(value: str) -> datetime:
     """
-    Разбирает ISO-строку из БД в datetime.
+    Разбирает ISO-строку из БД в datetime с часовым поясом DEFAULT_TZ.
     Поддерживает как 'YYYY-MM-DDTHH:MM:SS', так и 'YYYY-MM-DD' (тогда время 00:00).
     """
     value = (value or "").strip()
     try:
-        return datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
     except ValueError:
-        # На случай нестандартной строки — берём только дату.
-        return datetime.fromisoformat(value[:10])
+        dt = datetime.fromisoformat(value[:10])
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=DEFAULT_TZ)
+    return dt
 
 
 def _fmt_ics_dt(dt: datetime) -> str:
-    """Формат даты-времени для .ics в «плавающем» локальном времени: YYYYMMDDTHHMMSS."""
-    return dt.strftime("%Y%m%dT%H%M%S")
+    """Формат даты-времени для .ics в UTC (суффикс Z)."""
+    utc = dt.astimezone(timezone.utc)
+    return utc.strftime("%Y%m%dT%H%M%SZ")
 
 
 def _escape(text: str) -> str:
@@ -57,13 +63,26 @@ def build_ics(lessons: list[dict]) -> str:
 
     Возвращает строку с CRLF-переводами строк (как требует спецификация iCalendar).
     """
+    tz_offset = int(DEFAULT_TZ.utcoffset(None).total_seconds() / 60)
+    tz_hours = tz_offset // 60
+    tz_mins = abs(tz_offset) % 60
+    tz_id = f"UTC{tz_hours:+03d}:{tz_mins:02d}" if tz_mins else f"UTC{tz_hours:+03d}"
+    offset_str = f"{tz_hours:+03d}{tz_mins:02d}"
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "PRODID:-//LessonTracker//RU",
         "CALSCALE:GREGORIAN",
+        f"X-WR-TIMEZONE:{tz_id}",
+        "BEGIN:VTIMEZONE",
+        f"TZID:{tz_id}",
+        "BEGIN:STANDARD",
+        f"TZOFFSETFROM:{offset_str}",
+        f"TZOFFSETTO:{offset_str}",
+        "END:STANDARD",
+        "END:VTIMEZONE",
     ]
-    stamp = _fmt_ics_dt(datetime.now())
+    stamp = _fmt_ics_dt(datetime.now(tz=DEFAULT_TZ))
     for les in lessons:
         start = _parse_dt(les.get("held_at", ""))
         end = start + timedelta(minutes=LESSON_DURATION_MIN)

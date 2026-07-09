@@ -64,8 +64,9 @@ class Database:
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
                 held_at    TEXT NOT NULL,       -- ISO-дата/время занятия
-                status     TEXT NOT NULL DEFAULT 'held'  -- scheduled | held | cancelled
+                status     TEXT NOT NULL DEFAULT 'scheduled'  -- scheduled | held | cancelled
             );
+            CREATE INDEX IF NOT EXISTS idx_lessons_held_at ON lessons(held_at);
 
             -- Отметки: присутствие + опциональная оценка.
             CREATE TABLE IF NOT EXISTS attendance (
@@ -294,7 +295,7 @@ class Database:
     #   'cancelled' — отменено (в БД остаётся «не проведено», в учёт НЕ идёт).
     LESSON_STATUSES = ("scheduled", "held", "cancelled")
 
-    def add_lesson(self, subject_id: int, held_at: str, status: str = "held") -> int:
+    def add_lesson(self, subject_id: int, held_at: str, status: str = "scheduled") -> int:
         """
         Создаёт занятие с указанным статусом (по умолчанию 'held' — совместимость с
         прежним кодом/seed). Для занятия по расписанию используйте status='scheduled',
