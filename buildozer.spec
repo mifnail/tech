@@ -22,6 +22,10 @@ android.api = 34
 android.minapi = 24
 android.archs = arm64-v8a, armeabi-v7a
 android.allow_backup = 1
+android.accept_sdk_license = True
+
+# Ветка python-for-android (пинована для воспроизводимости)
+p4a.branch = develop
 
 [buildozer]
 log_level = 2

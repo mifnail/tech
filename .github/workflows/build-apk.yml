@@ -53,7 +53,12 @@ jobs:
       - name: Build with Buildozer
         run: |
           pip install --user buildozer
-          buildozer -v android debug
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "--- Tool versions ---"
+          java -version 2>&1 || true
+          which buildozer || true
+          echo "--- Build ---"
+          buildozer -v android debug 2>&1
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
