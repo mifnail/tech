@@ -29,13 +29,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Готовый action, поднимающий buildozer + python-for-android в контейнере.
-      # Версия запинована для воспроизводимости сборки.
-      - name: Build with Buildozer
-        uses: ArtemSBulgakov/buildozer-action@v1
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          command: buildozer -v android debug
-          buildozer_version: stable
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            automake autoconf libtool build-essential \
+            pkg-config libc6-dev m4 libffi-dev \
+            python3-dev libssl-dev libltdl-dev \
+            libncurses5-dev ccache git unzip curl \
+            openjdk-17-jdk
+
+      - name: Cache Buildozer
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+
+      - name: Build with Buildozer
+        run: |
+          pip install --user buildozer
+          buildozer -v android debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

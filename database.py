@@ -178,7 +178,7 @@ class Database:
 
     # ----------------------------------------------------------------- lessons
     def add_lesson(self, subject_id: int, held_at: str) -> int:
-        """Фиксирует факт проведённого занятия."""
+        """Фиксирует факт проведённого занятия (безусловное создание новой записи)."""
         cur = self._conn.cursor()
         cur.execute(
             "INSERT INTO lessons(subject_id, held_at) VALUES (?, ?)",
@@ -186,6 +186,44 @@ class Database:
         )
         self._conn.commit()
         return int(cur.lastrowid)
+
+    def get_or_create_lesson(self, subject_id: int, date_str: str, held_at: str) -> int:
+        """
+        Возвращает id занятия для предмета за указанную ДАТУ (date_str = 'YYYY-MM-DD'),
+        создавая его при отсутствии. Именно это защищает от:
+          * дублирования занятий (повторный вход в отметку не плодит новые записи и
+            не завышает счётчик проведённых занятий);
+          * потери введённых отметок (по этому id далее подтягиваются сохранённые оценки).
+        Сопоставление по дате: date(held_at) сравнивается с date_str.
+        """
+        cur = self._conn.cursor()
+        row = cur.execute(
+            "SELECT id FROM lessons WHERE subject_id = ? AND date(held_at) = ?",
+            (int(subject_id), date_str),
+        ).fetchone()
+        if row:
+            return int(row["id"])
+        cur.execute(
+            "INSERT INTO lessons(subject_id, held_at) VALUES (?, ?)",
+            (int(subject_id), held_at),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def get_attendance(self, lesson_id: int) -> dict:
+        """
+        Возвращает сохранённые отметки занятия в виде
+        {student_id: {"present": bool, "grade": Optional[int]}}.
+        Нужна, чтобы при повторном открытии занятия подтянуть введённые ранее оценки.
+        """
+        rows = self._conn.execute(
+            "SELECT student_id, present, grade FROM attendance WHERE lesson_id = ?",
+            (int(lesson_id),),
+        ).fetchall()
+        return {
+            int(r["student_id"]): {"present": bool(r["present"]), "grade": r["grade"]}
+            for r in rows
+        }
 
     def mark_attendance(
         self,
