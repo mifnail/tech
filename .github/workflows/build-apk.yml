@@ -13,8 +13,8 @@ jobs:
     name: Unit tests (pure logic)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Install test deps
@@ -27,10 +27,10 @@ jobs:
     needs: tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -45,7 +45,7 @@ jobs:
             openjdk-17-jdk
 
       - name: Cache Buildozer
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.buildozer
           key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
@@ -67,7 +67,7 @@ jobs:
           buildozer -v android debug 2>&1
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lesson-tracker-debug-apk
           path: bin/*.apk
