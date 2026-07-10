@@ -56,6 +56,85 @@ NEW_GROUP_OPTION = "➕ Новая группа…"
 REMINDER_PERIOD_SEC = 60 * 60
 
 
+# --------------------------------------------------------------------- theme
+# Единая цветовая тема приложения. Все экраны используют эти цвета.
+class Theme:
+    BG          = (0.97, 0.97, 0.98, 1)  # фон приложения
+    CARD        = (1, 1, 1, 1)           # карточка/строка
+    CARD_BORDER = (0.88, 0.88, 0.90, 1)  # граница карточки
+    CARD_SHADOW = (0.87, 0.87, 0.89, 1)  # тень карточки (подложка)
+
+    TEXT        = (0.12, 0.12, 0.12, 1)
+    TEXT_MUTED  = (0.45, 0.45, 0.45, 1)
+    TEXT_BRIGHT = (1, 1, 1, 1)
+
+    PRIMARY     = (0.30, 0.55, 0.82, 1)  # основной акцент (синий)
+    SUCCESS     = (0.30, 0.70, 0.35, 1)  # успех / проведено (зелёный)
+    DANGER      = (0.75, 0.25, 0.25, 1)  # отмена / ошибка (красный)
+    WARNING     = (0.85, 0.65, 0.20, 1)  # предупреждение (жёлтый)
+
+    PROGRESS_BG    = (0.90, 0.90, 0.92, 1)
+    PROGRESS_FILL  = (0.45, 0.75, 0.50, 1)
+    PROGRESS_FILL_OVER = (0.90, 0.55, 0.35, 1)  # при > 100%
+
+    # Цвета оценок: 5=отлично(зелёный) .. 2=плохо(красный)
+    GRADE_COLORS = {5: (0.20, 0.60, 0.25), 4: (0.30, 0.55, 0.85),
+                    3: (0.85, 0.65, 0.20), 2: (0.80, 0.25, 0.25)}
+
+    # Фоны строк отметки посещаемости
+    ATT_DEFAULT_BG = (0.93, 0.93, 0.94, 1)
+    ATT_PRESENT_BG = (0.75, 0.90, 0.75, 1)  # or (0.80, 0.92, 0.80, 1) original
+    ATT_GRADE_BG   = {5: (0.20, 0.60, 0.25), 4: (0.20, 0.40, 0.75),
+                      3: (0.50, 0.50, 0.50), 2: (0.10, 0.10, 0.10)}
+
+    LESSON_STATUS = {
+        "scheduled": ("по расписанию", PRIMARY),
+        "held":      ("проведено ✓", SUCCESS),
+        "cancelled": ("отменено ✕", DANGER),
+    }
+
+
+def make_button(text: str, color=None, width=None, callback=None):
+    """Создаёт кнопку в едином стиле приложения."""
+    btn = Button(
+        text=text,
+        background_color=color or Theme.PRIMARY,
+        background_normal="",
+        color=Theme.TEXT_BRIGHT,
+        bold=True,
+        size_hint_x=width,
+    )
+    with btn.canvas.before:
+        Color(*Theme.CARD_SHADOW)
+        btn._shadow_rect = Rectangle(pos=(btn.x, btn.y - 2), size=(btn.width, btn.height))
+    def _update(inst, _val):
+        inst._shadow_rect.pos = (inst.x, inst.y - 2)
+        inst._shadow_rect.size = inst.size
+    btn.bind(pos=_update, size=_update)
+    if callback:
+        btn.bind(on_release=callback)
+    return btn
+
+
+def card_bg(widget):
+    """Добавляет фон-карточку (с подложкой-тенью) виджету."""
+    with widget.canvas.before:
+        Color(*Theme.CARD_SHADOW)
+        _shadow = Rectangle(pos=(widget.x, widget.y - 2), size=widget.size)
+        Color(*Theme.CARD)
+        _card = Rectangle(pos=widget.pos, size=widget.size)
+    widget._card_shadow = _shadow
+    widget._card_rect = _card
+    widget.bind(pos=_card_update, size=_card_update)
+
+
+def _card_update(inst, _val):
+    inst._card_shadow.pos = (inst.x, inst.y - 2)
+    inst._card_shadow.size = inst.size
+    inst._card_rect.pos = inst.pos
+    inst._card_rect.size = inst.size
+
+
 def get_db() -> Database:
     """Единая точка получения подключения к БД. SQL — только внутри database.py."""
     db = Database(DB_PATH)
@@ -83,11 +162,14 @@ class SubjectRow(ButtonBehavior, BoxLayout):
         held = int(subject.get("held", 0)) or 0
         self.progress = (held / planned) if planned > 0 else 0.0
 
-        # --- Фон-прогрессбар (рисуется ДО содержимого) ---
+        # --- Фон-карточка (с тенью) ---
+        card_bg(self)
+        # --- Фон-прогрессбар (рисуется ПОВЕРХ фона карточки) ---
         with self.canvas.before:
-            Color(0.90, 0.90, 0.92, 1)                       # незаполненная часть
+            Color(*Theme.PROGRESS_BG)
             self._bg_rect = Rectangle(pos=self.pos, size=self.size)
-            Color(0.55, 0.80, 0.55, 1)                       # заполненная часть
+            fill_color = Theme.PROGRESS_FILL_OVER if self.progress > 1.0 else Theme.PROGRESS_FILL
+            Color(*fill_color)
             self._fill_rect = Rectangle(pos=self.pos, size=(0, self.height))
 
         self.bind(pos=self._redraw, size=self._redraw)
@@ -95,7 +177,7 @@ class SubjectRow(ButtonBehavior, BoxLayout):
         # --- Содержимое поверх фона ---
         title = Label(
             text=f"[b]{subject['name']}[/b]  ({subject.get('group_name', '')})",
-            markup=True, color=(0.1, 0.1, 0.1, 1),
+            markup=True, color=Theme.TEXT,
             halign="left", valign="middle", size_hint_y=None, height=34,
         )
         title.bind(size=lambda inst, val: setattr(inst, "text_size", val))
@@ -104,7 +186,7 @@ class SubjectRow(ButtonBehavior, BoxLayout):
         info = Label(
             text=f"Проведено: {held} / {planned}   •   Осталось: {remaining}   "
                  f"({int(round(self.progress * 100))}%)",
-            color=(0.2, 0.2, 0.2, 1),
+            color=Theme.TEXT_MUTED,
             halign="left", valign="middle", size_hint_y=None, height=26, font_size=13,
         )
         info.bind(size=lambda inst, val: setattr(inst, "text_size", val))
@@ -133,26 +215,23 @@ class HomeScreen(Screen):
         root = BoxLayout(orientation="vertical")
 
         # Шапка с кнопкой добавления предмета
-        header = BoxLayout(orientation="horizontal", size_hint_y=None, height=52,
-                           padding=(12, 6), spacing=8)
+        header = BoxLayout(orientation="horizontal", size_hint_y=None, height=56,
+                           padding=(12, 8), spacing=8)
         header.add_widget(Label(text="[b]Мои предметы[/b]", markup=True, font_size=20,
-                                color=(0.1, 0.1, 0.1, 1), halign="left", valign="middle"))
-        add_btn = Button(text="+ Предмет", size_hint_x=None, width=110)
-        add_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "add_subject"))
+                                color=Theme.TEXT, halign="left", valign="middle"))
+        add_btn = make_button("+ Предмет", width=None, callback=lambda *_: setattr(self.manager, "current", "add_subject"))
+        add_btn.size_hint_x = None
+        add_btn.width = 110
         header.add_widget(add_btn)
         root.add_widget(header)
 
         # Кнопка перехода на ОТДЕЛЬНЫЙ экран расписания сегодняшнего дня.
-        # Главный экран — СВОДНЫЙ (прогресс по всем занятиям предмета); экран
-        # «Сегодня» — детальный список занятий за сегодня (в т.ч. параллельных).
-        nav = BoxLayout(orientation="horizontal", size_hint_y=None, height=44,
-                        spacing=8, padding=(8, 0))
-        today_btn = Button(text="📅 Расписание на сегодня",
-                           background_color=(0.35, 0.55, 0.85, 1))
-        today_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "today"))
-        grades_btn = Button(text="📊 Ведомость",
-                            background_color=(0.55, 0.45, 0.75, 1))
-        grades_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "gradebook"))
+        nav = BoxLayout(orientation="horizontal", size_hint_y=None, height=48,
+                        spacing=8, padding=(8, 4))
+        today_btn = make_button("📅  Расписание на сегодня",
+                                callback=lambda *_: setattr(self.manager, "current", "today"))
+        grades_btn = make_button("📊  Ведомость", color=Theme.SUCCESS,
+                                 callback=lambda *_: setattr(self.manager, "current", "gradebook"))
         nav.add_widget(today_btn)
         nav.add_widget(grades_btn)
         root.add_widget(nav)
@@ -164,7 +243,7 @@ class HomeScreen(Screen):
         if not subjects:
             root.add_widget(Label(
                 text="Предметов пока нет.\nНажмите «+ Предмет», чтобы добавить.",
-                halign="center", valign="middle", color=(0.4, 0.4, 0.4, 1),
+                halign="center", valign="middle", color=Theme.TEXT_MUTED,
             ))
         else:
             scroll = ScrollView()
@@ -195,24 +274,24 @@ class AddSubjectScreen(Screen):
         self.clear_widgets()
         root = BoxLayout(orientation="vertical", padding=16, spacing=10)
         root.add_widget(Label(text="[b]Новый предмет[/b]", markup=True, font_size=20,
-                              color=(0.1, 0.1, 0.1, 1), size_hint_y=None, height=40))
+                              color=Theme.TEXT, size_hint_y=None, height=40))
 
         # Название предмета
         root.add_widget(Label(text="Название предмета:", size_hint_y=None, height=22,
-                              halign="left", color=(0.2, 0.2, 0.2, 1)))
+                              halign="left", color=Theme.TEXT))
         self.name_input = TextInput(multiline=False, size_hint_y=None, height=40)
         root.add_widget(self.name_input)
 
         # План в занятиях
         root.add_widget(Label(text="План (в занятиях):", size_hint_y=None, height=22,
-                              halign="left", color=(0.2, 0.2, 0.2, 1)))
+                              halign="left", color=Theme.TEXT))
         self.planned_input = TextInput(multiline=False, input_filter="int",
                                        size_hint_y=None, height=40, text="0")
         root.add_widget(self.planned_input)
 
         # Группа: выбор существующей ИЛИ новая
         root.add_widget(Label(text="Группа:", size_hint_y=None, height=22,
-                              halign="left", color=(0.2, 0.2, 0.2, 1)))
+                              halign="left", color=Theme.TEXT))
         db = get_db()
         groups = [g["name"] for g in db.list_groups()]
         db.close()
@@ -237,17 +316,17 @@ class AddSubjectScreen(Screen):
 
         # Статус/ошибки
         self.status = Label(text="", size_hint_y=None, height=24,
-                            color=(0.7, 0.2, 0.2, 1))
+                            color=Theme.DANGER)
         root.add_widget(self.status)
 
         root.add_widget(BoxLayout())  # распорка
 
         # Кнопки
         buttons = BoxLayout(orientation="horizontal", size_hint_y=None, height=48, spacing=8)
-        back = Button(text="Назад")
-        back.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
-        save = Button(text="Сохранить", background_color=(0.4, 0.7, 0.4, 1))
-        save.bind(on_release=self._save)
+        back = make_button("Назад", color=Theme.TEXT_MUTED,
+                           callback=lambda *_: setattr(self.manager, "current", "home"))
+        save = make_button("Сохранить", color=Theme.SUCCESS,
+                           callback=self._save)
         buttons.add_widget(back)
         buttons.add_widget(save)
         root.add_widget(buttons)
@@ -303,7 +382,7 @@ class StudentsScreen(Screen):
 
         root.add_widget(Label(
             text=f"[b]Студенты группы {self.target_group}[/b]", markup=True,
-            font_size=18, color=(0.1, 0.1, 0.1, 1), size_hint_y=None, height=40,
+            font_size=18, color=Theme.TEXT, size_hint_y=None, height=40,
         ))
 
         # Уже существующие студенты (их не нужно вводить повторно)
@@ -313,7 +392,7 @@ class StudentsScreen(Screen):
 
         root.add_widget(Label(
             text=f"Уже в группе ({len(existing)}):", size_hint_y=None, height=22,
-            halign="left", color=(0.2, 0.2, 0.2, 1),
+            halign="left", color=Theme.TEXT,
         ))
         exist_scroll = ScrollView(size_hint_y=0.35)
         exist_box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=2)
@@ -321,32 +400,32 @@ class StudentsScreen(Screen):
         if existing:
             for nm in existing:
                 lbl = Label(text=nm, size_hint_y=None, height=26, halign="left",
-                            valign="middle", color=(0.15, 0.15, 0.15, 1))
+                            valign="middle", color=Theme.TEXT)
                 lbl.bind(size=lambda inst, val: setattr(inst, "text_size", val))
                 exist_box.add_widget(lbl)
         else:
             exist_box.add_widget(Label(text="— пока никого —", size_hint_y=None,
-                                       height=26, color=(0.5, 0.5, 0.5, 1)))
+                                       height=26, color=Theme.TEXT_MUTED))
         exist_scroll.add_widget(exist_box)
         root.add_widget(exist_scroll)
 
         # Массовый ввод: каждый студент с новой строки
         root.add_widget(Label(
             text="Добавить студентов (каждый с новой строки):",
-            size_hint_y=None, height=22, halign="left", color=(0.2, 0.2, 0.2, 1),
+            size_hint_y=None, height=22, halign="left", color=Theme.TEXT,
         ))
         self.bulk_input = TextInput(multiline=True, hint_text="Иванов Иван\nПетров Пётр\n…")
         root.add_widget(self.bulk_input)
 
         self.status = Label(text="", size_hint_y=None, height=24,
-                            color=(0.2, 0.5, 0.2, 1))
+                            color=Theme.SUCCESS)
         root.add_widget(self.status)
 
         buttons = BoxLayout(orientation="horizontal", size_hint_y=None, height=48, spacing=8)
-        home = Button(text="На главный")
-        home.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
-        add = Button(text="Добавить", background_color=(0.4, 0.7, 0.4, 1))
-        add.bind(on_release=self._add_bulk)
+        home = make_button("На главный", color=Theme.TEXT_MUTED,
+                           callback=lambda *_: setattr(self.manager, "current", "home"))
+        add = make_button("Добавить", color=Theme.SUCCESS,
+                          callback=self._add_bulk)
         buttons.add_widget(home)
         buttons.add_widget(add)
         root.add_widget(buttons)
@@ -406,7 +485,7 @@ class StudentAttendanceRow(ButtonBehavior, Label):
         self.bind(size=lambda inst, val: setattr(inst, "text_size", val))
 
         with self.canvas.before:
-            self._bg_color = Color(0.93, 0.93, 0.94, 1)
+            self._bg_color = Color(*Theme.ATT_DEFAULT_BG)
             self._bg_rect = Rectangle(pos=self.pos, size=self.size)
         self.bind(pos=self._redraw, size=self._redraw)
 
@@ -431,24 +510,17 @@ class StudentAttendanceRow(ButtonBehavior, Label):
         name = self.student["name"]
         if st == "absent":
             self.text = f"  {name}   —   отсутствует"
-            rgb = (0.93, 0.93, 0.94)
-            self.color = (0.45, 0.45, 0.45, 1)
+            self._bg_color.rgb = Theme.ATT_DEFAULT_BG
+            self.color = Theme.TEXT_MUTED
         elif st == "present":
             self.text = f"  {name}   ✓ присутствует"
-            rgb = (0.80, 0.92, 0.80)
-            self.color = (0.1, 0.3, 0.1, 1)
-        else:  # оценка — цвет фона зависит от балла (по требованию владельца)
+            self._bg_color.rgb = Theme.ATT_PRESENT_BG
+            self.color = Theme.SUCCESS
+        else:  # оценка — цвет фона зависит от балла
             self.text = f"  {name}   ✓  оценка: [b]{st}[/b]"
-            # 5 — красный, 4 — синий, 3 — серый, 2 — чёрный.
-            grade_bg = {
-                5: (0.85, 0.20, 0.20),   # красный
-                4: (0.20, 0.35, 0.80),   # синий
-                3: (0.55, 0.55, 0.55),   # серый
-                2: (0.10, 0.10, 0.10),   # чёрный
-            }
-            rgb = grade_bg.get(st, (0.55, 0.55, 0.55))
-            # На тёмном фоне (синий/чёрный/красный) — белый текст; на сером — тёмный.
-            self.color = (0.15, 0.15, 0.15, 1) if st == 3 else (1, 1, 1, 1)
+            self._bg_color.rgb = Theme.ATT_GRADE_BG.get(st, (0.50, 0.50, 0.50))
+            # На светлых фонах (3) — тёмный текст; на тёмных (2,4,5) — белый.
+            self.color = Theme.TEXT if st == 3 else Theme.TEXT_BRIGHT
         self._bg_color.rgb = rgb
 
     def _redraw(self, *_):
@@ -475,7 +547,7 @@ class LessonScreen(Screen):
         root = BoxLayout(orientation="vertical", padding=16, spacing=10)
         # Заголовок (название предмета/группа) заполняется в _show_attendance.
         self._header = Label(
-            text="", markup=True, font_size=18, color=(0.1, 0.1, 0.1, 1),
+            text="", markup=True, font_size=18, color=Theme.TEXT,
             size_hint_y=None, height=36,
         )
         root.add_widget(self._header)
@@ -506,7 +578,7 @@ class LessonScreen(Screen):
             db.close()
             self._body.add_widget(Label(
                 text="Занятие не найдено.", halign="center", valign="middle",
-                color=(0.7, 0.2, 0.2, 1),
+                color=Theme.DANGER,
             ))
             return
         # Открыли занятие для отметки → оно считается проведённым.
@@ -519,14 +591,14 @@ class LessonScreen(Screen):
         if not students:
             self._body.add_widget(Label(
                 text="В группе нет студентов.\nДобавьте их через «+ Предмет».",
-                halign="center", valign="middle", color=(0.5, 0.5, 0.5, 1),
+                halign="center", valign="middle", color=Theme.TEXT_MUTED,
             ))
             return
 
         self._body.add_widget(Label(
             text="Нажимайте на ФИО: отсутствует → ✓ → оценка 5→4→3→2 → отсутствует\n"
                  "Отметки сохраняются автоматически.",
-            font_size=12, color=(0.4, 0.4, 0.4, 1), size_hint_y=None, height=36,
+            font_size=12, color=Theme.TEXT_MUTED, size_hint_y=None, height=36,
         ))
 
         scroll = ScrollView()
@@ -541,9 +613,9 @@ class LessonScreen(Screen):
         self._body.add_widget(scroll)
 
         # Кнопка «Готово»: дозаписывает неотмеченных как отсутствующих и уходит на главный.
-        save = Button(text="Готово", size_hint_y=None, height=48,
-                      background_color=(0.4, 0.7, 0.4, 1))
-        save.bind(on_release=self._finish_lesson)
+        save = make_button("Готово", color=Theme.SUCCESS, callback=self._finish_lesson)
+        save.size_hint_y = None
+        save.height = 48
         self._body.add_widget(save)
 
     def _persist_row(self, row) -> None:
@@ -584,9 +656,9 @@ class LessonScreen(Screen):
 # --------------------------------------------------- расписание на сегодня
 # Статусы занятия и их отображение на экране расписания.
 LESSON_STATUS_LABEL = {
-    "scheduled": ("по расписанию", (0.35, 0.45, 0.65, 1)),
-    "held":      ("проведено ✓", (0.20, 0.55, 0.20, 1)),
-    "cancelled": ("отменено ✕", (0.65, 0.25, 0.25, 1)),
+    "scheduled": ("по расписанию", Theme.PRIMARY),
+    "held":      ("проведено ✓", Theme.SUCCESS),
+    "cancelled": ("отменено ✕", Theme.DANGER),
 }
 
 
@@ -608,17 +680,19 @@ class TodayScheduleScreen(Screen):
         self.clear_widgets()
         root = BoxLayout(orientation="vertical")
 
-        header = BoxLayout(orientation="horizontal", size_hint_y=None, height=52,
-                           padding=(12, 6), spacing=8)
-        back = Button(text="← Назад", size_hint_x=None, width=90)
-        back.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
+        header = BoxLayout(orientation="horizontal", size_hint_y=None, height=56,
+                           padding=(12, 8), spacing=8)
+        back = make_button("← Назад", color=Theme.TEXT_MUTED, width=None,
+                           callback=lambda *_: setattr(self.manager, "current", "home"))
+        back.size_hint_x = None
+        back.width = 80
         header.add_widget(back)
         header.add_widget(Label(text="[b]Сегодня[/b]", markup=True, font_size=20,
-                                color=(0.1, 0.1, 0.1, 1)))
+                                color=Theme.TEXT))
         root.add_widget(header)
         root.add_widget(Label(
             text=date.today().strftime("%d.%m.%Y"), size_hint_y=None, height=22,
-            color=(0.4, 0.4, 0.4, 1),
+            color=Theme.TEXT_MUTED,
         ))
 
         db = get_db()
@@ -632,7 +706,7 @@ class TodayScheduleScreen(Screen):
         if not lessons:
             box.add_widget(Label(
                 text="На сегодня занятий нет.\nНажмите «ДОБАВИТЬ ЗАНЯТИЕ».",
-                halign="center", valign="middle", color=(0.5, 0.5, 0.5, 1),
+                halign="center", valign="middle", color=Theme.TEXT_MUTED,
                 size_hint_y=None, height=80,
             ))
         else:
@@ -642,14 +716,14 @@ class TodayScheduleScreen(Screen):
         root.add_widget(scroll)
 
         # Нижняя панель действий.
-        actions = BoxLayout(orientation="horizontal", size_hint_y=None, height=50,
+        actions = BoxLayout(orientation="horizontal", size_hint_y=None, height=52,
                             spacing=8, padding=(8, 6))
-        add_les = Button(text="➕ ДОБАВИТЬ ЗАНЯТИЕ",
-                         background_color=(0.4, 0.7, 0.4, 1))
-        add_les.bind(on_release=self._add_lesson_dialog)
-        export = Button(text="📤 В календарь (.ics)", size_hint_x=None, width=170,
-                        background_color=(0.35, 0.55, 0.85, 1))
-        export.bind(on_release=self._export_calendar)
+        add_les = make_button("➕  ДОБАВИТЬ ЗАНЯТИЕ", color=Theme.SUCCESS,
+                              callback=self._add_lesson_dialog)
+        export = make_button("📤  В календарь (.ics)", width=None,
+                             callback=self._export_calendar)
+        export.size_hint_x = None
+        export.width = 180
         actions.add_widget(add_les)
         actions.add_widget(export)
         root.add_widget(actions)
@@ -667,17 +741,13 @@ class TodayScheduleScreen(Screen):
         held_at = les.get("held_at", "")
         time_str = held_at.split("T", 1)[1][:5] if "T" in held_at else ""
 
-        wrap = BoxLayout(orientation="horizontal", size_hint_y=None, height=70)
-        with wrap.canvas.before:
-            Color(0.95, 0.95, 0.97, 1)
-            wrap._bg = Rectangle(pos=wrap.pos, size=wrap.size)
-        wrap.bind(pos=lambda i, v: setattr(i._bg, "pos", v),
-                  size=lambda i, v: setattr(i._bg, "size", v))
+        wrap = BoxLayout(orientation="horizontal", size_hint_y=None, height=72)
+        card_bg(wrap)
 
-        inner = BoxLayout(orientation="vertical", padding=(10, 6), spacing=2)
+        inner = BoxLayout(orientation="vertical", padding=(12, 8), spacing=2)
         title = Label(
             text=f"[b]{time_str}  {les['subject_name']}[/b]  ({les['group_name']})",
-            markup=True, color=(0.1, 0.1, 0.1, 1), halign="left", valign="middle",
+            markup=True, color=Theme.TEXT, halign="left", valign="middle",
             size_hint_y=None, height=28,
         )
         title.bind(size=lambda i, v: setattr(i, "text_size", v))
@@ -691,8 +761,10 @@ class TodayScheduleScreen(Screen):
         inner.add_widget(title)
         inner.add_widget(sub)
 
-        open_btn = Button(text="Открыть", size_hint_x=None, width=90)
-        open_btn.bind(on_release=lambda *_: self._on_lesson_tap(les))
+        open_btn = make_button("Открыть", width=None,
+                               callback=lambda *_: self._on_lesson_tap(les))
+        open_btn.size_hint_x = None
+        open_btn.width = 90
 
         wrap.add_widget(inner)
         wrap.add_widget(open_btn)
@@ -844,13 +916,12 @@ class GradeBarChart(BoxLayout):
     Рисуется в canvas.after поверх виджета; подписи (ФИО/балл) — отдельными Label.
     """
 
-    # Цвета столбцов по «зоне» среднего балла (наглядность, без внешних библиотек).
     def __init__(self, data: list[dict], **kwargs):
         super().__init__(orientation="vertical", size_hint_y=None, height=220, **kwargs)
         # data — только студенты, у которых есть средний балл (avg_grade не None).
         self._data = [d for d in data if d.get("avg_grade") is not None]
         with self.canvas.before:
-            Color(1, 1, 1, 1)
+            Color(*Theme.CARD)
             self._bg = Rectangle(pos=self.pos, size=self.size)
         self.bind(pos=self._redraw, size=self._redraw)
 
@@ -862,7 +933,7 @@ class GradeBarChart(BoxLayout):
         self.clear_widgets()
         if not self._data:
             self.add_widget(Label(text="Нет выставленных оценок для диаграммы.",
-                                  color=(0.5, 0.5, 0.5, 1)))
+                                  color=Theme.TEXT_MUTED))
             return
 
         n = len(self._data)
@@ -878,12 +949,7 @@ class GradeBarChart(BoxLayout):
         def norm(v):
             return max(0.0, min(1.0, (v - 2.0) / 3.0))
 
-        grade_color = {
-            5: (0.20, 0.60, 0.25),   # зелёный
-            4: (0.30, 0.55, 0.85),   # синий
-            3: (0.85, 0.65, 0.20),   # жёлто-оранжевый
-            2: (0.80, 0.25, 0.25),   # красный
-        }
+        grade_color = Theme.GRADE_COLORS
         with self.canvas.after:
             for i, d in enumerate(self._data):
                 avg = float(d["avg_grade"])
@@ -893,14 +959,14 @@ class GradeBarChart(BoxLayout):
                 Color(r, g, b, 1)
                 Rectangle(pos=(x, base_y), size=(bar_w, h))
                 # Подпись балла над столбцом.
-                lbl = Label(text=f"{avg:.2f}", font_size=11, color=(0.1, 0.1, 0.1, 1),
+                lbl = Label(text=f"{avg:.2f}", font_size=11, color=Theme.TEXT,
                             size_hint=(None, None), size=(bar_w + gap, 20),
                             halign="center", valign="middle")
                 lbl.pos = (x - gap / 2, base_y + h + 2)
                 self.add_widget(lbl)
                 # Короткая подпись ФИО под столбцом (фамилия).
                 short = d["name"].split()[0] if d["name"] else ""
-                name_lbl = Label(text=short, font_size=10, color=(0.3, 0.3, 0.3, 1),
+                name_lbl = Label(text=short, font_size=10, color=Theme.TEXT_MUTED,
                                  size_hint=(None, None), size=(bar_w + gap, 30),
                                  halign="center", valign="top")
                 name_lbl.text_size = (bar_w + gap, 30)
@@ -923,13 +989,15 @@ class GradebookScreen(Screen):
         self.clear_widgets()
         self._root = BoxLayout(orientation="vertical")
 
-        header = BoxLayout(orientation="horizontal", size_hint_y=None, height=52,
-                           padding=(12, 6), spacing=8)
-        back = Button(text="← Назад", size_hint_x=None, width=90)
-        back.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
+        header = BoxLayout(orientation="horizontal", size_hint_y=None, height=56,
+                           padding=(12, 8), spacing=8)
+        back = make_button("← Назад", color=Theme.TEXT_MUTED, width=None,
+                           callback=lambda *_: setattr(self.manager, "current", "home"))
+        back.size_hint_x = None
+        back.width = 80
         header.add_widget(back)
         header.add_widget(Label(text="[b]Ведомость[/b]", markup=True, font_size=20,
-                                color=(0.1, 0.1, 0.1, 1)))
+                                color=Theme.TEXT))
         self._root.add_widget(header)
 
         db = get_db()
@@ -943,7 +1011,7 @@ class GradebookScreen(Screen):
         if not subjects:
             self._root.add_widget(Label(
                 text="Предметов пока нет.\nДобавьте предмет и проведите занятия.",
-                halign="center", valign="middle", color=(0.5, 0.5, 0.5, 1),
+                halign="center", valign="middle", color=Theme.TEXT_MUTED,
             ))
             self.add_widget(self._root)
             return
@@ -978,7 +1046,7 @@ class GradebookScreen(Screen):
                 text=f"Занятия: план [b]{summary['planned']}[/b]  •  "
                      f"проведено [b]{summary['held']}[/b]  •  "
                      f"осталось [b]{summary['remaining']}[/b]",
-                markup=True, size_hint_y=None, height=30, color=(0.15, 0.15, 0.15, 1),
+                markup=True, size_hint_y=None, height=30, color=Theme.TEXT,
             ))
 
         # --- Средний балл по предмету в целом ---
@@ -987,26 +1055,26 @@ class GradebookScreen(Screen):
         self._content.add_widget(Label(
             text=(f"Средний балл по предмету: [b]{overall}[/b]" if overall is not None
                   else "Средний балл по предмету: —"),
-            markup=True, size_hint_y=None, height=26, color=(0.15, 0.15, 0.15, 1),
+            markup=True, size_hint_y=None, height=26, color=Theme.TEXT,
         ))
 
         # --- Диаграмма (Kivy canvas) ---
         self._content.add_widget(Label(text="[b]Средний балл по студентам[/b]",
                                        markup=True, size_hint_y=None, height=24,
-                                       color=(0.2, 0.2, 0.2, 1)))
+                                       color=Theme.TEXT))
         self._content.add_widget(GradeBarChart(gradebook))
 
         # --- Пофамильная таблица ---
         self._content.add_widget(Label(text="[b]Пофамильно[/b]", markup=True,
                                        size_hint_y=None, height=24,
-                                       color=(0.2, 0.2, 0.2, 1)))
+                                       color=Theme.TEXT))
         # Заголовок таблицы.
         head = BoxLayout(orientation="horizontal", size_hint_y=None, height=26,
                          padding=(6, 0))
         for text, w in (("ФИО", 0.5), ("Ср. балл", 0.2),
                         ("Оценок", 0.15), ("Прис./Отс.", 0.15)):
             head.add_widget(Label(text=f"[b]{text}[/b]", markup=True, size_hint_x=w,
-                                  color=(0.3, 0.3, 0.3, 1), font_size=12))
+                                  color=Theme.TEXT_MUTED, font_size=12))
         self._content.add_widget(head)
 
         scroll = ScrollView()
@@ -1028,7 +1096,7 @@ class GradebookScreen(Screen):
             (f"{d['present_count']}/{d['absent_count']}", 0.15, "center"),
         )
         for text, w, align in cells:
-            lbl = Label(text=text, size_hint_x=w, color=(0.15, 0.15, 0.15, 1),
+            lbl = Label(text=text, size_hint_x=w, color=Theme.TEXT,
                         halign=align, valign="middle", font_size=13)
             lbl.bind(size=lambda i, v: setattr(i, "text_size", v))
             row.add_widget(lbl)
@@ -1040,7 +1108,7 @@ class LessonTrackerApp(App):
     title = "Учёт занятий"
 
     def build(self):
-        Window.clearcolor = (0.97, 0.97, 0.98, 1)
+        Window.clearcolor = Theme.BG
         self.sm = ScreenManager()
         self.sm.add_widget(HomeScreen(name="home"))
         self.sm.add_widget(AddSubjectScreen(name="add_subject"))
