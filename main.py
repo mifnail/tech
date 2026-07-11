@@ -215,12 +215,14 @@ class HomeScreen(Screen):
     def on_pre_enter(self, *_):
         self.clear_widgets()
 
+        outer = BoxLayout(orientation="vertical")
         root = BoxLayout(orientation="vertical",
-                         padding=(dp(16), dp(8), dp(16), dp(8)),
-                         spacing=dp(8))
+                         padding=(dp(12), dp(6), dp(12), dp(6)),
+                         spacing=dp(6))
+        outer.add_widget(root)
 
         header = BoxLayout(orientation="horizontal", size_hint_y=None,
-                           height=dp(56), spacing=dp(10))
+                           height=dp(52), spacing=dp(10))
         title = Label(text="[b]Мои предметы[/b]", markup=True,
                       font_size=sp(20), color=Theme.TEXT,
                       halign="left", valign="middle", size_hint_x=0.55)
@@ -235,7 +237,7 @@ class HomeScreen(Screen):
         root.add_widget(header)
 
         nav = BoxLayout(orientation="horizontal", size_hint_y=None,
-                        height=dp(50), spacing=dp(10))
+                        height=dp(46), spacing=dp(10))
         today_btn = Button(text="Расписание", font_size=sp(15), bold=True,
                            background_color=Theme.PRIMARY, background_normal="",
                            color=Theme.TEXT_BRIGHT, size_hint_x=0.5,
@@ -255,32 +257,31 @@ class HomeScreen(Screen):
         db.close()
 
         if not subjects:
-            empty_box = BoxLayout(orientation="vertical", size_hint_y=1,
-                                  spacing=dp(8))
-            empty_box.add_widget(Widget())
+            spacer = Widget(size_hint_y=1)
+            root.add_widget(spacer)
             lbl1 = Label(text="Предметов пока нет.",
                          halign="center", valign="middle", color=Theme.TEXT_MUTED,
-                         font_size=sp(18), size_hint_y=None, height=dp(36))
+                         font_size=sp(16), size_hint_y=None, height=dp(30))
             lbl1.bind(size=lambda i, v: setattr(i, "text_size", v))
-            empty_box.add_widget(lbl1)
+            root.add_widget(lbl1)
             lbl2 = Label(text="Нажмите «+ Предмет», чтобы добавить.",
                          halign="center", valign="middle", color=Theme.TEXT_MUTED,
-                         font_size=sp(14), size_hint_y=None, height=dp(28))
+                         font_size=sp(13), size_hint_y=None, height=dp(24))
             lbl2.bind(size=lambda i, v: setattr(i, "text_size", v))
-            empty_box.add_widget(lbl2)
-            empty_box.add_widget(Widget())
-            root.add_widget(empty_box)
+            root.add_widget(lbl2)
+            spacer2 = Widget(size_hint_y=1)
+            root.add_widget(spacer2)
         else:
             scroll = ScrollView()
             container = BoxLayout(orientation="vertical", size_hint_y=None,
-                                  spacing=dp(8))
+                                  spacing=dp(6))
             container.bind(minimum_height=container.setter("height"))
             for subj in subjects:
                 container.add_widget(SubjectRow(subj, on_press_row=self._open_lesson))
             scroll.add_widget(container)
             root.add_widget(scroll)
 
-        self.add_widget(root)
+        self.add_widget(outer)
 
     def _open_lesson(self, subject: dict):
         """
@@ -298,9 +299,12 @@ class AddSubjectScreen(Screen):
     def on_pre_enter(self, *_):
         self.clear_widgets()
 
+        outer = BoxLayout(orientation="vertical")
         root = BoxLayout(orientation="vertical",
-                         padding=(dp(16), dp(8), dp(16), dp(8)),
-                         spacing=dp(10))
+                         padding=(dp(12), dp(6), dp(12), dp(6)),
+                         spacing=dp(8))
+        outer.add_widget(root)
+
         root.add_widget(Label(text="[b]Новый предмет[/b]", markup=True, font_size=sp(20),
                               color=Theme.TEXT, size_hint_y=None, height=dp(44)))
 
@@ -361,7 +365,7 @@ class AddSubjectScreen(Screen):
         buttons.add_widget(save)
         root.add_widget(buttons)
 
-        self.add_widget(root)
+        self.add_widget(outer)
 
     def _on_group_change(self, _spinner, value):
         self._show_new_group(value == NEW_GROUP_OPTION)
@@ -409,9 +413,11 @@ class StudentsScreen(Screen):
     def on_pre_enter(self, *_):
         self.clear_widgets()
 
+        outer = BoxLayout(orientation="vertical")
         root = BoxLayout(orientation="vertical",
-                         padding=(dp(16), dp(8), dp(16), dp(8)),
-                         spacing=dp(10))
+                         padding=(dp(12), dp(6), dp(12), dp(6)),
+                         spacing=dp(8))
+        outer.add_widget(root)
 
         root.add_widget(Label(
             text=f"[b]Студенты группы {self.target_group}[/b]", markup=True,
@@ -468,7 +474,7 @@ class StudentsScreen(Screen):
         buttons.add_widget(add)
         root.add_widget(buttons)
 
-        self.add_widget(root)
+        self.add_widget(outer)
 
     def _add_bulk(self, *_):
         lines = self.bulk_input.text.split("\n")
@@ -581,9 +587,11 @@ class LessonScreen(Screen):
         self.clear_widgets()
         self._rows = []
 
+        outer = BoxLayout(orientation="vertical")
         root = BoxLayout(orientation="vertical",
-                         padding=(dp(16), dp(8), dp(16), dp(8)),
-                         spacing=dp(8))
+                         padding=(dp(12), dp(6), dp(12), dp(6)),
+                         spacing=dp(6))
+        outer.add_widget(root)
         self._header = Label(
             text="", markup=True, font_size=sp(18), color=Theme.TEXT,
             size_hint_y=None, height=dp(40),
@@ -591,7 +599,7 @@ class LessonScreen(Screen):
         root.add_widget(self._header)
         self._body = BoxLayout(orientation="vertical", spacing=dp(8))
         root.add_widget(self._body)
-        self.add_widget(root)
+        self.add_widget(outer)
         self._show_attendance()
 
     def _show_attendance(self, *_):
@@ -720,12 +728,14 @@ class TodayScheduleScreen(Screen):
     def on_pre_enter(self, *_):
         self.clear_widgets()
 
+        outer = BoxLayout(orientation="vertical")
         root = BoxLayout(orientation="vertical",
-                         padding=(dp(16), dp(8), dp(16), dp(8)),
-                         spacing=dp(8))
+                         padding=(dp(12), dp(6), dp(12), dp(6)),
+                         spacing=dp(6))
+        outer.add_widget(root)
 
         header = BoxLayout(orientation="horizontal", size_hint_y=None,
-                           height=dp(56), spacing=dp(10))
+                           height=dp(52), spacing=dp(10))
         back = Button(text="← Назад", font_size=sp(15), bold=True,
                       background_color=Theme.TEXT_MUTED, background_normal="",
                       color=Theme.TEXT_BRIGHT, size_hint_x=0.3, size_hint_y=1)
@@ -736,7 +746,7 @@ class TodayScheduleScreen(Screen):
         header.add_widget(hdr_label)
         root.add_widget(header)
         root.add_widget(Label(
-            text=date.today().strftime("%d.%m.%Y"), size_hint_y=None, height=dp(24),
+            text=date.today().strftime("%d.%m.%Y"), size_hint_y=None, height=dp(22),
             color=Theme.TEXT_MUTED, font_size=sp(14),
         ))
 
@@ -774,7 +784,7 @@ class TodayScheduleScreen(Screen):
         actions.add_widget(export)
         root.add_widget(actions)
 
-        self.add_widget(root)
+        self.add_widget(outer)
 
     def _lesson_row(self, les: dict):
         """
@@ -788,10 +798,11 @@ class TodayScheduleScreen(Screen):
         time_str = held_at.split("T", 1)[1][:5] if "T" in held_at else ""
 
         wrap = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(72),
-                         spacing=dp(8), padding=[dp(4), dp(4)])
+                         spacing=dp(8))
         card_bg(wrap)
 
-        inner = BoxLayout(orientation="vertical", padding=[dp(10), dp(6)], spacing=dp(2))
+        inner = BoxLayout(orientation="vertical", padding=(dp(10), dp(6), dp(10), dp(6)),
+                          spacing=dp(2))
         title = Label(
             text=f"[b]{time_str}  {les['subject_name']}[/b]  ({les['group_name']})",
             markup=True, color=Theme.TEXT, halign="left", valign="middle",
@@ -1035,12 +1046,14 @@ class GradebookScreen(Screen):
     def on_pre_enter(self, *_):
         self.clear_widgets()
 
+        outer = BoxLayout(orientation="vertical")
         root = BoxLayout(orientation="vertical",
-                         padding=(dp(16), dp(8), dp(16), dp(8)),
-                         spacing=dp(8))
+                         padding=(dp(12), dp(6), dp(12), dp(6)),
+                         spacing=dp(6))
+        outer.add_widget(root)
 
         header = BoxLayout(orientation="horizontal", size_hint_y=None,
-                           height=dp(56), spacing=dp(10))
+                           height=dp(52), spacing=dp(10))
         back = Button(text="← Назад", font_size=sp(15), bold=True,
                       background_color=Theme.TEXT_MUTED, background_normal="",
                       color=Theme.TEXT_BRIGHT, size_hint_x=0.3, size_hint_y=1)
@@ -1063,7 +1076,7 @@ class GradebookScreen(Screen):
                 text="Предметов пока нет.\nДобавьте предмет и проведите занятия.",
                 halign="center", valign="middle", color=Theme.TEXT_MUTED,
             ))
-            self.add_widget(root)
+            self.add_widget(outer)
             return
 
         labels = list(self._label_to_id.keys())
@@ -1074,7 +1087,7 @@ class GradebookScreen(Screen):
 
         self._content = BoxLayout(orientation="vertical")
         root.add_widget(self._content)
-        self.add_widget(root)
+        self.add_widget(outer)
 
         self._render_subject()
 
