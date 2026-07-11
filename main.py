@@ -1,55 +1,76 @@
 """
-main.py — точка входа LessonTracker (Flask + WebView).
-Локально:    python main.py
-На Android:  python main.py --android
+main.py — LessonTracker.
+Desktop:  python main.py
+Prod:     python main.py --prod
+Android:  Kivy bootstrap → WebView c Flask SPA
 """
-import argparse
 import os
 import sys
 import threading
-import webbrowser
 
 from api import app
 
 
-def serve_dev():
-    threading.Thread(target=_open_browser, daemon=True).start()
-    app.run(host="0.0.0.0", port=5000, debug=True)
-
-
-def serve_prod():
-    from waitress import serve
+def _start_flask():
     port = int(os.environ.get("PORT", 5000))
-    serve(app, host="0.0.0.0", port=port)
+    if os.environ.get("MODE") == "prod" or "--prod" in sys.argv:
+        from waitress import serve
+        serve(app, host="0.0.0.0", port=port)
+    else:
+        app.run(host="0.0.0.0", port=port, debug=True)
+
+
+# ---- entry points -------------------------------------------------
+def serve_dev():
+    import webbrowser
+    def _open():
+        import time; time.sleep(1.5)
+        webbrowser.open("http://127.0.0.1:5000")
+    threading.Thread(target=_open, daemon=True).start()
+    _start_flask()
 
 
 def serve_android():
-    """Запуск Flask + pywebview в одном процессе."""
-    import time
+    """Запуск через Kivy bootstrap → замена на Android WebView."""
+    from kivy.app import App
+    from kivy.uix.label import Label
+    from kivy.clock import Clock
 
-    def _start_flask():
-        from waitress import serve
-        serve(app, host="127.0.0.1", port=5000)
+    threading.Thread(target=_start_flask, daemon=True).start()
 
-    t = threading.Thread(target=_start_flask, daemon=True)
-    t.start()
-    time.sleep(1.5)
-    import webview
-    webview.create_window("Учёт занятий", "http://127.0.0.1:5000")
-    webview.start()
+    class MainApp(App):
+        def build(self):
+            Clock.schedule_once(self._show_webview, 2.5)
+            return Label(text="Загрузка…")
+
+        def _show_webview(self, dt):
+            try:
+                from jnius import autoclass
+                PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                WebView = autoclass("android.webkit.WebView")
+                WebViewClient = autoclass("android.webkit.WebViewClient")
+                LayoutParams = autoclass("android.view.ViewGroup$LayoutParams")
+
+                activity = PythonActivity.mActivity
+                wv = WebView(activity)
+                wv.getSettings().setJavaScriptEnabled(True)
+                wv.getSettings().setDomStorageEnabled(True)
+                wv.setWebViewClient(WebViewClient())
+                wv.loadUrl("http://127.0.0.1:5000")
+                activity.setContentView(wv, LayoutParams(
+                    LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+            except Exception:
+                import webbrowser
+                webbrowser.open("http://127.0.0.1:5000")
+
+    MainApp().run()
 
 
-def _open_browser():
-    import time
-    time.sleep(1.5)
-    webbrowser.open("http://127.0.0.1:5000")
-
-
+# ---- CLI -----------------------------------------------------------
 if __name__ == "__main__":
-    mode = "--android" if "--android" in sys.argv else os.environ.get("MODE", "dev")
-    if mode == "android":
+    if "--android" in sys.argv:
         serve_android()
-    elif mode == "prod":
-        serve_prod()
+    elif "--prod" in sys.argv:
+        _start_flask()
     else:
         serve_dev()

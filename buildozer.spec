@@ -1,6 +1,6 @@
 # buildozer.spec — конфигурация сборки Android debug-APK.
-# Flask + WebView (pywebview) → SPA на HTML/CSS/JS.
-# Версии инструментов пинуются в CI (см. .github/workflows/build-apk.yml).
+# Kivy используется ТОЛЬКО как bootstrap (нужен для sdl2-активити).
+# UI полностью на HTML/CSS/JS через Android WebView в jnius.
 
 [app]
 title = Учёт занятий
@@ -9,10 +9,10 @@ package.domain = org.lessontracker
 
 source.dir = .
 source.include_exts = py,png,jpg,html,css,js
-version = 0.2
+version = 0.3
 
-# pywebview + Flask (Kivy полностью удалён)
-requirements = python3,flask==3.1.3,waitress==3.0.2,pywebview
+# Kivy — только для bootstrap (sdl2 Activity). Весь UI — WebView + Flask.
+requirements = python3,kivy==2.3.1,flask==3.1.3,waitress==3.0.2,pyjnius
 
 orientation = portrait
 fullscreen = 0
@@ -24,8 +24,6 @@ android.archs = arm64-v8a
 android.allow_backup = 1
 android.accept_sdk_license = True
 android.ndk = 25c
-
-# Flask использует werkzeug — не указывать отдельно, входит в flask
 
 [buildozer]
 log_level = 2
