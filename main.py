@@ -214,12 +214,12 @@ class HomeScreen(Screen):
 
     def on_pre_enter(self, *_):
         self.clear_widgets()
+        Clock.schedule_once(self._build, 0)
 
-        outer = BoxLayout(orientation="vertical")
+    def _build(self, _dt):
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(6))
-        outer.add_widget(root)
 
         header = BoxLayout(orientation="horizontal", size_hint_y=None,
                            height=dp(52), spacing=dp(10))
@@ -257,8 +257,7 @@ class HomeScreen(Screen):
         db.close()
 
         if not subjects:
-            spacer = Widget(size_hint_y=1)
-            root.add_widget(spacer)
+            root.add_widget(Widget(size_hint_y=1))
             lbl1 = Label(text="Предметов пока нет.",
                          halign="center", valign="middle", color=Theme.TEXT_MUTED,
                          font_size=sp(16), size_hint_y=None, height=dp(30))
@@ -269,8 +268,7 @@ class HomeScreen(Screen):
                          font_size=sp(13), size_hint_y=None, height=dp(24))
             lbl2.bind(size=lambda i, v: setattr(i, "text_size", v))
             root.add_widget(lbl2)
-            spacer2 = Widget(size_hint_y=1)
-            root.add_widget(spacer2)
+            root.add_widget(Widget(size_hint_y=1))
         else:
             scroll = ScrollView()
             container = BoxLayout(orientation="vertical", size_hint_y=None,
@@ -281,7 +279,7 @@ class HomeScreen(Screen):
             scroll.add_widget(container)
             root.add_widget(scroll)
 
-        self.add_widget(outer)
+        self.add_widget(root)
 
     def _open_lesson(self, subject: dict):
         """
@@ -298,12 +296,12 @@ class AddSubjectScreen(Screen):
 
     def on_pre_enter(self, *_):
         self.clear_widgets()
+        Clock.schedule_once(self._build, 0)
 
-        outer = BoxLayout(orientation="vertical")
+    def _build(self, _dt):
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(8))
-        outer.add_widget(root)
 
         root.add_widget(Label(text="[b]Новый предмет[/b]", markup=True, font_size=sp(20),
                               color=Theme.TEXT, size_hint_y=None, height=dp(44)))
@@ -365,7 +363,7 @@ class AddSubjectScreen(Screen):
         buttons.add_widget(save)
         root.add_widget(buttons)
 
-        self.add_widget(outer)
+        self.add_widget(root)
 
     def _on_group_change(self, _spinner, value):
         self._show_new_group(value == NEW_GROUP_OPTION)
@@ -412,12 +410,12 @@ class StudentsScreen(Screen):
 
     def on_pre_enter(self, *_):
         self.clear_widgets()
+        Clock.schedule_once(self._build, 0)
 
-        outer = BoxLayout(orientation="vertical")
+    def _build(self, _dt):
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(8))
-        outer.add_widget(root)
 
         root.add_widget(Label(
             text=f"[b]Студенты группы {self.target_group}[/b]", markup=True,
@@ -474,7 +472,7 @@ class StudentsScreen(Screen):
         buttons.add_widget(add)
         root.add_widget(buttons)
 
-        self.add_widget(outer)
+        self.add_widget(root)
 
     def _add_bulk(self, *_):
         lines = self.bulk_input.text.split("\n")
@@ -585,13 +583,14 @@ class LessonScreen(Screen):
 
     def on_pre_enter(self, *_):
         self.clear_widgets()
+        Clock.schedule_once(self._build, 0)
+
+    def _build(self, _dt):
         self._rows = []
 
-        outer = BoxLayout(orientation="vertical")
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(6))
-        outer.add_widget(root)
         self._header = Label(
             text="", markup=True, font_size=sp(18), color=Theme.TEXT,
             size_hint_y=None, height=dp(40),
@@ -599,7 +598,7 @@ class LessonScreen(Screen):
         root.add_widget(self._header)
         self._body = BoxLayout(orientation="vertical", spacing=dp(8))
         root.add_widget(self._body)
-        self.add_widget(outer)
+        self.add_widget(root)
         self._show_attendance()
 
     def _show_attendance(self, *_):
@@ -727,12 +726,12 @@ class TodayScheduleScreen(Screen):
 
     def on_pre_enter(self, *_):
         self.clear_widgets()
+        Clock.schedule_once(self._build, 0)
 
-        outer = BoxLayout(orientation="vertical")
+    def _build(self, _dt):
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(6))
-        outer.add_widget(root)
 
         header = BoxLayout(orientation="horizontal", size_hint_y=None,
                            height=dp(52), spacing=dp(10))
@@ -784,7 +783,7 @@ class TodayScheduleScreen(Screen):
         actions.add_widget(export)
         root.add_widget(actions)
 
-        self.add_widget(outer)
+        self.add_widget(root)
 
     def _lesson_row(self, les: dict):
         """
@@ -1045,12 +1044,12 @@ class GradebookScreen(Screen):
 
     def on_pre_enter(self, *_):
         self.clear_widgets()
+        Clock.schedule_once(self._build, 0)
 
-        outer = BoxLayout(orientation="vertical")
+    def _build(self, _dt):
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(6))
-        outer.add_widget(root)
 
         header = BoxLayout(orientation="horizontal", size_hint_y=None,
                            height=dp(52), spacing=dp(10))
@@ -1076,7 +1075,7 @@ class GradebookScreen(Screen):
                 text="Предметов пока нет.\nДобавьте предмет и проведите занятия.",
                 halign="center", valign="middle", color=Theme.TEXT_MUTED,
             ))
-            self.add_widget(outer)
+            self.add_widget(root)
             return
 
         labels = list(self._label_to_id.keys())
@@ -1087,7 +1086,7 @@ class GradebookScreen(Screen):
 
         self._content = BoxLayout(orientation="vertical")
         root.add_widget(self._content)
-        self.add_widget(outer)
+        self.add_widget(root)
 
         self._render_subject()
 
