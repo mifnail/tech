@@ -10,6 +10,22 @@ import threading
 
 from api import app
 
+# ---- crash reporter config -----------------------------------------
+# Раскомментируйте нужный вариант и заполните свои параметры.
+# Вариант A: Telegram (бот + chat_id)
+#   import telebot; from crash_reporter import CrashReporter
+#   reporter = CrashReporter("telegram", bot_token="...", chat_id="...")
+#
+# Вариант B: любой HTTP-эндпоинт
+#   reporter = CrashReporter("webhook", url="https://your-server.com/crash")
+#
+# Вариант C: Sentry
+#   pip install sentry-sdk
+#   reporter = CrashReporter("sentry")
+#
+# Вариант D: файл на телефоне (по умолчанию, ничего делать не надо)
+reporter = None  # заменить на CrashReporter(...) когда понадобится
+
 
 def _start_flask():
     port = int(os.environ.get("PORT", 5000))
@@ -63,7 +79,25 @@ def serve_android():
                 import webbrowser
                 webbrowser.open("http://127.0.0.1:5000")
 
-    MainApp().run()
+    try:
+        MainApp().run()
+    except Exception:
+        import traceback
+        _dump_crash(traceback.format_exc())
+        raise
+
+
+def _dump_crash(text: str):
+    """Файловый fallback — пишет в /sdcard если доступно, иначе в CWD."""
+    paths = ["/sdcard/lessontracker_crash.log",
+             os.path.join(os.path.dirname(__file__), "crash.log")]
+    for p in paths:
+        try:
+            with open(p, "a", encoding="utf-8") as f:
+                f.write(f"=== {datetime.now().isoformat()} ===\n{text}\n")
+            return
+        except OSError:
+            continue
 
 
 # ---- CLI -----------------------------------------------------------
