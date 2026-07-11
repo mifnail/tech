@@ -212,11 +212,9 @@ class SubjectRow(ButtonBehavior, BoxLayout):
 class HomeScreen(Screen):
     """Главный экран: заголовок, кнопка «+ Предмет» и прокручиваемый список предметов."""
 
-    def on_pre_enter(self, *_):
-        self.clear_widgets()
-        Clock.schedule_once(self._build, 0)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
-    def _build(self, _dt):
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(6))
@@ -232,7 +230,7 @@ class HomeScreen(Screen):
                          background_color=Theme.PRIMARY, background_normal="",
                          color=Theme.TEXT_BRIGHT, size_hint_x=0.45,
                          size_hint_y=1)
-        add_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "add_subject"))
+        add_btn.bind(on_release=lambda *_: self._go("add_subject"))
         header.add_widget(add_btn)
         root.add_widget(header)
 
@@ -242,33 +240,45 @@ class HomeScreen(Screen):
                            background_color=Theme.PRIMARY, background_normal="",
                            color=Theme.TEXT_BRIGHT, size_hint_x=0.5,
                            size_hint_y=1)
-        today_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "today"))
+        today_btn.bind(on_release=lambda *_: self._go("today"))
         grades_btn = Button(text="Ведомость", font_size=sp(15), bold=True,
                             background_color=Theme.SUCCESS, background_normal="",
                             color=Theme.TEXT_BRIGHT, size_hint_x=0.5,
                             size_hint_y=1)
-        grades_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "gradebook"))
+        grades_btn.bind(on_release=lambda *_: self._go("gradebook"))
         nav.add_widget(today_btn)
         nav.add_widget(grades_btn)
         root.add_widget(nav)
+
+        self.content = BoxLayout(orientation="vertical")
+        root.add_widget(self.content)
+
+        self.add_widget(root)
+
+    def _go(self, screen: str):
+        if self.manager:
+            self.manager.current = screen
+
+    def on_pre_enter(self, *_):
+        self.content.clear_widgets()
 
         db = get_db()
         subjects = db.list_subjects()
         db.close()
 
         if not subjects:
-            root.add_widget(Widget(size_hint_y=1))
+            self.content.add_widget(Widget(size_hint_y=1))
             lbl1 = Label(text="Предметов пока нет.",
                          halign="center", valign="middle", color=Theme.TEXT_MUTED,
                          font_size=sp(16), size_hint_y=None, height=dp(30))
             lbl1.bind(size=lambda i, v: setattr(i, "text_size", v))
-            root.add_widget(lbl1)
+            self.content.add_widget(lbl1)
             lbl2 = Label(text="Нажмите «+ Предмет», чтобы добавить.",
                          halign="center", valign="middle", color=Theme.TEXT_MUTED,
                          font_size=sp(13), size_hint_y=None, height=dp(24))
             lbl2.bind(size=lambda i, v: setattr(i, "text_size", v))
-            root.add_widget(lbl2)
-            root.add_widget(Widget(size_hint_y=1))
+            self.content.add_widget(lbl2)
+            self.content.add_widget(Widget(size_hint_y=1))
         else:
             scroll = ScrollView()
             container = BoxLayout(orientation="vertical", size_hint_y=None,
@@ -277,28 +287,19 @@ class HomeScreen(Screen):
             for subj in subjects:
                 container.add_widget(SubjectRow(subj, on_press_row=self._open_lesson))
             scroll.add_widget(container)
-            root.add_widget(scroll)
-
-        self.add_widget(root)
+            self.content.add_widget(scroll)
 
     def _open_lesson(self, subject: dict):
-        """
-        Тап по предмету на сводном экране → открываем расписание сегодняшнего дня.
-        Отметка присутствия/оценок ведётся уже на экране «Сегодня» по конкретному
-        занятию (несколько занятий по предмету в день — норма).
-        """
-        self.manager.current = "today"
+        self._go("today")
 
 
 # ------------------------------------------------------------- ввод предмета
 class AddSubjectScreen(Screen):
     """Ввод нового предмета: название, план в занятиях, выбор/создание группы."""
 
-    def on_pre_enter(self, *_):
-        self.clear_widgets()
-        Clock.schedule_once(self._build, 0)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
-    def _build(self, _dt):
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(8))
@@ -321,12 +322,9 @@ class AddSubjectScreen(Screen):
 
         root.add_widget(Label(text="Группа:", size_hint_y=None, height=dp(22),
                               halign="left", color=Theme.TEXT, font_size=sp(14)))
-        db = get_db()
-        groups = [g["name"] for g in db.list_groups()]
-        db.close()
         self.group_spinner = Spinner(
-            text=groups[0] if groups else NEW_GROUP_OPTION,
-            values=groups + [NEW_GROUP_OPTION],
+            text=NEW_GROUP_OPTION,
+            values=[NEW_GROUP_OPTION],
             size_hint_y=None, height=dp(40), font_size=sp(14),
         )
         self.group_spinner.bind(text=self._on_group_change)
@@ -335,12 +333,10 @@ class AddSubjectScreen(Screen):
         self.new_group_input = TextInput(
             multiline=False, size_hint_y=None, height=dp(40),
             hint_text="Название новой группы", font_size=sp(14),
-            padding=[dp(8), dp(8)],
+            padding=(dp(8), dp(8), dp(8), dp(8)),
         )
         self.new_group_input.opacity = 0
         self.new_group_input.disabled = True
-        if not groups:
-            self._show_new_group(True)
         root.add_widget(self.new_group_input)
 
         self.status = Label(text="", size_hint_y=None, height=dp(24),
@@ -354,7 +350,7 @@ class AddSubjectScreen(Screen):
         back = Button(text="Назад", font_size=sp(14), bold=True,
                       background_color=Theme.TEXT_MUTED, background_normal="",
                       color=Theme.TEXT_BRIGHT, size_hint_x=0.5, size_hint_y=1)
-        back.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
+        back.bind(on_release=lambda *_: self._go("home"))
         save = Button(text="Сохранить", font_size=sp(14), bold=True,
                       background_color=Theme.SUCCESS, background_normal="",
                       color=Theme.TEXT_BRIGHT, size_hint_x=0.5, size_hint_y=1)
@@ -364,6 +360,21 @@ class AddSubjectScreen(Screen):
         root.add_widget(buttons)
 
         self.add_widget(root)
+
+    def _go(self, screen: str):
+        if self.manager:
+            self.manager.current = screen
+
+    def on_pre_enter(self, *_):
+        db = get_db()
+        groups = [g["name"] for g in db.list_groups()]
+        db.close()
+        self.group_spinner.values = groups + [NEW_GROUP_OPTION]
+        if groups:
+            self.group_spinner.text = groups[0]
+        else:
+            self.group_spinner.text = NEW_GROUP_OPTION
+            self._show_new_group(True)
 
     def _on_group_change(self, _spinner, value):
         self._show_new_group(value == NEW_GROUP_OPTION)
@@ -399,7 +410,7 @@ class AddSubjectScreen(Screen):
         # После создания предмета — сразу перейти к вводу студентов этой группы.
         students_screen = self.manager.get_screen("students")
         students_screen.target_group = group
-        self.manager.current = "students"
+        self._go("students")
 
 
 # ------------------------------------------------------------- ввод студентов
@@ -408,42 +419,28 @@ class StudentsScreen(Screen):
 
     target_group = ""  # какую группу редактируем (задаётся перед входом)
 
-    def on_pre_enter(self, *_):
-        self.clear_widgets()
-        Clock.schedule_once(self._build, 0)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
-    def _build(self, _dt):
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(8))
 
-        root.add_widget(Label(
-            text=f"[b]Студенты группы {self.target_group}[/b]", markup=True,
+        self._header_label = Label(
+            text="", markup=True,
             font_size=sp(18), color=Theme.TEXT, size_hint_y=None, height=dp(40),
-        ))
-
-        db = get_db()
-        existing = [s["name"] for s in db.list_students(self.target_group)]
-        db.close()
+        )
+        root.add_widget(self._header_label)
 
         root.add_widget(Label(
-            text=f"Уже в группе ({len(existing)}):", size_hint_y=None, height=dp(22),
+            text="Уже в группе:", size_hint_y=None, height=dp(22),
             halign="left", color=Theme.TEXT, font_size=sp(14),
         ))
-        exist_scroll = ScrollView(size_hint_y=0.35)
-        exist_box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(2))
-        exist_box.bind(minimum_height=exist_box.setter("height"))
-        if existing:
-            for nm in existing:
-                lbl = Label(text=nm, size_hint_y=None, height=dp(26), halign="left",
-                            valign="middle", color=Theme.TEXT, font_size=sp(14))
-                lbl.bind(size=lambda inst, val: setattr(inst, "text_size", val))
-                exist_box.add_widget(lbl)
-        else:
-            exist_box.add_widget(Label(text="— пока никого —", size_hint_y=None,
-                                       height=dp(26), color=Theme.TEXT_MUTED))
-        exist_scroll.add_widget(exist_box)
-        root.add_widget(exist_scroll)
+        self._exist_scroll = ScrollView(size_hint_y=0.35)
+        self._exist_box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(2))
+        self._exist_box.bind(minimum_height=self._exist_box.setter("height"))
+        self._exist_scroll.add_widget(self._exist_box)
+        root.add_widget(self._exist_scroll)
 
         root.add_widget(Label(
             text="Добавить студентов (каждый с новой строки):",
@@ -463,7 +460,7 @@ class StudentsScreen(Screen):
         home = Button(text="На главный", font_size=sp(15), bold=True,
                       background_color=Theme.TEXT_MUTED, background_normal="",
                       color=Theme.TEXT_BRIGHT, size_hint_x=0.5, size_hint_y=1)
-        home.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
+        home.bind(on_release=lambda *_: self._go("home"))
         add = Button(text="Добавить", font_size=sp(15), bold=True,
                      background_color=Theme.SUCCESS, background_normal="",
                      color=Theme.TEXT_BRIGHT, size_hint_x=0.5, size_hint_y=1)
@@ -473,6 +470,30 @@ class StudentsScreen(Screen):
         root.add_widget(buttons)
 
         self.add_widget(root)
+
+    def _go(self, screen: str):
+        if self.manager:
+            self.manager.current = screen
+
+    def on_pre_enter(self, *_):
+        self._header_label.text = f"[b]Студенты группы {self.target_group}[/b]"
+
+        db = get_db()
+        existing = [s["name"] for s in db.list_students(self.target_group)]
+        db.close()
+
+        self._exist_box.clear_widgets()
+        if existing:
+            for nm in existing:
+                lbl = Label(text=nm, size_hint_y=None, height=dp(26), halign="left",
+                            valign="middle", color=Theme.TEXT, font_size=sp(14))
+                lbl.bind(size=lambda inst, val: setattr(inst, "text_size", val))
+                self._exist_box.add_widget(lbl)
+        else:
+            self._exist_box.add_widget(Label(text="— пока никого —", size_hint_y=None,
+                                              height=dp(26), color=Theme.TEXT_MUTED))
+        self.bulk_input.text = ""
+        self.status.text = ""
 
     def _add_bulk(self, *_):
         lines = self.bulk_input.text.split("\n")
@@ -581,12 +602,8 @@ class LessonScreen(Screen):
     # попадаем уже для проведённого занятия, поэтому при входе статус → 'held'.
     lesson_id = None
 
-    def on_pre_enter(self, *_):
-        self.clear_widgets()
-        Clock.schedule_once(self._build, 0)
-
-    def _build(self, _dt):
-        self._rows = []
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
@@ -599,20 +616,11 @@ class LessonScreen(Screen):
         self._body = BoxLayout(orientation="vertical", spacing=dp(8))
         root.add_widget(self._body)
         self.add_widget(root)
+
+    def on_pre_enter(self, *_):
         self._show_attendance()
 
     def _show_attendance(self, *_):
-        """
-        Показать список студентов группы КОНКРЕТНОГО занятия (self.lesson_id) для
-        отметки нажатием на ФИО.
-
-        Модель: по одному предмету в день может быть НЕСКОЛЬКО занятий, поэтому мы
-        работаем с уже выбранным на расписании занятием (а не «одно занятие в день»).
-          1) при входе занятие помечается как проведённое (status='held') — учитывается;
-          2) сохранённые ранее отметки/оценки подтягиваются из БД в строки;
-          3) каждый тап по ФИО тут же пишется в БД (см. _persist_row) — ничего не теряется
-             при повторном открытии занятия.
-        """
         self._body.clear_widgets()
         self._rows = []
 
@@ -626,7 +634,6 @@ class LessonScreen(Screen):
                 color=Theme.DANGER,
             ))
             return
-        # Открыли занятие для отметки → оно считается проведённым.
         db.set_lesson_status(self._lesson_id, "held")
         self._header.text = f"[b]{lesson['subject_name']}[/b]  ({lesson['group_name']})"
         students = db.list_students(lesson["group_name"])
@@ -664,8 +671,6 @@ class LessonScreen(Screen):
         save.bind(on_release=self._finish_lesson)
         self._body.add_widget(save)
 
-        self._body.add_widget(save)
-
     def _persist_row(self, row) -> None:
         """Немедленно сохранить отметку одного студента (auto-save при каждом тапе)."""
         db = get_db()
@@ -698,7 +703,7 @@ class LessonScreen(Screen):
               content=Label(text="Занятие и отметки сохранены."),
               size_hint=(0.8, 0.3)).open()
         # Возврат на экран расписания сегодняшнего дня (откуда мы и пришли).
-        self.manager.current = "today"
+        self._go("today")
 
 
 # --------------------------------------------------- расписание на сегодня
@@ -724,11 +729,9 @@ class TodayScheduleScreen(Screen):
     в .ics (Google/Яндекс).
     """
 
-    def on_pre_enter(self, *_):
-        self.clear_widgets()
-        Clock.schedule_once(self._build, 0)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
-    def _build(self, _dt):
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(6))
@@ -738,7 +741,7 @@ class TodayScheduleScreen(Screen):
         back = Button(text="← Назад", font_size=sp(15), bold=True,
                       background_color=Theme.TEXT_MUTED, background_normal="",
                       color=Theme.TEXT_BRIGHT, size_hint_x=0.3, size_hint_y=1)
-        back.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
+        back.bind(on_release=lambda *_: self._go("home"))
         header.add_widget(back)
         hdr_label = Label(text="[b]Сегодня[/b]", markup=True, font_size=sp(20),
                           color=Theme.TEXT, size_hint_x=0.7)
@@ -748,6 +751,32 @@ class TodayScheduleScreen(Screen):
             text=date.today().strftime("%d.%m.%Y"), size_hint_y=None, height=dp(22),
             color=Theme.TEXT_MUTED, font_size=sp(14),
         ))
+
+        self.content = BoxLayout(orientation="vertical")
+        root.add_widget(self.content)
+
+        actions = BoxLayout(orientation="horizontal", size_hint_y=None,
+                            height=dp(52), spacing=dp(10))
+        add_les = Button(text="+ ДОБАВИТЬ", font_size=sp(15), bold=True,
+                         background_color=Theme.SUCCESS, background_normal="",
+                         color=Theme.TEXT_BRIGHT, size_hint_x=0.6, size_hint_y=1)
+        add_les.bind(on_release=self._add_lesson_dialog)
+        export = Button(text="ICS", font_size=sp(15), bold=True,
+                        background_color=Theme.PRIMARY, background_normal="",
+                        color=Theme.TEXT_BRIGHT, size_hint_x=0.4, size_hint_y=1)
+        export.bind(on_release=self._export_calendar)
+        actions.add_widget(add_les)
+        actions.add_widget(export)
+        root.add_widget(actions)
+
+        self.add_widget(root)
+
+    def _go(self, screen: str):
+        if self.manager:
+            self.manager.current = screen
+
+    def on_pre_enter(self, *_):
+        self.content.clear_widgets()
 
         db = get_db()
         lessons = db.list_schedule_for_date(date.today().isoformat())
@@ -766,24 +795,7 @@ class TodayScheduleScreen(Screen):
             for les in lessons:
                 box.add_widget(self._lesson_row(les))
         scroll.add_widget(box)
-        root.add_widget(scroll)
-
-        # Нижняя панель действий.
-        actions = BoxLayout(orientation="horizontal", size_hint_y=None,
-                            height=dp(52), spacing=dp(10))
-        add_les = Button(text="+ ДОБАВИТЬ", font_size=sp(15), bold=True,
-                         background_color=Theme.SUCCESS, background_normal="",
-                         color=Theme.TEXT_BRIGHT, size_hint_x=0.6, size_hint_y=1)
-        add_les.bind(on_release=self._add_lesson_dialog)
-        export = Button(text="ICS", font_size=sp(15), bold=True,
-                        background_color=Theme.PRIMARY, background_normal="",
-                        color=Theme.TEXT_BRIGHT, size_hint_x=0.4, size_hint_y=1)
-        export.bind(on_release=self._export_calendar)
-        actions.add_widget(add_les)
-        actions.add_widget(export)
-        root.add_widget(actions)
-
-        self.add_widget(root)
+        self.content.add_widget(scroll)
 
     def _lesson_row(self, les: dict):
         """
@@ -846,10 +858,9 @@ class TodayScheduleScreen(Screen):
         popup.open()
 
     def _open_marking(self, les: dict):
-        """Открыть отметку присутствия для КОНКРЕТНОГО занятия."""
         lesson_screen = self.manager.get_screen("lesson")
         lesson_screen.lesson_id = les["id"]
-        self.manager.current = "lesson"
+        self._go("lesson")
 
     def _not_held_dialog(self, les: dict):
         """«Нет» → Заменить на другой предмет / Отменить занятие."""
@@ -1032,21 +1043,10 @@ class GradeBarChart(BoxLayout):
 
 
 class GradebookScreen(Screen):
-    """
-    ВЕДОМОСТЬ УСПЕВАЕМОСТИ (v0.5).
 
-    Сверху — выбор предмета (Spinner). Далее:
-      * СВОДКА по занятиям: план / проведено / осталось (только 'held' идёт в счёт);
-      * ДИАГРАММА среднего балла по студентам (Kivy canvas, без matplotlib);
-      * ПОФАМИЛЬНО: таблица со средним арифметическим баллом, числом оценок и
-        посещаемостью (присут./отсут. на проведённых занятиях).
-    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
-    def on_pre_enter(self, *_):
-        self.clear_widgets()
-        Clock.schedule_once(self._build, 0)
-
-    def _build(self, _dt):
         root = BoxLayout(orientation="vertical",
                          padding=(dp(12), dp(6), dp(12), dp(6)),
                          spacing=dp(6))
@@ -1056,12 +1056,26 @@ class GradebookScreen(Screen):
         back = Button(text="← Назад", font_size=sp(15), bold=True,
                       background_color=Theme.TEXT_MUTED, background_normal="",
                       color=Theme.TEXT_BRIGHT, size_hint_x=0.3, size_hint_y=1)
-        back.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
+        back.bind(on_release=lambda *_: self._go("home"))
         header.add_widget(back)
         header.add_widget(Label(text="[b]Ведомость[/b]", markup=True, font_size=sp(20),
                                 color=Theme.TEXT, size_hint_x=0.7))
         root.add_widget(header)
 
+        self._spinner = Spinner(text="", values=[], size_hint_y=None, height=dp(44))
+        self._spinner.bind(text=lambda *_: self._render_subject())
+        root.add_widget(self._spinner)
+
+        self._content = BoxLayout(orientation="vertical")
+        root.add_widget(self._content)
+
+        self.add_widget(root)
+
+    def _go(self, screen: str):
+        if self.manager:
+            self.manager.current = screen
+
+    def on_pre_enter(self, *_):
         db = get_db()
         subjects = db.list_subjects()
         db.close()
@@ -1071,23 +1085,17 @@ class GradebookScreen(Screen):
         }
 
         if not subjects:
-            root.add_widget(Label(
+            self._content.clear_widgets()
+            self._content.add_widget(Label(
                 text="Предметов пока нет.\nДобавьте предмет и проведите занятия.",
                 halign="center", valign="middle", color=Theme.TEXT_MUTED,
             ))
-            self.add_widget(root)
             return
 
         labels = list(self._label_to_id.keys())
-        self._spinner = Spinner(text=labels[0], values=labels,
-                                size_hint_y=None, height=dp(44))
-        self._spinner.bind(text=lambda *_: self._render_subject())
-        root.add_widget(self._spinner)
-
-        self._content = BoxLayout(orientation="vertical")
-        root.add_widget(self._content)
-        self.add_widget(root)
-
+        self._spinner.values = labels
+        if self._spinner.text not in labels:
+            self._spinner.text = labels[0]
         self._render_subject()
 
     def _render_subject(self, *_):
