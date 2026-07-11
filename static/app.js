@@ -34,11 +34,18 @@ function popup(title, bodyHtml, btns) {
 }
 
 // ------ router
+const PAGES = {
+  home: renderHome,
+  today: renderToday,
+  'add-subject': renderAddSubject,
+  students: renderStudents,
+  lesson: renderLesson,
+  gradebook: renderGradebook,
+};
+
 function navigate(hash) {
-  const page = hash.replace('#', '') || 'home';
-  SA('.page').forEach(p => p.classList.remove('active'));
-  const target = $id('page-' + page);
-  if (target) target.classList.add('active');
+  const page = hash.replace('#', '').split('?')[0] || 'home';
+  if (PAGES[page]) PAGES[page]();
 }
 window.addEventListener('hashchange', () => navigate(location.hash));
 window.addEventListener('DOMContentLoaded', () => navigate(location.hash || '#home'));
@@ -407,22 +414,4 @@ async function renderGradebookSubject() {
   } catch(e) { content.innerHTML = '<div class="text-muted">Ошибка загрузки</div>'; }
 }
 
-// ------ router pages
-const PAGES = {
-  home: renderHome,
-  today: renderToday,
-  'add-subject': renderAddSubject,
-  students: renderStudents,
-  lesson: renderLesson,
-  gradebook: renderGradebook,
-};
 
-// override router
-const origNavigate = navigate;
-navigate = function(hash) {
-  const page = hash.replace('#', '').split('?')[0] || 'home';
-  SA('.page').forEach(p => p.classList.remove('active'));
-  if (PAGES[page]) PAGES[page]();
-};
-window.addEventListener('hashchange', () => navigate(location.hash));
-window.addEventListener('DOMContentLoaded', () => navigate(location.hash || '#home'));
