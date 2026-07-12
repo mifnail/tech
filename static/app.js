@@ -53,7 +53,6 @@ App.Nav = {
   render() {
     const pages = [
       { hash: '#home', label: 'Дом' },
-      { hash: '#today', label: 'Сегодня' },
       { hash: '#schedule', label: 'Расп.' },
       { hash: '#subjects', label: 'Предм.' }
     ];
@@ -99,8 +98,7 @@ App.Router = {
     const hash = location.hash || '#home';
     if (hash === '#home') App.Pages.home();
     else if (hash.startsWith('#today')) {
-      const params = new URLSearchParams(hash.split('?')[1] || '');
-      App.Pages.today(params.get('subject'));
+      location.hash = '#home';
     } else if (hash.startsWith('#schedule')) App.Pages.schedule();
     else if (hash.startsWith('#subjects')) App.Pages.subjects();
     else if (hash.startsWith('#subject/')) App.Pages.subject(hash.split('/')[1]);
@@ -122,7 +120,7 @@ App.Pages = {
     let html = App.Nav.render();
     html += `<h1>Учёт занятий</h1>`;
 
-    html += `<div class="card" style="cursor:pointer" onclick="location='#today'">
+    html += `<div class="card">
       <div class="card-title">Сегодня (${today.date})</div>
       <div class="card-sub">${today.schedule.length} запланировано · ${today.lessons.length} занятий</div>
     </div>`;
@@ -130,7 +128,7 @@ App.Pages = {
     html += `<h2>Предметы</h2>`;
     for (const s of subjects) {
       const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
-      html += `<div class="card" style="cursor:pointer" onclick="location='#today?subject=${s.id}'">
+      html += `<div class="card" style="cursor:pointer" onclick="location='#subject/${s.id}'">
         <div class="card-title">${s.name}</div>
         <div class="card-sub">${s.group_name} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
         <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
@@ -265,7 +263,7 @@ App.Pages = {
       <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
       <div class="card-sub" style="margin-top:8px">Группа: ${s.group_name}</div>`;
       html += `<div class="grid-2" style="margin-top:8px">
-        <button class="btn btn-primary btn-sm" onclick="location='#today?subject=${subjectId}'">На сегодня</button>
+        <button class="btn btn-primary btn-sm" onclick="location='#subject/${subjectId}'">Журнал</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
       </div></div>`;
     }
@@ -389,7 +387,7 @@ App.Pages = {
       App.API.get('/api/subjects')
     ]);
     const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-    const weekTypes = ['Каждую', 'Числитель', 'Знаменатель'];
+    const weekTypes = ['Каждую', 'Нечетная', 'Четная'];
 
     let html = App.Nav.render();
     html += `<h1>Расписание</h1>`;
@@ -524,7 +522,7 @@ App.Pages.createSubstitution = async function(subjectId) {
   });
   App.UI.closePopup();
   App.UI.notify(isFree ? 'Занятие отменено (СВОБОДНО)' : 'Замена выполнена');
-  location = `#today?subject=${subjectId}`;
+  location = `#subject/${subjectId}`;
 };
 
 App.Pages.showCustomLesson = function() {
@@ -606,8 +604,8 @@ App.Pages.showAddScheduleEntry = async function() {
     <select id="sch-subject">${opts}</select>
     <select id="sch-week">
       <option value="0">Каждую неделю</option>
-      <option value="1">Числитель</option>
-      <option value="2">Знаменатель</option>
+      <option value="1">Нечетная</option>
+      <option value="2">Четная</option>
     </select>
     <button class="btn btn-primary" onclick="App.Pages.createScheduleEntry()">Добавить</button>
   `);
