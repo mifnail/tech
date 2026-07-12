@@ -53,8 +53,7 @@ App.Nav = {
   render() {
     const pages = [
       { hash: '#home', label: 'Дом' },
-      { hash: '#schedule', label: 'Расп.' },
-      { hash: '#subjects', label: 'Предм.' }
+      { hash: '#schedule', label: 'Расп.' }
     ];
     const active = location.hash.split('?')[0] || '#home';
     return `<div class="nav">${
@@ -97,7 +96,7 @@ App.Router = {
   handle() {
     const hash = location.hash || '#home';
     if (hash === '#home') App.Pages.home();
-    else if (hash.startsWith('#today')) {
+    else if (hash.startsWith('#today') || hash.startsWith('#subjects')) {
       location.hash = '#home';
     } else if (hash.startsWith('#schedule')) App.Pages.schedule();
     else if (hash.startsWith('#subjects')) App.Pages.subjects();
@@ -109,6 +108,56 @@ App.Router = {
 };
 
 App.Pages = {
+  _showToday: false,
+
+  _renderTodaySchedule(schedule, lessons) {
+    let html = '';
+    if (schedule.length) {
+      html += `<h2>Расписание</h2>`;
+      for (const e of schedule) {
+        const existing = lessons.find(l => l.subject_id === e.subject_id && l.status !== 'free');
+        if (existing) {
+          html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existing.id}'">
+            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+            <div class="card-sub">${e.group_name} · <span class="badge badge-held">Проведено</span></div>
+          </div>`;
+        } else {
+          const existingFree = lessons.find(l => l.subject_id === e.subject_id && l.status === 'free');
+          if (existingFree) {
+            html += `<div class="card" style="cursor:pointer" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}', ${e.id}, true)">
+            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+            <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">СВОБОДНО</span></div>
+            </div>`;
+          } else {
+            html += `<div class="card">
+            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+            <div class="card-sub">${e.group_name}</div>
+              <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}')">Начать занятие</button>
+            </div>`;
+          }
+        }
+      }
+    }
+    const otherLessons = lessons.filter(l => !schedule.some(s => s.subject_id === l.subject_id));
+    if (otherLessons.length) {
+      html += `<h2>Другие занятия</h2>`;
+      for (const l of otherLessons) {
+        const cls = l.status === 'free' ? 'badge-cancelled' : 'badge-held';
+        const label = l.status === 'free' ? 'СВОБОДНО' : 'Проведено';
+        html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
+          <div class="card-title">${l.actual_subject_name}</div>
+          <div class="card-sub">${l.group_name} · <span class="badge ${cls}">${label}</span>
+            ${l.planned_subject !== l.actual_subject_name && l.status !== 'free' ? '· Замена: ' + l.planned_subject : ''}</div>
+        </div>`;
+      }
+    }
+    if (!schedule.length && !lessons.length) {
+      html += `<div class="card"><div class="card-sub">Сегодня занятий нет</div></div>`;
+    }
+    html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.showCustomLesson()">+ Создать занятие</button>`;
+    return html;
+  },
+
   async home() {
     App.Loading.show();
     const [subjects, groups, today] = await Promise.all([
@@ -120,10 +169,14 @@ App.Pages = {
     let html = App.Nav.render();
     html += `<h1>Учёт занятий</h1>`;
 
-    html += `<div class="card">
+    html += `<div class="card" style="cursor:pointer" onclick="App.Pages._showToday = !App.Pages._showToday; App.Pages.home()">
       <div class="card-title">Сегодня (${today.date})</div>
-      <div class="card-sub">${today.schedule.length} запланировано · ${today.lessons.length} занятий</div>
+      <div class="card-sub">${today.schedule.length} запланировано · ${today.lessons.length} занятий · ${App.Pages._showToday ? '▲' : '▼'}</div>
     </div>`;
+
+    if (App.Pages._showToday) {
+      html += App.Pages._renderTodaySchedule(today.schedule, today.lessons);
+    }
 
     html += `<h2>Предметы</h2>`;
     for (const s of subjects) {
@@ -133,6 +186,11 @@ App.Pages = {
         <div class="card-sub">${s.group_name} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
         <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
       </div>`;
+    }
+
+    if (!groups.length) {
+      html += `<div class="card"><div class="card-sub">Сначала создайте группу</div>`;
+      html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.showAddGroup()">+ Создать группу</button></div>`;
     }
 
     if (groups.length) {
@@ -145,7 +203,11 @@ App.Pages = {
       html += `</div>`;
     }
 
-    html += `<button class="btn btn-primary" onclick="App.Pages.showAddSubject()" style="margin-top:8px">+ Добавить предмет</button>`;
+    html += `<div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary" style="flex:1" onclick="App.Pages.showAddSubject()">+ Предмет</button>
+      <button class="btn btn-muted" style="flex:1" onclick="App.Pages.showAddGroup()">+ Группа</button>
+    </div>`;
+
     document.getElementById('app').innerHTML = html;
   },
 
@@ -574,7 +636,7 @@ App.Pages.createSubject = async function() {
   await App.API.post('/api/subjects', { name, total_hours: hours, group_id: groupId });
   App.UI.notify('Предмет создан');
   App.UI.closePopup();
-  App.Pages.subjects();
+  App.Pages.home();
 };
 
 App.Pages.showAddGroup = function() {
