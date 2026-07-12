@@ -13,14 +13,14 @@ presplash.filename =
 icon.filename =
 android.api = 34
 android.minapi = 24
-android.sdk = 34
 android.ndk = 25c
-android.bootstrap = webview
+p4a.bootstrap = webview
 android.gradle_dependencies = androidx.webkit:webkit:1.8.0
 android.add_src =
 android.permissions = INTERNET
-android.arch = arm64-v8a
+android.archs = arm64-v8a
 android.wakelock = True
+android.accept_sdk_license = True
 
 [buildozer]
 log_level = 2
