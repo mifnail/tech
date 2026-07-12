@@ -1,186 +1,248 @@
-from flask import Flask, request, jsonify, send_from_directory
+from __future__ import annotations
+import functools
 from datetime import date
+from typing import Any
 import os
 
-app = Flask(__name__, static_folder='static', template_folder='templates')
+from flask import Flask, Blueprint, request, jsonify, send_from_directory
 
 from database import Database
 
-def get_db():
+app = Flask(__name__, static_folder='static', template_folder='templates')
+
+def get_db() -> Database:
     return Database()
 
-# --- SPA shell ---
+
+def require_fields(*fields: str) -> Any:
+    """Decorator: return 400 if request.json lacks any of the required fields."""
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            data = request.json or {}
+            missing = [f for f in fields if f not in data or data[f] is None]
+            if missing:
+                return jsonify({'error': f'missing fields: {", ".join(missing)}'}), 400
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def optional_int(value: Any, default: Any = None) -> Any:
+    """Convert query param to int or return default."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def dict_row(row) -> dict:
+    return dict(row) if row else None
+
+
+# ---- SPA shell ----
 @app.route('/')
 def index():
     return send_from_directory('templates', 'index.html')
 
+
 @app.route('/static/<path:path>')
-def serve_static(path):
+def serve_static(path: str):
     return send_from_directory('static', path)
 
-# --- Groups ---
-@app.route('/api/groups', methods=['GET'])
-def list_groups():
-    db = get_db()
-    groups = db.list_groups()
-    return jsonify([dict(g) for g in groups])
 
-@app.route('/api/groups', methods=['POST'])
+# ---- Groups ----
+groups_bp = Blueprint('groups', __name__, url_prefix='/api/groups')
+
+
+@groups_bp.route('', methods=['GET'])
+def list_groups():
+    return jsonify([dict(r) for r in get_db().list_groups()])
+
+
+@groups_bp.route('', methods=['POST'])
+@require_fields('name')
 def create_group():
-    data = request.json or {}
-    if 'name' not in data or not data['name']:
-        return jsonify({'error': 'name is required'}), 400
-    db = get_db()
-    gid = db.add_group(data['name'])
+    gid = get_db().add_group(request.json['name'])
     return jsonify({'id': gid}), 201
 
-# --- Students ---
-@app.route('/api/students', methods=['GET'])
-def list_students():
-    group_id = request.args.get('group_id', type=int)
-    db = get_db()
-    students = db.list_students(group_id)
-    return jsonify([dict(s) for s in students])
 
-@app.route('/api/students/bulk', methods=['POST'])
+app.register_blueprint(groups_bp)
+
+
+# ---- Students ----
+students_bp = Blueprint('students', __name__, url_prefix='/api/students')
+
+
+@students_bp.route('', methods=['GET'])
+def list_students():
+    group_id = optional_int(request.args.get('group_id'))
+    return jsonify([dict(r) for r in get_db().list_students(group_id)])
+
+
+@students_bp.route('/bulk', methods=['POST'])
+@require_fields('group_id', 'students')
 def add_students_bulk():
     data = request.json
-    db = get_db()
-    count = db.add_students_bulk(data['group_id'], data['students'])
+    count = get_db().add_students_bulk(data['group_id'], data['students'])
     return jsonify({'added': count}), 201
 
-# --- Subjects ---
-@app.route('/api/subjects', methods=['GET'])
-def list_subjects():
-    group_id = request.args.get('group_id', type=int)
-    include_free = request.args.get('include_free', type=int, default=0)
-    db = get_db()
-    subjects = db.list_subjects(group_id, include_free=bool(include_free))
-    return jsonify([dict(s) for s in subjects])
 
-@app.route('/api/subjects', methods=['POST'])
+@students_bp.route('/<int:student_id>/grades', methods=['GET'])
+def student_grades(student_id: int):
+    subject_id = optional_int(request.args.get('subject_id'))
+    return jsonify([dict(r) for r in get_db().student_grades(student_id, subject_id)])
+
+
+app.register_blueprint(students_bp)
+
+
+# ---- Subjects ----
+subjects_bp = Blueprint('subjects', __name__, url_prefix='/api/subjects')
+
+
+@subjects_bp.route('', methods=['GET'])
+def list_subjects():
+    group_id = optional_int(request.args.get('group_id'))
+    include_free = bool(optional_int(request.args.get('include_free'), 0))
+    return jsonify([dict(r) for r in get_db().list_subjects(group_id, include_free)])
+
+
+@subjects_bp.route('', methods=['POST'])
+@require_fields('name', 'total_hours', 'group_id')
 def create_subject():
     data = request.json
-    db = get_db()
-    sid = db.add_subject(data['name'], data['total_hours'], data['group_id'])
+    sid = get_db().add_subject(data['name'], data['total_hours'], data['group_id'])
     return jsonify({'id': sid}), 201
 
-@app.route('/api/subjects/<int:subject_id>/gradebook')
-def subject_gradebook(subject_id):
+
+@subjects_bp.route('/<int:subject_id>/gradebook')
+def subject_gradebook(subject_id: int):
     db = get_db()
-    rows = db.subject_gradebook(subject_id)
-    summary = db.subject_summary(subject_id)
     return jsonify({
-        'summary': dict(summary) if summary else None,
-        'grades': [dict(r) for r in rows]
+        'summary': dict_row(db.subject_summary(subject_id)),
+        'grades': [dict(r) for r in db.subject_gradebook(subject_id)]
     })
 
-@app.route('/api/subjects/<int:subject_id>/substitution-list', methods=['GET'])
-def substitution_list(subject_id):
+
+@subjects_bp.route('/<int:subject_id>/substitution-list', methods=['GET'])
+def substitution_list(subject_id: int):
     db = get_db()
     subj = db.conn.execute("SELECT * FROM subjects WHERE id = ?", (subject_id,)).fetchone()
     if not subj:
         return jsonify([])
-    db.get_free_subject_id(subj['group_id'])  # ensure СВОБОДНО exists
-    group_subjects = db.list_subjects(subj['group_id'], include_free=True)
-    return jsonify([dict(s) for s in group_subjects])
+    db.get_free_subject_id(subj['group_id'])
+    return jsonify([dict(r) for r in db.list_subjects(subj['group_id'], include_free=True)])
 
-# --- Schedule ---
-@app.route('/api/schedule', methods=['GET'])
+
+@subjects_bp.route('/<int:subject_id>/lessons', methods=['GET'])
+def subject_lessons(subject_id: int):
+    return jsonify([dict(r) for r in get_db().list_lessons_for_subject(subject_id)])
+
+
+app.register_blueprint(subjects_bp)
+
+
+# ---- Schedule ----
+schedule_bp = Blueprint('schedule', __name__, url_prefix='/api/schedule')
+
+
+@schedule_bp.route('', methods=['GET'])
 def get_schedule():
-    db = get_db()
-    entries = db.list_schedule()
-    return jsonify([dict(e) for e in entries])
+    return jsonify([dict(r) for r in get_db().list_schedule()])
 
-@app.route('/api/schedule', methods=['POST'])
+
+@schedule_bp.route('', methods=['POST'])
+@require_fields('day_of_week', 'lesson_number', 'subject_id')
 def add_schedule_entry():
     data = request.json
-    db = get_db()
-    eid = db.add_schedule_entry(
+    eid = get_db().add_schedule_entry(
         data['day_of_week'], data['lesson_number'],
         data['subject_id'], data.get('week_type', 0))
     return jsonify({'id': eid}), 201
 
-@app.route('/api/schedule/<int:entry_id>', methods=['DELETE'])
-def delete_schedule_entry(entry_id):
-    db = get_db()
-    db.delete_schedule_entry(entry_id)
+
+@schedule_bp.route('/<int:entry_id>', methods=['DELETE'])
+def delete_schedule_entry(entry_id: int):
+    get_db().delete_schedule_entry(entry_id)
     return jsonify({'ok': True})
 
-@app.route('/api/schedule/today', methods=['GET'])
+
+@schedule_bp.route('/today', methods=['GET'])
 def schedule_today():
     today = date.today()
     day = today.isoweekday()
     db = get_db()
-    entries = db.get_schedule_for_day(day)
-    lessons = db.list_lessons_by_date(today.isoformat())
     return jsonify({
         'date': today.isoformat(),
         'day_of_week': day,
-        'schedule': [dict(e) for e in entries],
-        'lessons': [dict(l) for l in lessons]
+        'schedule': [dict(r) for r in db.get_schedule_for_day(day)],
+        'lessons': [dict(r) for r in db.list_lessons_by_date(today.isoformat())]
     })
 
-# --- Lessons ---
-@app.route('/api/lessons', methods=['POST'])
+
+app.register_blueprint(schedule_bp)
+
+
+# ---- Lessons ----
+lessons_bp = Blueprint('lessons', __name__, url_prefix='/api/lessons')
+
+
+@lessons_bp.route('', methods=['POST'])
+@require_fields('subject_id')
 def create_lesson():
     data = request.json
-    db = get_db()
-    lid = db.add_lesson(
+    lid = get_db().add_lesson(
         data['subject_id'],
         data.get('date', date.today().isoformat()),
         data.get('actual_subject_id'),
         data.get('status', 'held'))
     return jsonify({'id': lid}), 201
 
-@app.route('/api/lessons/<int:lesson_id>', methods=['GET'])
-def get_lesson(lesson_id):
-    db = get_db()
-    lesson = db.get_lesson(lesson_id)
+
+@lessons_bp.route('/<int:lesson_id>', methods=['GET'])
+def get_lesson(lesson_id: int):
+    lesson = get_db().get_lesson(lesson_id)
     if not lesson:
         return jsonify({'error': 'not found'}), 404
     return jsonify(dict(lesson))
 
-@app.route('/api/lessons/<int:lesson_id>/substitute', methods=['PATCH'])
-def substitute_lesson(lesson_id):
-    data = request.json
-    db = get_db()
-    db.substitute_lesson(lesson_id, data['new_subject_id'])
+
+@lessons_bp.route('/<int:lesson_id>/substitute', methods=['PATCH'])
+@require_fields('new_subject_id')
+def substitute_lesson(lesson_id: int):
+    get_db().substitute_lesson(lesson_id, request.json['new_subject_id'])
     return jsonify({'ok': True})
 
-@app.route('/api/lessons/<int:lesson_id>/status', methods=['PATCH'])
-def update_lesson_status(lesson_id):
-    data = request.json
-    db = get_db()
-    db.set_lesson_status(lesson_id, data['status'])
+
+@lessons_bp.route('/<int:lesson_id>/status', methods=['PATCH'])
+@require_fields('status')
+def update_lesson_status(lesson_id: int):
+    get_db().set_lesson_status(lesson_id, request.json['status'])
     return jsonify({'ok': True})
 
-@app.route('/api/subjects/<int:subject_id>/lessons', methods=['GET'])
-def subject_lessons(subject_id):
-    db = get_db()
-    lessons = db.list_lessons_for_subject(subject_id)
-    return jsonify([dict(l) for l in lessons])
 
-@app.route('/api/lessons/<int:lesson_id>/adjacent', methods=['GET'])
-def adjacent_lessons(lesson_id):
-    db = get_db()
-    prev_id, next_id = db.get_adjacent_lessons(lesson_id)
+@lessons_bp.route('/<int:lesson_id>/adjacent', methods=['GET'])
+def adjacent_lessons(lesson_id: int):
+    prev_id, next_id = get_db().get_adjacent_lessons(lesson_id)
     return jsonify({'prev_id': prev_id, 'next_id': next_id})
 
-@app.route('/api/lessons/<int:lesson_id>/attendance', methods=['GET'])
-def get_attendance(lesson_id):
+
+@lessons_bp.route('/<int:lesson_id>/attendance', methods=['GET'])
+def get_attendance(lesson_id: int):
     db = get_db()
-    records = db.get_attendance(lesson_id)
     lesson = db.get_lesson(lesson_id)
-    students = db.get_group_students(lesson_id) if lesson else []
     return jsonify({
-        'lesson': dict(lesson) if lesson else None,
-        'attendance': [dict(r) for r in records],
-        'students': [dict(s) for s in students]
+        'lesson': dict_row(lesson),
+        'attendance': [dict(r) for r in db.get_attendance(lesson_id)],
+        'students': [dict(r) for r in db.get_group_students(lesson_id)] if lesson else []
     })
 
-@app.route('/api/lessons/<int:lesson_id>/attendance', methods=['POST'])
-def mark_attendance(lesson_id):
+
+@lessons_bp.route('/<int:lesson_id>/attendance', methods=['POST'])
+def mark_attendance(lesson_id: int):
     data = request.json
     db = get_db()
     if isinstance(data, list):
@@ -189,44 +251,40 @@ def mark_attendance(lesson_id):
         db.mark_attendance(lesson_id, data['student_id'], data['grade'])
     return jsonify({'ok': True})
 
-@app.route('/api/lessons/date/<date_str>', methods=['GET'])
-def lessons_by_date(date_str):
-    db = get_db()
-    lessons = db.list_lessons_by_date(date_str)
-    return jsonify([dict(l) for l in lessons])
 
-# --- Reports ---
-@app.route('/api/reports/substitutions', methods=['GET'])
+@lessons_bp.route('/date/<date_str>', methods=['GET'])
+def lessons_by_date(date_str: str):
+    return jsonify([dict(r) for r in get_db().list_lessons_by_date(date_str)])
+
+
+app.register_blueprint(lessons_bp)
+
+
+# ---- Reports ----
+reports_bp = Blueprint('reports', __name__, url_prefix='/api/reports')
+
+
+@reports_bp.route('/substitutions', methods=['GET'])
 def substitutions():
-    db = get_db()
-    rows = db.get_substitutions()
-    return jsonify([dict(r) for r in rows])
+    return jsonify([dict(r) for r in get_db().get_substitutions()])
 
-@app.route('/api/reports/average/<int:subject_id>', methods=['GET'])
-def average_grades(subject_id):
-    db = get_db()
-    rows = db.average_grades(subject_id)
-    return jsonify([dict(r) for r in rows])
 
-@app.route('/api/reports/daily', methods=['GET'])
+@reports_bp.route('/average/<int:subject_id>', methods=['GET'])
+def average_grades(subject_id: int):
+    return jsonify([dict(r) for r in get_db().average_grades(subject_id)])
+
+
+@reports_bp.route('/daily', methods=['GET'])
 def daily_report():
     date_str = request.args.get('date', date.today().isoformat())
-    db = get_db()
-    rows = db.daily_report(date_str)
-    return jsonify([dict(r) for r in rows])
+    return jsonify([dict(r) for r in get_db().daily_report(date_str)])
 
-@app.route('/api/reports/neglected/<int:group_id>', methods=['GET'])
-def neglected_students(group_id):
-    min_grades = request.args.get('min_grades', 3, type=int)
-    days = request.args.get('days', 14, type=int)
-    db = get_db()
-    rows = db.students_without_recent_grades(group_id, min_grades, days)
-    return jsonify([dict(r) for r in rows])
 
-# --- Student grades ---
-@app.route('/api/students/<int:student_id>/grades', methods=['GET'])
-def student_grades(student_id):
-    subject_id = request.args.get('subject_id', type=int)
-    db = get_db()
-    rows = db.student_grades(student_id, subject_id)
-    return jsonify([dict(r) for r in rows])
+@reports_bp.route('/neglected/<int:group_id>', methods=['GET'])
+def neglected_students(group_id: int):
+    min_grades = optional_int(request.args.get('min_grades'), 3)
+    days = optional_int(request.args.get('days'), 14)
+    return jsonify([dict(r) for r in get_db().students_without_recent_grades(group_id, min_grades, days)])
+
+
+app.register_blueprint(reports_bp)
