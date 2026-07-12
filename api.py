@@ -27,7 +27,9 @@ def list_groups():
 
 @app.route('/api/groups', methods=['POST'])
 def create_group():
-    data = request.json
+    data = request.json or {}
+    if 'name' not in data or not data['name']:
+        return jsonify({'error': 'name is required'}), 400
     db = get_db()
     gid = db.add_group(data['name'])
     return jsonify({'id': gid}), 201
@@ -79,6 +81,7 @@ def substitution_list(subject_id):
     subj = db.conn.execute("SELECT * FROM subjects WHERE id = ?", (subject_id,)).fetchone()
     if not subj:
         return jsonify([])
+    db.get_free_subject_id(subj['group_id'])  # ensure СВОБОДНО exists
     group_subjects = db.list_subjects(subj['group_id'], include_free=True)
     return jsonify([dict(s) for s in group_subjects])
 
@@ -210,7 +213,7 @@ def daily_report():
     date_str = request.args.get('date', date.today().isoformat())
     db = get_db()
     rows = db.daily_report(date_str)
-    return jsonify(rows)
+    return jsonify([dict(r) for r in rows])
 
 @app.route('/api/reports/neglected/<int:group_id>', methods=['GET'])
 def neglected_students(group_id):

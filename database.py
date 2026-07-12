@@ -24,7 +24,7 @@ class Database:
                 group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
                 last_name TEXT NOT NULL,
                 first_name TEXT NOT NULL,
-                middle_name TEXT,
+                middle_name TEXT NOT NULL DEFAULT '',
                 UNIQUE(group_id, last_name, first_name, middle_name)
             );
 
@@ -100,17 +100,17 @@ class Database:
         return self.conn.execute("SELECT * FROM groups ORDER BY name").fetchall()
 
     # --- Students ---
-    def add_student(self, group_id, last_name, first_name, middle_name=None):
+    def add_student(self, group_id, last_name, first_name, middle_name=''):
         cur = self.conn.execute(
             "INSERT INTO students (group_id, last_name, first_name, middle_name) VALUES (?, ?, ?, ?)",
-            (group_id, last_name, first_name, middle_name))
+            (group_id, last_name, first_name, middle_name or ''))
         self.conn.commit()
         return cur.lastrowid
 
     def add_students_bulk(self, group_id, students):
         cur = self.conn.executemany(
             "INSERT OR IGNORE INTO students (group_id, last_name, first_name, middle_name) VALUES (?, ?, ?, ?)",
-            [(group_id, s.get('last_name'), s.get('first_name'), s.get('middle_name')) for s in students])
+            [(group_id, s.get('last_name'), s.get('first_name'), s.get('middle_name') or '') for s in students])
         self.conn.commit()
         return cur.rowcount
 
