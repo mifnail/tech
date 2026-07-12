@@ -27,6 +27,12 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -45,11 +51,17 @@ jobs:
             libssl-dev \
             automake
 
+      - name: Cache .buildozer
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+
       - name: Install Buildozer
-        run: pip install buildozer
+        run: pip install --upgrade buildozer cython
 
       - name: Build debug APK
-        run: buildozer android debug
+        run: buildozer android debug --verbose 2>&1 | tail -50
         timeout-minutes: 60
 
       - name: Upload APK
