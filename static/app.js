@@ -19,6 +19,14 @@ App.API = {
   delete(path) { return this.request('DELETE', path); }
 };
 
+App.Loading = {
+  show() {
+    const el = document.getElementById('app');
+    if (!el) return;
+    el.innerHTML = `<div class="loading"><div class="spinner"></div><div>Загрузка...</div></div>`;
+  }
+};
+
 App.UI = {
   notify(msg) {
     const n = document.getElementById('notif');
@@ -44,10 +52,10 @@ App.UI = {
 App.Nav = {
   render() {
     const pages = [
-      { hash: '#home', label: 'Главная' },
+      { hash: '#home', label: 'Дом' },
       { hash: '#today', label: 'Сегодня' },
-      { hash: '#schedule', label: 'Расписание' },
-      { hash: '#subjects', label: 'Предметы' }
+      { hash: '#schedule', label: 'Расп.' },
+      { hash: '#subjects', label: 'Предм.' }
     ];
     const active = location.hash.split('?')[0] || '#home';
     return `<div class="nav">${
@@ -104,6 +112,7 @@ App.Router = {
 
 App.Pages = {
   async home() {
+    App.Loading.show();
     const [subjects, groups, today] = await Promise.all([
       App.API.get('/api/subjects'),
       App.API.get('/api/groups'),
@@ -115,7 +124,7 @@ App.Pages = {
 
     html += `<div class="card" style="cursor:pointer" onclick="location='#today'">
       <div class="card-title">Сегодня (${today.date})</div>
-      <div class="card-sub">${today.schedule.length} пар · ${today.lessons.length} занятий</div>
+      <div class="card-sub">${today.schedule.length} запланировано · ${today.lessons.length} занятий</div>
     </div>`;
 
     html += `<h2>Предметы</h2>`;
@@ -143,6 +152,7 @@ App.Pages = {
   },
 
   async today(subjectId) {
+    App.Loading.show();
     const [data, subjects] = await Promise.all([
       App.API.get('/api/schedule/today'),
       App.API.get('/api/subjects')
@@ -175,20 +185,20 @@ App.Pages = {
         const existing = lessons.find(l => l.subject_id === e.subject_id && l.status !== 'free');
         if (existing) {
           html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existing.id}'">
-            <div class="card-title">Пара ${e.lesson_number} · ${e.subject_name}</div>
+            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
             <div class="card-sub">${e.group_name} · <span class="badge badge-held">Проведено</span></div>
           </div>`;
         } else {
           const existingFree = lessons.find(l => l.subject_id === e.subject_id && l.status === 'free');
           if (existingFree) {
             html += `<div class="card" style="cursor:pointer" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}', ${e.id}, true)">
-              <div class="card-title">Пара ${e.lesson_number} · ${e.subject_name}</div>
-              <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">СВОБОДНО</span></div>
+            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+            <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">СВОБОДНО</span></div>
             </div>`;
           } else {
             html += `<div class="card">
-              <div class="card-title">Пара ${e.lesson_number} · ${e.subject_name}</div>
-              <div class="card-sub">${e.group_name}</div>
+            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+            <div class="card-sub">${e.group_name}</div>
               <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}')">Начать занятие</button>
             </div>`;
           }
@@ -213,7 +223,7 @@ App.Pages = {
     }
 
     if (!schedule.length && !lessons.length) {
-      html += `<div class="card"><div class="card-sub">${currentSubject ? 'Сегодня пар по этому предмету нет' : 'Сегодня пар нет'}</div></div>`;
+      html += `<div class="card"><div class="card-sub">${currentSubject ? 'Сегодня занятий по этому предмету нет' : 'Сегодня занятий нет'}</div></div>`;
     }
 
     if (!subjectId) {
@@ -234,6 +244,7 @@ App.Pages = {
 
   /* ----- Subject journal ----- */
   async subject(subjectId) {
+    App.Loading.show();
     const [data, avg] = await Promise.all([
       App.API.get(`/api/subjects/${subjectId}/gradebook`),
       App.API.get(`/api/reports/average/${subjectId}`)
@@ -307,6 +318,7 @@ App.Pages = {
 
   /* ----- Lesson page ----- */
   async lesson(lessonId) {
+    App.Loading.show();
     const [data, adjacent] = await Promise.all([
       App.API.get(`/api/lessons/${lessonId}/attendance`),
       App.API.get(`/api/lessons/${lessonId}/adjacent`)
@@ -364,13 +376,14 @@ App.Pages = {
     html += `</div>`;
 
     html += `<div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-success" style="flex:1" onclick="location='#subject/${App.state.lessonSubjectId}'">Готово</button>
+      <button class="btn btn-success" style="flex:1" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал предмета</button>
     </div>`;
     document.getElementById('app').innerHTML = html;
   },
 
   /* ----- Schedule management ----- */
   async schedule() {
+    App.Loading.show();
     const [schedule, subjects] = await Promise.all([
       App.API.get('/api/schedule'),
       App.API.get('/api/subjects')
@@ -380,7 +393,7 @@ App.Pages = {
 
     let html = App.Nav.render();
     html += `<h1>Расписание</h1>`;
-    html += `<button class="btn btn-primary btn-sm" onclick="App.Pages.showAddScheduleEntry()">+ Добавить пару</button>`;
+    html += `<button class="btn btn-primary btn-sm" onclick="App.Pages.showAddScheduleEntry()">+ Добавить в расписание</button>`;
 
     for (const d of days) {
       const entries = schedule.filter(e => e.day_of_week === days.indexOf(d) + 1);
@@ -390,7 +403,7 @@ App.Pages = {
         html += `<div class="card">
           <div class="row">
             <div style="flex:1">
-              <div class="card-title">Пара ${e.lesson_number}</div>
+              <div class="card-title">Занятие ${e.lesson_number}</div>
               <div class="card-sub">${e.subject_name} · ${e.group_name} · ${weekTypes[e.week_type] || 'Каждую'}</div>
             </div>
             <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.deleteScheduleEntry(${e.id})">✕</button>
@@ -405,6 +418,7 @@ App.Pages = {
 
   /* ----- Student list ----- */
   async students(groupId) {
+    App.Loading.show();
     const [students, groups] = await Promise.all([
       App.API.get(`/api/students?group_id=${groupId}`),
       App.API.get('/api/groups')
@@ -425,6 +439,7 @@ App.Pages = {
 
   /* ----- Subjects management ----- */
   async subjects() {
+    App.Loading.show();
     const [groups, subjects] = await Promise.all([
       App.API.get('/api/groups'),
       App.API.get('/api/subjects')
@@ -587,7 +602,7 @@ App.Pages.showAddScheduleEntry = async function() {
   App.UI.showPopup(`
     <h2>Добавить в расписание</h2>
     <select id="sch-day">${[1,2,3,4,5,6].map(d => `<option value="${d}">${['Пн','Вт','Ср','Чт','Пт','Сб'][d-1]}</option>`).join('')}</select>
-    <input id="sch-num" type="number" placeholder="Номер пары" min="1" max="8">
+    <input id="sch-num" type="number" placeholder="Номер занятия" min="1" max="8">
     <select id="sch-subject">${opts}</select>
     <select id="sch-week">
       <option value="0">Каждую неделю</option>
