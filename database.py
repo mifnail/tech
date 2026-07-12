@@ -306,18 +306,19 @@ class Database:
         """).fetchall()
 
     def mark_attendance(self, lesson_id: int, student_id: int, grade: str) -> None:
-        self.conn.execute("""
-            INSERT INTO grades (lesson_id, student_id, grade) VALUES (?, ?, ?)
-            ON CONFLICT(lesson_id, student_id) DO UPDATE SET grade = excluded.grade
-        """, (lesson_id, student_id, grade))
+        if not grade:
+            self.conn.execute("DELETE FROM grades WHERE lesson_id = ? AND student_id = ?", (lesson_id, student_id))
+        else:
+            self.conn.execute("""
+                INSERT INTO grades (lesson_id, student_id, grade) VALUES (?, ?, ?)
+                ON CONFLICT(lesson_id, student_id) DO UPDATE SET grade = excluded.grade
+            """, (lesson_id, student_id, grade))
         self.conn.commit()
 
     def mark_attendance_bulk(self, lesson_id: int, records: list[dict]) -> None:
-        self.conn.executemany("""
-            INSERT INTO grades (lesson_id, student_id, grade) VALUES (?, ?, ?)
-            ON CONFLICT(lesson_id, student_id) DO UPDATE SET grade = excluded.grade
-        """, [(lesson_id, r['student_id'], r['grade']) for r in records])
-        self.conn.commit()
+        mark = self.mark_attendance
+        for r in records:
+            mark(lesson_id, r['student_id'], r['grade'])
 
     def get_attendance(self, lesson_id: int) -> Sequence[sqlite3.Row]:
         return self.conn.execute("""

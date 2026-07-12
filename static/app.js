@@ -82,9 +82,8 @@ App.Grades = {
   async cycle(lessonId, studentId, currentGrade) {
     const idx = this.CYCLE.indexOf(currentGrade || '');
     const next = this.CYCLE[(idx + 1) % this.CYCLE.length];
-    const grade = next || '0';
-    await App.API.post(`/api/lessons/${lessonId}/attendance`, { student_id: studentId, grade });
-    App.Pages.renderLesson(lessonId);
+    await App.API.post(`/api/lessons/${lessonId}/attendance`, { student_id: studentId, grade: next });
+    App.Pages.lesson(lessonId);
   }
 };
 
