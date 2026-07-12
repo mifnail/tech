@@ -51,8 +51,9 @@ def add_students_bulk():
 @app.route('/api/subjects', methods=['GET'])
 def list_subjects():
     group_id = request.args.get('group_id', type=int)
+    include_free = request.args.get('include_free', type=int, default=0)
     db = get_db()
-    subjects = db.list_subjects(group_id)
+    subjects = db.list_subjects(group_id, include_free=bool(include_free))
     return jsonify([dict(s) for s in subjects])
 
 @app.route('/api/subjects', methods=['POST'])
@@ -71,6 +72,15 @@ def subject_gradebook(subject_id):
         'summary': dict(summary) if summary else None,
         'grades': [dict(r) for r in rows]
     })
+
+@app.route('/api/subjects/<int:subject_id>/substitution-list', methods=['GET'])
+def substitution_list(subject_id):
+    db = get_db()
+    subj = db.conn.execute("SELECT * FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+    if not subj:
+        return jsonify([])
+    group_subjects = db.list_subjects(subj['group_id'], include_free=True)
+    return jsonify([dict(s) for s in group_subjects])
 
 # --- Schedule ---
 @app.route('/api/schedule', methods=['GET'])
@@ -116,7 +126,8 @@ def create_lesson():
     lid = db.add_lesson(
         data['subject_id'],
         data.get('date', date.today().isoformat()),
-        data.get('actual_subject_id'))
+        data.get('actual_subject_id'),
+        data.get('status', 'held'))
     return jsonify({'id': lid}), 201
 
 @app.route('/api/lessons/<int:lesson_id>', methods=['GET'])
@@ -134,12 +145,19 @@ def substitute_lesson(lesson_id):
     db.substitute_lesson(lesson_id, data['new_subject_id'])
     return jsonify({'ok': True})
 
+@app.route('/api/lessons/<int:lesson_id>/status', methods=['PATCH'])
+def update_lesson_status(lesson_id):
+    data = request.json
+    db = get_db()
+    db.set_lesson_status(lesson_id, data['status'])
+    return jsonify({'ok': True})
+
 @app.route('/api/lessons/<int:lesson_id>/attendance', methods=['GET'])
 def get_attendance(lesson_id):
     db = get_db()
     records = db.get_attendance(lesson_id)
     lesson = db.get_lesson(lesson_id)
-    students = db.list_students(dict(lesson)['group_id'] if lesson else None)
+    students = db.get_group_students(lesson_id) if lesson else []
     return jsonify({
         'lesson': dict(lesson) if lesson else None,
         'attendance': [dict(r) for r in records],

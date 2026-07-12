@@ -10,6 +10,7 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.init_schema()
+        self._migrate()
 
     def init_schema(self):
         self.conn.executescript("""
@@ -47,7 +48,8 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
                 actual_subject_id INTEGER REFERENCES subjects(id),
-                date TEXT NOT NULL
+                date TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'held'
             );
 
             CREATE TABLE IF NOT EXISTS grades (
@@ -68,6 +70,25 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_grades_student ON grades(student_id);
         """)
         self.conn.commit()
+
+    def _migrate(self):
+        try:
+            self.conn.execute("ALTER TABLE lessons ADD COLUMN status TEXT NOT NULL DEFAULT 'held'")
+            self.conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+    def get_free_subject_id(self, group_id):
+        row = self.conn.execute("SELECT id FROM subjects WHERE name = 'СВОБОДНО' AND group_id = ?", (group_id,)).fetchone()
+        if row:
+            return row['id']
+        cur = self.conn.execute("INSERT INTO subjects (name, total_hours, group_id) VALUES ('СВОБОДНО', 0, ?)", (group_id,))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def is_free_subject(self, subject_id):
+        row = self.conn.execute("SELECT name FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+        return row and row['name'] == 'СВОБОДНО'
 
     # --- Groups ---
     def add_group(self, name):
@@ -107,36 +128,18 @@ class Database:
         self.conn.commit()
         return cur.lastrowid
 
-    def list_subjects(self, group_id=None):
+    def list_subjects(self, group_id=None, include_free=False):
+        base = "SELECT s.*, g.name AS group_name, COALESCE(h.held, 0) AS held_lessons, s.total_hours - COALESCE(h.held, 0) AS remaining FROM subjects s JOIN groups g ON s.group_id = g.id LEFT JOIN (SELECT actual_subject_id, COUNT(*) AS held FROM lessons WHERE status != 'free' AND actual_subject_id IS NOT NULL GROUP BY actual_subject_id) h ON h.actual_subject_id = s.id"
+        where = ""
         if group_id:
-            rows = self.conn.execute("""
-                SELECT s.*, g.name AS group_name,
-                    COALESCE(h.held, 0) AS held_lessons,
-                    s.total_hours - COALESCE(h.held, 0) AS remaining
-                FROM subjects s
-                JOIN groups g ON s.group_id = g.id
-                LEFT JOIN (
-                    SELECT actual_subject_id, COUNT(*) AS held
-                    FROM lessons WHERE actual_subject_id IS NOT NULL
-                    GROUP BY actual_subject_id
-                ) h ON h.actual_subject_id = s.id
-                WHERE s.group_id = ?
-                ORDER BY s.name
-            """, (group_id,)).fetchall()
+            where = " WHERE s.group_id = ?"
+        if not include_free:
+            where += " AND s.name != 'СВОБОДНО'" if where else " WHERE s.name != 'СВОБОДНО'"
+        order = " ORDER BY g.name, s.name"
+        if group_id:
+            rows = self.conn.execute(base + where + order, (group_id,)).fetchall()
         else:
-            rows = self.conn.execute("""
-                SELECT s.*, g.name AS group_name,
-                    COALESCE(h.held, 0) AS held_lessons,
-                    s.total_hours - COALESCE(h.held, 0) AS remaining
-                FROM subjects s
-                JOIN groups g ON s.group_id = g.id
-                LEFT JOIN (
-                    SELECT actual_subject_id, COUNT(*) AS held
-                    FROM lessons WHERE actual_subject_id IS NOT NULL
-                    GROUP BY actual_subject_id
-                ) h ON h.actual_subject_id = s.id
-                ORDER BY g.name, s.name
-            """).fetchall()
+            rows = self.conn.execute(base + where + order).fetchall()
         return rows
 
     def subject_gradebook(self, subject_id):
@@ -145,7 +148,7 @@ class Database:
                 g.grade, g.lesson_id, l.date
             FROM students s
             LEFT JOIN grades g ON g.student_id = s.id
-            LEFT JOIN lessons l ON g.lesson_id = l.id AND l.actual_subject_id = ?
+            LEFT JOIN lessons l ON g.lesson_id = l.id AND l.actual_subject_id = ? AND l.status != 'free'
             WHERE s.group_id = (SELECT group_id FROM subjects WHERE id = ?)
             ORDER BY s.last_name, s.first_name, l.date
         """, (subject_id, subject_id)).fetchall()
@@ -161,21 +164,21 @@ class Database:
             JOIN groups g ON s.group_id = g.id
             LEFT JOIN (
                 SELECT actual_subject_id, COUNT(*) AS held
-                FROM lessons WHERE actual_subject_id = ?
+                FROM lessons WHERE actual_subject_id = ? AND status != 'free'
                 GROUP BY actual_subject_id
             ) h ON 1=1
             LEFT JOIN (
                 SELECT l.actual_subject_id, ROUND(AVG(CAST(gr.grade AS REAL)), 2) AS average
                 FROM grades gr
                 JOIN lessons l ON gr.lesson_id = l.id
-                WHERE l.actual_subject_id = ? AND gr.grade NOT IN ('absent', 'pass', 'fail')
+                WHERE l.actual_subject_id = ? AND l.status != 'free' AND gr.grade NOT IN ('absent', 'pass', 'fail')
                 GROUP BY l.actual_subject_id
             ) avg ON 1=1
             LEFT JOIN (
                 SELECT l.actual_subject_id, COUNT(DISTINCT gr.student_id) AS total_students
                 FROM grades gr
                 JOIN lessons l ON gr.lesson_id = l.id
-                WHERE l.actual_subject_id = ?
+                WHERE l.actual_subject_id = ? AND l.status != 'free'
                 GROUP BY l.actual_subject_id
             ) att ON 1=1
             WHERE s.id = ?
@@ -213,10 +216,10 @@ class Database:
         self.conn.commit()
 
     # --- Lessons ---
-    def add_lesson(self, subject_id, date, actual_subject_id=None):
+    def add_lesson(self, subject_id, date, actual_subject_id=None, status='held'):
         cur = self.conn.execute(
-            "INSERT INTO lessons (subject_id, actual_subject_id, date) VALUES (?, ?, ?)",
-            (subject_id, actual_subject_id, date))
+            "INSERT INTO lessons (subject_id, actual_subject_id, date, status) VALUES (?, ?, ?, ?)",
+            (subject_id, actual_subject_id, date, status))
         self.conn.commit()
         return cur.lastrowid
 
@@ -232,11 +235,16 @@ class Database:
             WHERE l.id = ?
         """, (lesson_id,)).fetchone()
 
+    def set_lesson_status(self, lesson_id, status):
+        self.conn.execute("UPDATE lessons SET status = ? WHERE id = ?", (status, lesson_id))
+        self.conn.commit()
+
     def list_lessons_by_date(self, date):
         return self.conn.execute("""
             SELECT l.*, ps.name AS planned_subject,
                 COALESCE(fs.name, ps.name) AS actual_subject_name,
-                g.name AS group_name
+                g.name AS group_name,
+                ps.group_id
             FROM lessons l
             JOIN subjects ps ON l.subject_id = ps.id
             LEFT JOIN subjects fs ON l.actual_subject_id = fs.id
@@ -257,17 +265,19 @@ class Database:
         """, (subject_id, subject_id)).fetchall()
 
     def substitute_lesson(self, lesson_id, new_subject_id):
-        self.conn.execute("UPDATE lessons SET actual_subject_id = ? WHERE id = ?",
-                          (new_subject_id, lesson_id))
+        is_free = self.is_free_subject(new_subject_id)
+        status = 'free' if is_free else 'held'
+        self.conn.execute("UPDATE lessons SET actual_subject_id = ?, status = ? WHERE id = ?",
+                          (new_subject_id if not is_free else new_subject_id, status, lesson_id))
         self.conn.commit()
 
     def get_substitutions(self):
         return self.conn.execute("""
-            SELECT l.*, ps.name AS planned_subject, fs.name AS actual_subject_name,
+            SELECT l.*, ps.name AS planned_subject, COALESCE(fs.name, ps.name) AS actual_subject_name,
                 g.name AS group_name
             FROM lessons l
             JOIN subjects ps ON l.subject_id = ps.id
-            JOIN subjects fs ON l.actual_subject_id = fs.id
+            LEFT JOIN subjects fs ON l.actual_subject_id = fs.id
             JOIN groups g ON ps.group_id = g.id
             WHERE l.actual_subject_id IS NOT NULL AND l.actual_subject_id != l.subject_id
             ORDER BY l.date DESC
@@ -325,16 +335,23 @@ class Database:
             FROM students s
             JOIN grades g ON g.student_id = s.id
             JOIN lessons l ON g.lesson_id = l.id
-            WHERE l.actual_subject_id = ? AND g.grade NOT IN ('absent', 'pass', 'fail')
+            WHERE l.actual_subject_id = ? AND l.status != 'free' AND g.grade NOT IN ('absent', 'pass', 'fail')
             GROUP BY s.id
             ORDER BY average DESC
         """, (subject_id,)).fetchall()
+
+    def get_group_students(self, lesson_id):
+        return self.conn.execute("""
+            SELECT s.* FROM students s
+            WHERE s.group_id = (SELECT ps.group_id FROM lessons l JOIN subjects ps ON l.subject_id = ps.id WHERE l.id = ?)
+            ORDER BY s.last_name, s.first_name
+        """, (lesson_id,)).fetchall()
 
     def daily_report(self, date=None):
         if date is None:
             date = sqlite3.Date.today().isoformat()
         return self.conn.execute("""
-            SELECT l.id, COALESCE(fs.name, ps.name) AS subject_name, g.name AS group_name,
+            SELECT l.id, l.status, COALESCE(fs.name, ps.name) AS subject_name, g.name AS group_name,
                 COUNT(gr.id) AS grades_count,
                 SUM(CASE WHEN gr.grade = 'absent' THEN 1 ELSE 0 END) AS absent_count
             FROM lessons l
@@ -353,7 +370,7 @@ class Database:
                 COUNT(g.id) AS recent_grades
             FROM students s
             LEFT JOIN grades g ON g.student_id = s.id
-            LEFT JOIN lessons l ON g.lesson_id = l.id AND l.date >= date('now', ? || ' days')
+            LEFT JOIN lessons l ON g.lesson_id = l.id AND l.date >= date('now', ? || ' days') AND l.status != 'free'
             WHERE s.group_id = ?
             GROUP BY s.id
             HAVING COUNT(g.id) < ?
