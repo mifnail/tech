@@ -152,6 +152,18 @@ def update_lesson_status(lesson_id):
     db.set_lesson_status(lesson_id, data['status'])
     return jsonify({'ok': True})
 
+@app.route('/api/subjects/<int:subject_id>/lessons', methods=['GET'])
+def subject_lessons(subject_id):
+    db = get_db()
+    lessons = db.list_lessons_for_subject(subject_id)
+    return jsonify([dict(l) for l in lessons])
+
+@app.route('/api/lessons/<int:lesson_id>/adjacent', methods=['GET'])
+def adjacent_lessons(lesson_id):
+    db = get_db()
+    prev_id, next_id = db.get_adjacent_lessons(lesson_id)
+    return jsonify({'prev_id': prev_id, 'next_id': next_id})
+
 @app.route('/api/lessons/<int:lesson_id>/attendance', methods=['GET'])
 def get_attendance(lesson_id):
     db = get_db()

@@ -264,6 +264,18 @@ class Database:
             ORDER BY l.date DESC
         """, (subject_id, subject_id)).fetchall()
 
+    def get_adjacent_lessons(self, lesson_id):
+        lesson = self.conn.execute("SELECT subject_id, date FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
+        if not lesson:
+            return None, None
+        prev_row = self.conn.execute("""
+            SELECT id FROM lessons WHERE subject_id = ? AND date < ? ORDER BY date DESC LIMIT 1
+        """, (lesson['subject_id'], lesson['date'])).fetchone()
+        next_row = self.conn.execute("""
+            SELECT id FROM lessons WHERE subject_id = ? AND date > ? ORDER BY date ASC LIMIT 1
+        """, (lesson['subject_id'], lesson['date'])).fetchone()
+        return (prev_row['id'] if prev_row else None, next_row['id'] if next_row else None)
+
     def substitute_lesson(self, lesson_id, new_subject_id):
         is_free = self.is_free_subject(new_subject_id)
         status = 'free' if is_free else 'held'

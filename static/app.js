@@ -17,14 +17,17 @@ function nav() {
     {hash:'#home', label:'Главная'}, {hash:'#today', label:'Сегодня'},
     {hash:'#schedule', label:'Расписание'}, {hash:'#subjects', label:'Предметы'}
   ];
-  const active = location.hash || '#home';
+  const active = location.hash.split('?')[0] || '#home';
   return `<div class="nav">${pages.map(p => `<a href="${p.hash}" class="${active === p.hash ? 'active' : ''}">${p.label}</a>`).join('')}</div>`;
 }
 
 function router() {
   const hash = location.hash || '#home';
   if (hash === '#home') renderHome();
-  else if (hash.startsWith('#today')) renderToday();
+  else if (hash.startsWith('#today')) {
+    const params = new URLSearchParams(hash.split('?')[1] || '');
+    renderToday(params.get('subject') || null);
+  }
   else if (hash.startsWith('#schedule')) renderSchedule();
   else if (hash.startsWith('#subjects')) renderSubjects();
   else if (hash.startsWith('#subject/')) renderSubject(hash.split('/')[1]);
@@ -46,13 +49,13 @@ async function renderHome() {
 
   html += `<div class="card" style="cursor:pointer" onclick="location='#today'">
     <div class="card-title">Сегодня (${today.date})</div>
-    <div class="card-sub">${today.schedule.length} пар в расписании · ${today.lessons.length} занятий</div>
+    <div class="card-sub">${today.schedule.length} пар · ${today.lessons.length} занятий</div>
   </div>`;
 
   html += `<h2>Предметы</h2>`;
   for (const s of subjects) {
     const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
-    html += `<div class="card" style="cursor:pointer" onclick="location='#subject/${s.id}'">
+    html += `<div class="card" style="cursor:pointer" onclick="location='#today?subject=${s.id}'">
       <div class="card-title">${s.name}</div>
       <div class="card-sub">${s.group_name} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
       <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
@@ -73,26 +76,44 @@ async function renderHome() {
   $('#app').innerHTML = html;
 }
 
-// ===== TODAY =====
-async function renderToday() {
+// ===== TODAY (with optional subject filter) =====
+async function renderToday(subjectId) {
   const data = await api('GET', '/api/schedule/today');
+  const subjects = await api('GET', '/api/subjects');
+
+  // Filter by subject if specified
+  let schedule = data.schedule;
+  let lessons = data.lessons;
+  let currentSubject = null;
+
+  if (subjectId) {
+    currentSubject = subjects.find(s => s.id == subjectId);
+    schedule = data.schedule.filter(e => e.subject_id == subjectId);
+    lessons = data.lessons.filter(l => l.subject_id == subjectId);
+  }
 
   let html = nav();
-  html += `<h1>Сегодня</h1>`;
+  const title = currentSubject ? `${currentSubject.name} — сегодня` : 'Сегодня';
+  html += `<h1>${title}</h1>`;
   html += `<div class="card"><div class="card-title">${data.date}</div>`;
   html += `<div class="card-sub">День ${data.day_of_week}</div></div>`;
 
-  if (data.schedule.length) {
+  if (currentSubject) {
+    html += `<button class="btn btn-muted btn-sm" style="margin-bottom:8px" onclick="location='#subject/${subjectId}'">📋 Журнал предмета</button>`;
+    html += `<button class="btn btn-muted btn-sm" style="margin-bottom:8px" onclick="location='#today'">📅 Все предметы</button>`;
+  }
+
+  if (schedule.length) {
     html += `<h2>Расписание</h2>`;
-    for (const e of data.schedule) {
-      const existing = data.lessons.find(l => l.subject_id === e.subject_id && l.status !== 'free');
+    for (const e of schedule) {
+      const existing = lessons.find(l => l.subject_id === e.subject_id && l.status !== 'free');
       if (existing) {
         html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existing.id}'">
           <div class="card-title">Пара ${e.lesson_number} · ${e.subject_name}</div>
           <div class="card-sub">${e.group_name} · <span class="badge badge-held">Проведено</span></div>
         </div>`;
       } else {
-        const existingFree = data.lessons.find(l => l.subject_id === e.subject_id && l.status === 'free');
+        const existingFree = lessons.find(l => l.subject_id === e.subject_id && l.status === 'free');
         if (existingFree) {
           html += `<div class="card" style="cursor:pointer" onclick="lessonDialog(${e.subject_id}, '${e.group_name}', ${e.id}, true)">
             <div class="card-title">Пара ${e.lesson_number} · ${e.subject_name}</div>
@@ -109,9 +130,9 @@ async function renderToday() {
     }
   }
 
-  if (data.lessons.length) {
-    const otherLessons = data.lessons.filter(l => {
-      return !data.schedule.some(s => s.subject_id === l.subject_id);
+  if (lessons.length && !subjectId) {
+    const otherLessons = lessons.filter(l => {
+      return !schedule.some(s => s.subject_id === l.subject_id);
     });
     if (otherLessons.length) {
       html += `<h2>Другие занятия</h2>`;
@@ -127,11 +148,23 @@ async function renderToday() {
     }
   }
 
-  if (!data.schedule.length && !data.lessons.length) {
-    html += `<div class="card"><div class="card-sub">Сегодня пар нет</div></div>`;
+  if (!schedule.length && !lessons.length) {
+    html += `<div class="card"><div class="card-sub">${currentSubject ? 'Сегодня пар по этому предмету нет' : 'Сегодня пар нет'}</div></div>`;
   }
 
-  html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="showCustomLesson()">Создать занятие вручную</button>`;
+  if (!subjectId) {
+    html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="showCustomLesson()">Создать занятие вручную</button>`;
+  }
+
+  if (currentSubject) {
+    const pct = currentSubject.total_hours > 0 ? Math.round(currentSubject.held_lessons / currentSubject.total_hours * 100) : 0;
+    html += `<div class="card" style="margin-top:8px">
+      <div class="card-title">Прогресс</div>
+      <div class="card-sub">${currentSubject.held_lessons}/${currentSubject.total_hours} (осталось ${currentSubject.remaining})</div>
+      <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  }
+
   $('#app').innerHTML = html;
 }
 
@@ -175,7 +208,6 @@ window.createHeldLesson = async function(subjectId, actualSubjectId) {
 window.showSubstitution = async function(subjectId) {
   const subs = await api('GET', `/api/subjects/${subjectId}/substitution-list`);
   const opts = subs.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
-
   showPopup(`
     <h2>Замена</h2>
     <p style="margin-bottom:8px">Выберите предмет:</p>
@@ -197,7 +229,7 @@ window.createSubstitution = async function(subjectId) {
   });
   closePopup();
   notify(isFree ? 'Занятие отменено (СВОБОДНО)' : 'Замена выполнена');
-  renderToday();
+  location = `#today?subject=${subjectId}`;
 }
 
 window.showCustomLesson = function() {
@@ -230,7 +262,7 @@ window.createCustomLesson = async function() {
   renderToday();
 }
 
-// ===== SUBJECTS =====
+// ===== SUBJECTS (manage) =====
 async function renderSubjects() {
   const groups = await api('GET', '/api/groups');
   const subjects = await api('GET', '/api/subjects');
@@ -297,10 +329,11 @@ window.createGroup = async function() {
   router();
 }
 
-// ===== SUBJECT (gradebook) =====
+// ===== SUBJECT (gradebook + lesson log) =====
 async function renderSubject(subjectId) {
   const data = await api('GET', `/api/subjects/${subjectId}/gradebook`);
   const avg = await api('GET', `/api/reports/average/${subjectId}`);
+  const allLessons = await api('GET', `/api/subjects/${subjectId}/lessons`);
 
   let html = nav();
 
@@ -316,8 +349,10 @@ async function renderSubject(subjectId) {
     </div>
     <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
     <div class="card-sub" style="margin-top:8px">Группа: ${s.group_name}</div>`;
-    html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="lessonDialog(${subjectId}, '${s.group_name}')">Начать занятие</button>`;
-    html += `<button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты группы</button>`;
+    html += `<div class="grid-2" style="margin-top:8px">
+      <button class="btn btn-primary btn-sm" onclick="location='#today?subject=${subjectId}'">На сегодня</button>
+      <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
+    </div>`;
     html += `</div>`;
   }
 
@@ -334,6 +369,27 @@ async function renderSubject(subjectId) {
     html += `</div>`;
   }
 
+  // All lessons log
+  html += `<h2>Все занятия</h2>`;
+  if (allLessons.length) {
+    html += `<div class="card">`;
+    for (const l of allLessons) {
+      const cls = l.status === 'free' ? 'badge-cancelled' : 'badge-held';
+      const label = l.status === 'free' ? 'СВОБОДНО' : 'Проведено';
+      html += `<div class="row" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
+        <div style="flex:1">
+          <div style="font-weight:500">${l.date}</div>
+          <div><span class="badge ${cls}">${label}</span> ${l.actual_subject_name !== l.planned_subject && l.status !== 'free' ? '· Замена' : ''}</div>
+        </div>
+        <span style="color:#007aff;font-size:20px">›</span>
+      </div>`;
+    }
+    html += `</div>`;
+  } else {
+    html += `<div class="card"><div class="card-sub">Занятий пока нет</div></div>`;
+  }
+
+  // Grade table
   html += `<h2>Ведомость</h2><div class="card" style="overflow-x:auto">`;
   html += `<table style="width:100%;font-size:13px;border-collapse:collapse">`;
   html += `<tr><th style="text-align:left;padding:4px">Студент</th><th style="padding:4px">Оценка</th><th style="padding:4px">Дата</th></tr>`;
@@ -359,37 +415,55 @@ function gradeColorClass(grade) {
   return 'none';
 }
 
-// ===== LESSON (attendance) =====
+// ===== LESSON (attendance with arrows) =====
+let _lessonSubjectId = null;
+
 async function renderLesson(lessonId) {
   const data = await api('GET', `/api/lessons/${lessonId}/attendance`);
+  const adjacent = await api('GET', `/api/lessons/${lessonId}/adjacent`);
 
   let html = nav();
   if (!data.lesson) { html += `<div class="card">Занятие не найдено</div>`; $('#app').innerHTML = html; return; }
 
   const l = data.lesson;
+  _lessonSubjectId = l.subject_id;
+
+  // Navigation arrows
+  html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">`;
+  if (adjacent.prev_id) {
+    html += `<button class="btn btn-muted btn-sm" style="width:auto;padding:8px 16px" onclick="location='#lesson/${adjacent.prev_id}'">‹</button>`;
+  } else {
+    html += `<div style="width:44px"></div>`;
+  }
+  html += `<div style="flex:1;text-align:center">`;
+  if (l.status === 'free') {
+    html += `<h1 style="margin:0">СВОБОДНО</h1>`;
+  } else {
+    html += `<h1 style="margin:0">${l.actual_subject_name}</h1>`;
+  }
+  html += `</div>`;
+  if (adjacent.next_id) {
+    html += `<button class="btn btn-muted btn-sm" style="width:auto;padding:8px 16px" onclick="location='#lesson/${adjacent.next_id}'">›</button>`;
+  } else {
+    html += `<div style="width:44px"></div>`;
+  }
+  html += `</div>`;
+
+  html += `<div class="card">
+    <div class="card-sub">${l.date} · ${l.group_name}</div>
+    ${l.planned_subject !== l.actual_subject_name && l.status !== 'free' ? `<div class="badge badge-warning">Замена вместо: ${l.planned_subject}</div>` : ''}
+    ${l.status === 'free' ? `<div class="badge badge-cancelled">Занятие отменено</div>` : `<span class="badge badge-held">Проведено</span>`}
+  </div>`;
 
   if (l.status === 'free') {
-    html += `<h1>СВОБОДНО</h1>`;
-    html += `<div class="card">
-      <div class="card-title">${l.date}</div>
-      <div class="card-sub">${l.group_name} · Плановый предмет: ${l.planned_subject}</div>
-      <div class="badge badge-cancelled" style="margin-top:8px">Занятие отменено</div>
-    </div>`;
-    html += `<button class="btn btn-muted btn-sm" onclick="location='#today'">Назад</button>`;
+    html += `<button class="btn btn-muted btn-sm" onclick="location='#subject/${_lessonSubjectId}'">Журнал</button>`;
     $('#app').innerHTML = html;
     return;
   }
 
-  html += `<h1>${l.actual_subject_name}</h1>`;
-  html += `<div class="card">
-    <div class="card-sub">${l.date} · ${l.group_name}</div>
-    ${l.planned_subject !== l.actual_subject_name ? `<div class="badge badge-warning">Замена вместо: ${l.planned_subject}</div>` : ''}
-  </div>`;
-
+  // Attendance
   const attMap = {};
   for (const a of data.attendance) attMap[a.student_id] = a.grade;
-
-  const gradeCycle = [null, '0', '5', '4', '3', '2'];
 
   html += `<h2>Отметки</h2><div class="card">`;
   for (const s of data.students || []) {
@@ -404,7 +478,9 @@ async function renderLesson(lessonId) {
   }
   html += `</div>`;
 
-  html += `<button class="btn btn-success btn-sm" onclick="location='#today'">Готово</button>`;
+  html += `<div style="display:flex;gap:8px;margin-top:8px">
+    <button class="btn btn-success" style="flex:1" onclick="location='#subject/${_lessonSubjectId}'">Готово</button>
+  </div>`;
   $('#app').innerHTML = html;
 }
 
