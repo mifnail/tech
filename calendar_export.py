@@ -1,45 +1,58 @@
-"""Export schedule to iCalendar (.ics) format."""
+"""Экспорт занятий в iCalendar (.ics) формат."""
+
+from __future__ import annotations
+
 from datetime import datetime, timedelta
+from typing import Optional
+
 from database import Database
 
-def export_ics(db_path=None):
-    db = Database(db_path)
-    lessons = db.conn.execute("""
-        SELECT l.date, COALESCE(fs.name, ps.name) AS subject_name, g.name AS group_name
-        FROM lessons l
-        JOIN subjects ps ON l.subject_id = ps.id
-        LEFT JOIN subjects fs ON l.actual_subject_id = fs.id
-        JOIN groups g ON ps.group_id = g.id
-        ORDER BY l.date
-    """).fetchall()
-    db.close()
 
+def generate_ics(lessons: list[dict]) -> str:
+    """Генерирует .ics-строку из списка занятий."""
     lines = [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
         'PRODID:-//TeachHelper4//RU',
-        'CALSCALE:GREGORIAN',
-        'METHOD:PUBLISH',
     ]
-
-    for l in lessons:
-        d = datetime.strptime(l['date'], '%Y-%m-%d')
-        dt_start = d.strftime('%Y%m%dT090000')
-        dt_end = d.strftime('%Y%m%dT103000')
-        uid = f'lesson-{l["date"]}-{l["subject_name"]}@teachhelper4'
-        summary = f'{l["subject_name"]} ({l["group_name"]})'
-
+    for lesson in lessons:
+        date_str = lesson.get('date', '2000-01-01')
+        subject = lesson.get('actual_subject_name', 'Занятие')
+        try:
+            dt = datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            dt = datetime.now()
+        start = dt.strftime('%Y%m%dT090000')
+        end = (dt + timedelta(hours=1, minutes=30)).strftime('%Y%m%dT103000')
         lines.extend([
             'BEGIN:VEVENT',
-            f'UID:{uid}',
-            f'DTSTART:{dt_start}',
-            f'DTEND:{dt_end}',
-            f'SUMMARY:{summary}',
+            f'DTSTART:{start}',
+            f'DTEND:{end}',
+            f'SUMMARY:{subject}',
             'END:VEVENT',
         ])
-
     lines.append('END:VCALENDAR')
     return '\r\n'.join(lines) + '\r\n'
 
-if __name__ == '__main__':
-    print(export_ics())
+
+def export_lessons_to_ics(db: Optional[Database] = None) -> str:
+    """Экспортирует все уроки из БД в .ics."""
+    if db is None:
+        db = Database()
+    lessons = db.conn.execute("""
+        SELECT l.date, COALESCE(fs.name, ps.name) AS actual_subject_name
+        FROM lessons l
+        JOIN subjects ps ON l.subject_id = ps.id
+        LEFT JOIN subjects fs ON l.actual_subject_id = fs.id
+        WHERE l.status != 'free'
+        ORDER BY l.date
+    """).fetchall()
+    return generate_ics([dict(r) for r in lessons])
+
+
+def export_to_file(filepath: str = 'lessons.ics', db: Optional[Database] = None) -> str:
+    """Сохраняет .ics файл."""
+    content = export_lessons_to_ics(db)
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(content)
+    return filepath
