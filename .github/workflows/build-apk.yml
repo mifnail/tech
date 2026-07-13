@@ -45,11 +45,13 @@ jobs:
             libtool \
             pkg-config \
             zlib1g-dev \
-            libncurses-dev \
+            libncurses5-dev \
             cmake \
             libffi-dev \
             libssl-dev \
-            automake
+            automake \
+            libltdl-dev \
+            ccache
 
       - name: Cache .buildozer
         uses: actions/cache@v6
@@ -57,8 +59,16 @@ jobs:
           path: ~/.buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
+      - name: Swap to avoid OOM
+        run: |
+          sudo fallocate -l 4G /swapfile 2>/dev/null || true
+          sudo chmod 600 /swapfile 2>/dev/null || true
+          sudo mkswap /swapfile 2>/dev/null || true
+          sudo swapon /swapfile 2>/dev/null || true
+          free -h
+
       - name: Install Buildozer
-        run: pip install --upgrade buildozer cython
+        run: pip install --user buildozer==1.6.0 cython
 
       - name: Accept Android SDK licenses
         run: |
@@ -66,7 +76,9 @@ jobs:
           yes | $HOME/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Build debug APK
-        run: buildozer android debug --verbose
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          buildozer -v android debug 2>&1
         shell: bash
         timeout-minutes: 60
 
