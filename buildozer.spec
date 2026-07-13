@@ -4,18 +4,23 @@
 
 [app]
 title = Учёт занятий
-package.name = lessontracker
-package.domain = org.lessontracker
+package.name = teachhelper4
+package.domain = com.teachhelper4
 
 source.dir = .
-source.include_exts = py,png,jpg,html,css,js
-version = 0.4
+source.include_exts = py,png,jpg,html,css,js,txt
+version = 0.1
 
 # webview bootstrap — встроенный Android WebView, Kivy не нужен
 requirements = python3,flask
 
 orientation = portrait
 fullscreen = 0
+
+osx.python_version = 3
+osx.kivy_version = 2.2.0
+presplash.filename =
+icon.filename =
 
 android.permissions = INTERNET
 android.api = 34
@@ -28,6 +33,7 @@ android.ndk = 25c
 # webview bootstrap + порт
 p4a.bootstrap = webview
 p4a.port = 5000
+android.gradle_dependencies = androidx.webkit:webkit:1.8.0
 
 [buildozer]
 log_level = 2
