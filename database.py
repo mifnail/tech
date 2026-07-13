@@ -195,7 +195,7 @@ class Database:
                 SELECT l.actual_subject_id, ROUND(AVG(CAST(gr.grade AS REAL)), 2) AS average
                 FROM grades gr
                 JOIN lessons l ON gr.lesson_id = l.id
-                WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced') AND gr.grade NOT IN ('absent', 'pass', 'fail')
+                WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced') AND gr.grade IN ('2', '3', '4', '5')
                 GROUP BY l.actual_subject_id
             ) avg ON 1=1
             LEFT JOIN (
@@ -215,7 +215,16 @@ class Database:
         self.conn.commit()
         return cur.lastrowid
 
-    def get_schedule_for_day(self, day_of_week: int) -> Sequence[sqlite3.Row]:
+    def get_schedule_for_day(self, day_of_week: int, current_week_type: Optional[int] = None) -> Sequence[sqlite3.Row]:
+        if current_week_type is not None:
+            return self.conn.execute("""
+                SELECT sch.*, sub.name AS subject_name, g.name AS group_name
+                FROM schedule sch
+                JOIN subjects sub ON sch.subject_id = sub.id
+                JOIN groups g ON sub.group_id = g.id
+                WHERE sch.day_of_week = ? AND (sch.week_type = 0 OR sch.week_type = ?)
+                ORDER BY sch.lesson_number
+            """, (day_of_week, current_week_type)).fetchall()
         return self.conn.execute("""
             SELECT sch.*, sub.name AS subject_name, g.name AS group_name
             FROM schedule sch
@@ -236,6 +245,12 @@ class Database:
 
     def delete_schedule_entry(self, entry_id: int) -> None:
         self.conn.execute("DELETE FROM schedule WHERE id = ?", (entry_id,))
+        self.conn.commit()
+
+    def update_schedule_entry(self, entry_id: int, day_of_week: int, lesson_number: int, subject_id: int, week_type: int) -> None:
+        self.conn.execute(
+            "UPDATE schedule SET day_of_week = ?, lesson_number = ?, subject_id = ?, week_type = ? WHERE id = ?",
+            (day_of_week, lesson_number, subject_id, week_type, entry_id))
         self.conn.commit()
 
     def add_lesson(self, subject_id: int, date: str, actual_subject_id: Optional[int] = None, status: str = 'held') -> int:
@@ -366,7 +381,7 @@ class Database:
             FROM students s
             JOIN grades g ON g.student_id = s.id
             JOIN lessons l ON g.lesson_id = l.id
-            WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced') AND g.grade NOT IN ('absent', 'pass', 'fail')
+            WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced') AND g.grade IN ('2', '3', '4', '5')
             GROUP BY s.id
             ORDER BY average DESC
         """, (subject_id,)).fetchall()

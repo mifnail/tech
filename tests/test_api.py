@@ -209,6 +209,27 @@ class TestScheduleAPI:
         assert 'schedule' in rv.json
         assert 'lessons' in rv.json
 
+    def test_update(self, client):
+        _, sid = self._setup(client)
+        gid2 = client.post('/api/groups', json={'name': 'ПО-21'}).json['id']
+        sid2 = client.post('/api/subjects', json={
+            'name': 'Физика', 'total_hours': 24, 'group_id': gid2
+        }).json['id']
+        eid = client.post('/api/schedule', json={
+            'day_of_week': 1, 'lesson_number': 1,
+            'subject_id': sid, 'week_type': 0
+        }).json['id']
+        rv = client.patch(f'/api/schedule/{eid}', json={
+            'day_of_week': 3, 'lesson_number': 2,
+            'subject_id': sid2, 'week_type': 1
+        })
+        assert rv.json['ok'] is True
+        entry = [e for e in client.get('/api/schedule').json if e['id'] == eid][0]
+        assert entry['day_of_week'] == 3
+        assert entry['lesson_number'] == 2
+        assert entry['subject_id'] == sid2
+        assert entry['week_type'] == 1
+
 # ======================== LESSONS ========================
 
 class TestLessonsAPI:

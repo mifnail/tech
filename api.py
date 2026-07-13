@@ -173,15 +173,27 @@ def delete_schedule_entry(entry_id: int):
     return jsonify({'ok': True})
 
 
+@schedule_bp.route('/<int:entry_id>', methods=['PATCH'])
+@require_fields('day_of_week', 'lesson_number', 'subject_id', 'week_type')
+def update_schedule_entry(entry_id: int):
+    data = request.json
+    get_db().update_schedule_entry(
+        entry_id, data['day_of_week'], data['lesson_number'],
+        data['subject_id'], data['week_type'])
+    return jsonify({'ok': True})
+
+
 @schedule_bp.route('/today', methods=['GET'])
 def schedule_today():
     today = date.today()
     day = today.isoweekday()
+    week_num = today.isocalendar()[1]
+    week_type = 1 if week_num % 2 == 1 else 2
     db = get_db()
     return jsonify({
         'date': today.isoformat(),
         'day_of_week': day,
-        'schedule': [dict(r) for r in db.get_schedule_for_day(day)],
+        'schedule': [dict(r) for r in db.get_schedule_for_day(day, week_type)],
         'lessons': [dict(r) for r in db.list_lessons_by_date(today.isoformat())]
     })
 

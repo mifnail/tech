@@ -477,6 +477,7 @@ App.Pages = {
               <div class="card-title">Занятие ${e.lesson_number}</div>
               <div class="card-sub">${e.subject_name} · ${e.group_name} · ${weekTypes[e.week_type] || 'Каждую'}</div>
             </div>
+            <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditScheduleEntry(${e.id}, ${JSON.stringify(e).replace(/"/g, '&quot;')})">✎</button>
             <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.deleteScheduleEntry(${e.id})">✕</button>
           </div>
         </div>`;
@@ -674,6 +675,35 @@ App.Pages.createScheduleEntry = async function() {
     week_type: +document.getElementById('sch-week').value
   });
   App.UI.notify('Добавлено в расписание');
+  App.UI.closePopup();
+  App.Pages.schedule();
+};
+
+App.Pages.showEditScheduleEntry = async function(id, entry) {
+  const subjects = await App.API.get('/api/subjects');
+  const opts = subjects.map(s => `<option value="${s.id}" ${s.id === entry.subject_id ? 'selected' : ''}>${s.name} (${s.group_name})</option>`).join('');
+  App.UI.showPopup(`
+    <h2>Редактировать расписание</h2>
+    <select id="edit-sch-day">${[1,2,3,4,5,6].map(d => `<option value="${d}" ${d === entry.day_of_week ? 'selected' : ''}>${['Пн','Вт','Ср','Чт','Пт','Сб'][d-1]}</option>`).join('')}</select>
+    <input id="edit-sch-num" type="number" placeholder="Номер занятия" min="1" max="8" value="${entry.lesson_number}">
+    <select id="edit-sch-subject">${opts}</select>
+    <select id="edit-sch-week">
+      <option value="0" ${entry.week_type === 0 ? 'selected' : ''}>Каждую неделю</option>
+      <option value="1" ${entry.week_type === 1 ? 'selected' : ''}>Нечетная</option>
+      <option value="2" ${entry.week_type === 2 ? 'selected' : ''}>Четная</option>
+    </select>
+    <button class="btn btn-primary" onclick="App.Pages.updateScheduleEntry(${id})">Сохранить</button>
+  `);
+};
+
+App.Pages.updateScheduleEntry = async function(id) {
+  await App.API.patch(`/api/schedule/${id}`, {
+    day_of_week: +document.getElementById('edit-sch-day').value,
+    lesson_number: +document.getElementById('edit-sch-num').value,
+    subject_id: +document.getElementById('edit-sch-subject').value,
+    week_type: +document.getElementById('edit-sch-week').value
+  });
+  App.UI.notify('Расписание обновлено');
   App.UI.closePopup();
   App.Pages.schedule();
 };

@@ -232,7 +232,7 @@ class TestScenarioGradeCycle:
         student_id = db.add_student(gid, 'Иванов', 'Иван')
 
         # Mark various grades over multiple lessons
-        grades_cycle = ['0', '5', '4', '3', '2']
+        grades_cycle = ['3', '5', '4', '3', '2']
         for i, grade in enumerate(grades_cycle):
             l = db.add_lesson(sid, f'2026-09-{i+1:02d}', sid, 'held')
             db.mark_attendance(l, student_id, grade)
@@ -240,11 +240,11 @@ class TestScenarioGradeCycle:
         grades = db.student_grades(student_id)
         assert len(grades) == len(grades_cycle)
 
-        # Average should be calculated from all numeric grades
+        # Average should be calculated from grades 2-5 only
         avg = db.average_grades(sid)
         assert len(avg) == 1
-        # Average of [0, 5, 4, 3, 2] = 2.8
-        assert avg[0]['average'] == pytest.approx(2.8, 0.1)
+        # Average of [3, 5, 4, 3, 2] = 3.4
+        assert avg[0]['average'] == pytest.approx(3.4, 0.1)
 
         # Last lesson (grade '2') should have '2' in attendance
         all_lessons = db.list_lessons_for_subject(sid)

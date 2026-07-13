@@ -245,6 +245,32 @@ class TestSchedule:
         assert entries[0]['subject_name'] == 'Математика'
         assert entries[0]['group_name'] == 'ИС-11'
 
+    def test_get_schedule_for_day_filters_week_type(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_subject('Математика', 32, gid)
+        db.add_schedule_entry(1, 1, sid, 0)  # каждую
+        db.add_schedule_entry(1, 2, sid, 1)  # нечётная
+        db.add_schedule_entry(1, 3, sid, 2)  # чётная
+        all_entries = db.get_schedule_for_day(1)
+        assert len(all_entries) == 3
+        odd_entries = db.get_schedule_for_day(1, current_week_type=1)
+        assert len(odd_entries) == 2  # каждую + нечётная
+        even_entries = db.get_schedule_for_day(1, current_week_type=2)
+        assert len(even_entries) == 2  # каждую + чётная
+
+    def test_update_schedule_entry(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_subject('Математика', 32, gid)
+        sid2 = db.add_subject('Физика', 24, gid)
+        eid = db.add_schedule_entry(1, 1, sid, 0)
+        db.update_schedule_entry(eid, 3, 2, sid2, 1)
+        entries = db.list_schedule()
+        assert len(entries) == 1
+        assert entries[0]['day_of_week'] == 3
+        assert entries[0]['lesson_number'] == 2
+        assert entries[0]['subject_id'] == sid2
+        assert entries[0]['week_type'] == 1
+
 # ======================== LESSONS ========================
 
 class TestLessons:
