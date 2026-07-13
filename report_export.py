@@ -27,13 +27,13 @@ except ImportError:
     HAS_REPORTLAB = False
 
 
-_THIN = Side(style='thin')
-_BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
-_HEADER_FILL = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
-_HEADER_FONT = Font(bold=True, color='FFFFFF', size=10)
-_CELL_FONT = Font(size=10)
-_CENTER = Alignment(horizontal='center', vertical='center')
-_LEFT = Alignment(horizontal='left', vertical='center')
+_THIN = Side(style='thin') if HAS_OPENPYXL else None
+_BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN) if HAS_OPENPYXL else None
+_HEADER_FILL = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid') if HAS_OPENPYXL else None
+_HEADER_FONT = Font(bold=True, color='FFFFFF', size=10) if HAS_OPENPYXL else None
+_CELL_FONT = Font(size=10) if HAS_OPENPYXL else None
+_CENTER = Alignment(horizontal='center', vertical='center') if HAS_OPENPYXL else None
+_LEFT = Alignment(horizontal='left', vertical='center') if HAS_OPENPYXL else None
 
 
 def _ensure_db(db: Optional[Database]) -> Database:
