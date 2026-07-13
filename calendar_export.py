@@ -44,7 +44,7 @@ def export_lessons_to_ics(db: Optional[Database] = None) -> str:
         FROM lessons l
         JOIN subjects ps ON l.subject_id = ps.id
         LEFT JOIN subjects fs ON l.actual_subject_id = fs.id
-        WHERE l.status != 'free'
+        WHERE l.status NOT IN ('cancelled', 'replaced')
         ORDER BY l.date
     """).fetchall()
     return generate_ics([dict(r) for r in lessons])

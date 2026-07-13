@@ -97,11 +97,11 @@ class TestScenarioFullDay:
 
         # 9. Делаем замену на первом занятии
         db = get_db()
-        free_id = db.get_free_subject_id(gid)
+        s3 = db.add_subject('Литература', 24, gid)
         client.patch(f'/api/lessons/{lid1}/substitute',
-                     json={'new_subject_id': free_id})
+                     json={'new_subject_id': s3})
         lesson = client.get(f'/api/lessons/{lid1}').json
-        assert lesson['status'] == 'free'
+        assert lesson['status'] == 'replaced'
 
         # 10. Проверяем замены теперь
         subs = client.get('/api/reports/substitutions').json
@@ -174,34 +174,27 @@ class TestScenarioSubstitution:
         assert len(phys_gradebook['grades']) >= 1
 
 
-class TestScenarioFreeLesson:
-    """Scenario: занятие отменено (СВОБОДНО)."""
+class TestScenarioCancelledLesson:
+    """Scenario: занятие отменено."""
 
-    def test_free_lesson_flow(self, client):
+    def test_cancelled_lesson_flow(self, client):
         gid = client.post('/api/groups', json={'name': 'ИС-11'}).json['id']
         sid = client.post('/api/subjects', json={
             'name': 'Математика', 'total_hours': 32, 'group_id': gid
         }).json['id']
-        db = get_db()
-        free_id = db.get_free_subject_id(gid)
 
-        # Create free lesson
+        # Create cancelled lesson
         lid = client.post('/api/lessons', json={
-            'subject_id': sid, 'actual_subject_id': free_id,
-            'date': '2026-09-01', 'status': 'free'
+            'subject_id': sid, 'actual_subject_id': sid,
+            'date': '2026-09-01', 'status': 'cancelled'
         }).json['id']
 
         lesson = client.get(f'/api/lessons/{lid}').json
-        assert lesson['status'] == 'free'
+        assert lesson['status'] == 'cancelled'
 
-        # Free lesson should not count toward progress
+        # Cancelled lesson should not count toward progress
         subs = client.get(f'/api/subjects?group_id={gid}').json
         assert subs[0]['held_lessons'] == 0
-
-        # Check substitution list includes СВОБОДНО
-        sub_list = client.get(f'/api/subjects/{sid}/substitution-list').json
-        names = [s['name'] for s in sub_list]
-        assert 'СВОБОДНО' in names
 
 
 class TestScenarioGradeCycle:

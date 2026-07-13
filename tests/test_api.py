@@ -129,10 +129,11 @@ class TestSubjectsAPI:
         rv = client.get(f'/api/subjects/{sid}/substitution-list')
         assert rv.status_code == 200
         names = [s['name'] for s in rv.json]
-        free_names = [n for n in names if '\u0421\u0412\u041e\u0411\u041e\u0414\u041d\u041e' in n]
-        assert len(free_names) > 0, f'СВОБОДНО not found in names: {names}'
         math_names = [n for n in names if '\u041c\u0430\u0442\u0435\u043c\u0430\u0442\u0438\u043a\u0430' in n]
         assert len(math_names) > 0, f'Математика not found in names: {names}'
+        # СВОБОДНО should not appear in substitution list
+        free_names = [n for n in names if '\u0421\u0412\u041e\u0411\u041e\u0414\u041d\u041e' in n]
+        assert len(free_names) == 0, f'СВОБОДНО should not appear: {names}'
 
     def test_subject_lessons(self, client):
         gid = self._setup(client)
@@ -248,10 +249,12 @@ class TestLessonsAPI:
             'date': '2026-09-01', 'status': 'held'
         }).json['id']
         db = get_db()
-        free_id = db.get_free_subject_id(get_db().list_groups()[0]['id'])
+        s2 = db.add_subject('Физика', 24, db.list_groups()[0]['id'])
         rv = client.patch(f'/api/lessons/{lid}/substitute',
-                          json={'new_subject_id': free_id})
+                          json={'new_subject_id': s2})
         assert rv.json['ok'] is True
+        lesson = client.get(f'/api/lessons/{lid}').json
+        assert lesson['status'] == 'replaced'
 
     def test_update_status(self, client):
         _, sid, _ = self._setup(client)
@@ -259,7 +262,7 @@ class TestLessonsAPI:
             'subject_id': sid, 'actual_subject_id': sid,
             'date': '2026-09-01', 'status': 'held'
         }).json['id']
-        rv = client.patch(f'/api/lessons/{lid}/status', json={'status': 'free'})
+        rv = client.patch(f'/api/lessons/{lid}/status', json={'status': 'cancelled'})
         assert rv.json['ok'] is True
 
     def test_adjacent(self, client):

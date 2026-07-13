@@ -114,25 +114,33 @@ App.Pages = {
     if (schedule.length) {
       html += `<h2>Расписание</h2>`;
       for (const e of schedule) {
-        const existing = lessons.find(l => l.subject_id === e.subject_id && l.status !== 'free');
+        const existing = lessons.find(l => l.subject_id === e.subject_id && l.status === 'held');
         if (existing) {
           html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existing.id}'">
             <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
             <div class="card-sub">${e.group_name} · <span class="badge badge-held">Проведено</span></div>
           </div>`;
         } else {
-          const existingFree = lessons.find(l => l.subject_id === e.subject_id && l.status === 'free');
-          if (existingFree) {
-            html += `<div class="card" style="cursor:pointer" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}', ${e.id}, true)">
+          const existingCancelled = lessons.find(l => l.subject_id === e.subject_id && l.status === 'cancelled');
+          if (existingCancelled) {
+            html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existingCancelled.id}'">
             <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-            <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">СВОБОДНО</span></div>
+            <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">Отменено</span></div>
             </div>`;
           } else {
-            html += `<div class="card">
-            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-            <div class="card-sub">${e.group_name}</div>
-              <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}')">Начать занятие</button>
-            </div>`;
+            const existingReplaced = lessons.find(l => l.subject_id === e.subject_id && l.status === 'replaced');
+            if (existingReplaced) {
+              html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existingReplaced.id}'">
+              <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+              <div class="card-sub">${e.group_name} · <span class="badge badge-warning">Заменили</span></div>
+              </div>`;
+            } else {
+              html += `<div class="card">
+              <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+              <div class="card-sub">${e.group_name}</div>
+                <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}', ${e.id})">Начать занятие</button>
+              </div>`;
+            }
           }
         }
       }
@@ -141,12 +149,12 @@ App.Pages = {
     if (otherLessons.length) {
       html += `<h2>Другие занятия</h2>`;
       for (const l of otherLessons) {
-        const cls = l.status === 'free' ? 'badge-cancelled' : 'badge-held';
-        const label = l.status === 'free' ? 'СВОБОДНО' : 'Проведено';
+        const cls = l.status === 'cancelled' ? 'badge-cancelled' : (l.status === 'replaced' ? 'badge-warning' : 'badge-held');
+        const label = l.status === 'cancelled' ? 'Отменено' : (l.status === 'replaced' ? 'Заменили' : 'Проведено');
         html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
           <div class="card-title">${l.actual_subject_name}</div>
           <div class="card-sub">${l.group_name} · <span class="badge ${cls}">${label}</span>
-            ${l.planned_subject !== l.actual_subject_name && l.status !== 'free' ? '· Замена: ' + l.planned_subject : ''}</div>
+            ${l.status === 'replaced' ? '· Замена: ' + l.planned_subject : ''}</div>
         </div>`;
       }
     }
@@ -241,25 +249,33 @@ App.Pages = {
     if (schedule.length) {
       html += `<h2>Расписание</h2>`;
       for (const e of schedule) {
-        const existing = lessons.find(l => l.subject_id === e.subject_id && l.status !== 'free');
+        const existing = lessons.find(l => l.subject_id === e.subject_id && l.status === 'held');
         if (existing) {
           html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existing.id}'">
             <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
             <div class="card-sub">${e.group_name} · <span class="badge badge-held">Проведено</span></div>
           </div>`;
         } else {
-          const existingFree = lessons.find(l => l.subject_id === e.subject_id && l.status === 'free');
-          if (existingFree) {
-            html += `<div class="card" style="cursor:pointer" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}', ${e.id}, true)">
+          const existingCancelled = lessons.find(l => l.subject_id === e.subject_id && l.status === 'cancelled');
+          if (existingCancelled) {
+            html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existingCancelled.id}'">
             <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-            <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">СВОБОДНО</span></div>
+            <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">Отменено</span></div>
             </div>`;
           } else {
-            html += `<div class="card">
-            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-            <div class="card-sub">${e.group_name}</div>
-              <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}')">Начать занятие</button>
-            </div>`;
+            const existingReplaced = lessons.find(l => l.subject_id === e.subject_id && l.status === 'replaced');
+            if (existingReplaced) {
+              html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existingReplaced.id}'">
+              <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+              <div class="card-sub">${e.group_name} · <span class="badge badge-warning">Заменили</span></div>
+              </div>`;
+            } else {
+              html += `<div class="card">
+              <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+              <div class="card-sub">${e.group_name}</div>
+                <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}')">Начать занятие</button>
+              </div>`;
+            }
           }
         }
       }
@@ -270,12 +286,12 @@ App.Pages = {
       if (otherLessons.length) {
         html += `<h2>Другие занятия</h2>`;
         for (const l of otherLessons) {
-          const cls = l.status === 'free' ? 'badge-cancelled' : 'badge-held';
-          const label = l.status === 'free' ? 'СВОБОДНО' : 'Проведено';
+          const cls = l.status === 'cancelled' ? 'badge-cancelled' : (l.status === 'replaced' ? 'badge-warning' : 'badge-held');
+          const label = l.status === 'cancelled' ? 'Отменено' : (l.status === 'replaced' ? 'Заменили' : 'Проведено');
           html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
             <div class="card-title">${l.actual_subject_name}</div>
             <div class="card-sub">${l.group_name} · <span class="badge ${cls}">${label}</span>
-              ${l.planned_subject !== l.actual_subject_name && l.status !== 'free' ? '· Замена: ' + l.planned_subject : ''}</div>
+              ${l.status === 'replaced' ? '· Замена: ' + l.planned_subject : ''}</div>
           </div>`;
         }
       }
@@ -324,7 +340,6 @@ App.Pages = {
       <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
       <div class="card-sub" style="margin-top:8px">Группа: ${s.group_name}</div>`;
       html += `<div class="grid-2" style="margin-top:8px">
-        <button class="btn btn-primary btn-sm" onclick="location='#subject/${subjectId}'">Журнал</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
       </div></div>`;
     }
@@ -346,12 +361,12 @@ App.Pages = {
     if (allLessons.length) {
       html += `<div class="card">`;
       for (const l of allLessons) {
-        const cls = l.status === 'free' ? 'badge-cancelled' : 'badge-held';
-        const label = l.status === 'free' ? 'СВОБОДНО' : 'Проведено';
+        const cls = l.status === 'cancelled' ? 'badge-cancelled' : (l.status === 'replaced' ? 'badge-warning' : 'badge-held');
+        const label = l.status === 'cancelled' ? 'Отменено' : (l.status === 'replaced' ? 'Заменили' : 'Проведено');
         html += `<div class="row" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
           <div style="flex:1">
             <div style="font-weight:500">${l.date}</div>
-            <div><span class="badge ${cls}">${label}</span> ${l.actual_subject_name !== l.planned_subject && l.status !== 'free' ? '· Замена' : ''}</div>
+            <div><span class="badge ${cls}">${label}</span> ${l.status === 'replaced' ? '· Замена' : ''}</div>
           </div>
           <span style="color:#007aff;font-size:20px">›</span>
         </div>`;
@@ -398,8 +413,8 @@ App.Pages = {
       ? `<button class="btn btn-muted btn-sm" style="width:auto;padding:8px 16px" onclick="location='#lesson/${adjacent.prev_id}'">‹</button>`
       : `<div style="width:44px"></div>`;
     html += `<div style="flex:1;text-align:center">`;
-    html += l.status === 'free'
-      ? `<h1 style="margin:0">СВОБОДНО</h1>`
+    html += (l.status === 'cancelled' || l.status === 'replaced')
+      ? `<h1 style="margin:0">${l.actual_subject_name}</h1>`
       : `<h1 style="margin:0">${l.actual_subject_name}</h1>`;
     html += `</div>`;
     html += adjacent.next_id
@@ -409,11 +424,11 @@ App.Pages = {
 
     html += `<div class="card">
       <div class="card-sub">${l.date} · ${l.group_name}</div>
-      ${l.planned_subject !== l.actual_subject_name && l.status !== 'free' ? `<div class="badge badge-warning">Замена вместо: ${l.planned_subject}</div>` : ''}
-      ${l.status === 'free' ? `<div class="badge badge-cancelled">Занятие отменено</div>` : `<span class="badge badge-held">Проведено</span>`}
+      ${l.status === 'replaced' ? `<div class="badge badge-warning">Замена вместо: ${l.planned_subject}</div>` : ''}
+      ${l.status === 'cancelled' ? `<div class="badge badge-cancelled">Отменено</div>` : (l.status === 'replaced' ? `<span class="badge badge-warning">Заменили</span>` : `<span class="badge badge-held">Проведено</span>`)}
     </div>`;
 
-    if (l.status === 'free') {
+    if (l.status === 'cancelled') {
       html += `<button class="btn btn-muted btn-sm" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал</button>`;
       document.getElementById('app').innerHTML = html;
       return;
@@ -529,24 +544,14 @@ App.Pages = {
 
 /* ===== Dialog / Action helpers (on window for onclick access) ===== */
 
-App.Pages.lessonDialog = async function(subjectId, groupName, scheduleEntryId, isFree) {
-  if (isFree) {
-    App.UI.showPopup(`
-      <h2>Занятие · СВОБОДНО</h2>
-      <p style="margin-bottom:12px;color:#86868b">Группа ${groupName}</p>
-      <div class="grid-2">
-        <button class="btn btn-success" onclick="App.Pages.createHeldLesson(${subjectId}, ${subjectId})">Провести</button>
-        <button class="btn btn-muted" onclick="App.UI.closePopup()">Закрыть</button>
-      </div>
-    `);
-    return;
-  }
+App.Pages.lessonDialog = async function(subjectId, groupName, scheduleEntryId) {
   App.UI.showPopup(`
     <h2>Начать занятие</h2>
     <p style="margin-bottom:12px;color:#86868b">Группа ${groupName}</p>
     <div class="grid-2">
       <button class="btn btn-success" onclick="App.Pages.createHeldLesson(${subjectId}, ${subjectId})">✅ Проведено</button>
       <button class="btn btn-warning" onclick="App.Pages.showSubstitution(${subjectId})">🔄 Замена</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
     </div>
   `);
 };
@@ -575,21 +580,19 @@ App.Pages.showSubstitution = async function(subjectId) {
 
 App.Pages.createSubstitution = async function(subjectId) {
   const actualSubjectId = +document.getElementById('subst-subject').value;
-  const isFree = (await App.API.get('/api/subjects')).find(s => s.id === actualSubjectId);
   await App.API.post('/api/lessons', {
     subject_id: subjectId,
     actual_subject_id: actualSubjectId,
-    status: isFree ? 'free' : 'held'
+    status: 'replaced'
   });
   App.UI.closePopup();
-  App.UI.notify(isFree ? 'Занятие отменено (СВОБОДНО)' : 'Замена выполнена');
+  App.UI.notify('Замена выполнена');
   location = `#subject/${subjectId}`;
 };
 
 App.Pages.showCustomLesson = function() {
-  App.API.get('/api/subjects?include_free=1').then(subjects => {
-    const filtered = subjects.filter(s => s.name !== 'СВОБОДНО');
-    const opts = filtered.map(s => `<option value="${s.id}">${s.name} (${s.group_name})</option>`).join('');
+  App.API.get('/api/subjects').then(subjects => {
+    const opts = subjects.map(s => `<option value="${s.id}">${s.name} (${s.group_name})</option>`).join('');
     App.UI.showPopup(`
       <h2>Создать занятие</h2>
       <select id="custom-subject">${opts}</select>
@@ -608,7 +611,7 @@ App.Pages.createCustomLesson = async function() {
   const isSubst = document.getElementById('custom-substitute').checked;
   const actualId = isSubst ? +document.getElementById('custom-actual').value : subjectId;
   await App.API.post('/api/lessons', {
-    subject_id: subjectId, actual_subject_id: actualId || subjectId, status: 'held'
+    subject_id: subjectId, actual_subject_id: actualId || subjectId, status: isSubst ? 'replaced' : 'held'
   });
   App.UI.notify('Занятие создано');
   App.UI.closePopup();

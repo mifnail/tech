@@ -133,8 +133,7 @@ def substitution_list(subject_id: int):
     subj = db.conn.execute("SELECT * FROM subjects WHERE id = ?", (subject_id,)).fetchone()
     if not subj:
         return jsonify([])
-    db.get_free_subject_id(subj['group_id'])
-    return jsonify([dict(r) for r in db.list_subjects(subj['group_id'], include_free=True)])
+    return jsonify([dict(r) for r in db.list_subjects(subj['group_id'])])
 
 
 @subjects_bp.route('/<int:subject_id>/lessons', methods=['GET'])

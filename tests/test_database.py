@@ -268,9 +268,9 @@ class TestLessons:
     def test_add_free_lesson(self, db):
         gid = db.add_group('ИС-11')
         sid = db.add_subject('Математика', 32, gid)
-        lid = db.add_lesson(sid, '2026-09-01', sid, 'free')
+        lid = db.add_lesson(sid, '2026-09-01', sid, 'cancelled')
         lesson = db.get_lesson(lid)
-        assert lesson['status'] == 'free'
+        assert lesson['status'] == 'cancelled'
 
     def test_get_lesson_not_found(self, db):
         assert db.get_lesson(999) is None
@@ -296,8 +296,8 @@ class TestLessons:
         gid = db.add_group('ИС-11')
         sid = db.add_subject('Математика', 32, gid)
         lid = db.add_lesson(sid, '2026-09-01', sid, 'held')
-        db.set_lesson_status(lid, 'free')
-        assert db.get_lesson(lid)['status'] == 'free'
+        db.set_lesson_status(lid, 'cancelled')
+        assert db.get_lesson(lid)['status'] == 'cancelled'
 
     def test_list_lessons_by_date(self, db):
         gid = db.add_group('ИС-11')
@@ -335,14 +335,18 @@ class TestLessons:
         lesson = db.get_lesson(lid)
         assert lesson['actual_subject_name'] == 'Физика'
 
-    def test_substitute_lesson_to_free(self, db):
+    def test_substitute_lesson_sets_replaced_and_clears_grades(self, db):
         gid = db.add_group('ИС-11')
-        sid = db.add_subject('Математика', 32, gid)
-        free_id = db.get_free_subject_id(gid)
-        lid = db.add_lesson(sid, '2026-09-01', sid, 'held')
-        db.substitute_lesson(lid, free_id)
+        s1 = db.add_subject('Математика', 32, gid)
+        s2 = db.add_subject('Физика', 24, gid)
+        student_id = db.add_student(gid, 'Иванов', 'Иван')
+        lid = db.add_lesson(s1, '2026-09-01', s1, 'held')
+        db.mark_attendance(lid, student_id, '5')
+        db.substitute_lesson(lid, s2)
         lesson = db.get_lesson(lid)
-        assert lesson['status'] == 'free'
+        assert lesson['actual_subject_name'] == 'Физика'
+        assert lesson['status'] == 'replaced'
+        assert db.get_attendance(lid) == []
 
     def test_get_substitutions(self, db):
         gid = db.add_group('ИС-11')
@@ -476,11 +480,11 @@ class TestGrades:
         avgs = db.average_grades(sid)
         assert avgs == []
 
-    def test_average_grades_excludes_free_lessons(self, db):
+    def test_average_grades_excludes_cancelled_lessons(self, db):
         gid = db.add_group('ИС-11')
         sid = db.add_subject('Математика', 32, gid)
         student_id = db.add_student(gid, 'Иванов', 'Иван')
-        lid = db.add_lesson(sid, '2026-09-01', sid, 'free')
+        lid = db.add_lesson(sid, '2026-09-01', sid, 'cancelled')
         db.mark_attendance(lid, student_id, '5')
         avgs = db.average_grades(sid)
         assert avgs == []

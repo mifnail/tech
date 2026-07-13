@@ -87,6 +87,8 @@ class Database:
             self.conn.commit()
         except sqlite3.OperationalError:
             pass
+        self.conn.execute("UPDATE lessons SET status = 'cancelled' WHERE status = 'free'")
+        self.conn.commit()
 
     def get_free_subject_id(self, group_id: int) -> int:
         row = self.conn.execute("SELECT id FROM subjects WHERE name = 'СВОБОДНО' AND group_id = ?", (group_id,)).fetchone()
@@ -143,7 +145,7 @@ class Database:
             JOIN groups g ON s.group_id = g.id
             LEFT JOIN (
                 SELECT actual_subject_id, COUNT(*) AS held
-                FROM lessons WHERE status != 'free' AND actual_subject_id IS NOT NULL
+                FROM lessons WHERE status NOT IN ('cancelled', 'replaced') AND actual_subject_id IS NOT NULL
                 GROUP BY actual_subject_id
             ) h ON h.actual_subject_id = s.id"""
         where = ""
@@ -162,7 +164,7 @@ class Database:
                 g.grade, g.lesson_id, l.date
             FROM students s
             LEFT JOIN grades g ON g.student_id = s.id
-            LEFT JOIN lessons l ON g.lesson_id = l.id AND l.actual_subject_id = ? AND l.status != 'free'
+            LEFT JOIN lessons l ON g.lesson_id = l.id AND l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced')
             WHERE s.group_id = (SELECT group_id FROM subjects WHERE id = ?)
             ORDER BY s.last_name, s.first_name, l.date
         """, (subject_id, subject_id)).fetchall()
@@ -178,21 +180,21 @@ class Database:
             JOIN groups g ON s.group_id = g.id
             LEFT JOIN (
                 SELECT actual_subject_id, COUNT(*) AS held
-                FROM lessons WHERE actual_subject_id = ? AND status != 'free'
+                FROM lessons WHERE actual_subject_id = ? AND status NOT IN ('cancelled', 'replaced')
                 GROUP BY actual_subject_id
             ) h ON 1=1
             LEFT JOIN (
                 SELECT l.actual_subject_id, ROUND(AVG(CAST(gr.grade AS REAL)), 2) AS average
                 FROM grades gr
                 JOIN lessons l ON gr.lesson_id = l.id
-                WHERE l.actual_subject_id = ? AND l.status != 'free' AND gr.grade NOT IN ('absent', 'pass', 'fail')
+                WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced') AND gr.grade NOT IN ('absent', 'pass', 'fail')
                 GROUP BY l.actual_subject_id
             ) avg ON 1=1
             LEFT JOIN (
                 SELECT l.actual_subject_id, COUNT(DISTINCT gr.student_id) AS total_students
                 FROM grades gr
                 JOIN lessons l ON gr.lesson_id = l.id
-                WHERE l.actual_subject_id = ? AND l.status != 'free'
+                WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced')
                 GROUP BY l.actual_subject_id
             ) att ON 1=1
             WHERE s.id = ?
@@ -289,10 +291,9 @@ class Database:
         return (prev_row['id'] if prev_row else None, next_row['id'] if next_row else None)
 
     def substitute_lesson(self, lesson_id: int, new_subject_id: int) -> None:
-        is_free = self.is_free_subject(new_subject_id)
-        status = 'free' if is_free else 'held'
-        self.conn.execute("UPDATE lessons SET actual_subject_id = ?, status = ? WHERE id = ?",
-                          (new_subject_id if not is_free else new_subject_id, status, lesson_id))
+        self.conn.execute("UPDATE lessons SET actual_subject_id = ?, status = 'replaced' WHERE id = ?",
+                          (new_subject_id, lesson_id))
+        self.conn.execute("DELETE FROM grades WHERE lesson_id = ?", (lesson_id,))
         self.conn.commit()
 
     def get_substitutions(self) -> Sequence[sqlite3.Row]:
@@ -359,7 +360,7 @@ class Database:
             FROM students s
             JOIN grades g ON g.student_id = s.id
             JOIN lessons l ON g.lesson_id = l.id
-            WHERE l.actual_subject_id = ? AND l.status != 'free' AND g.grade NOT IN ('absent', 'pass', 'fail')
+            WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced') AND g.grade NOT IN ('absent', 'pass', 'fail')
             GROUP BY s.id
             ORDER BY average DESC
         """, (subject_id,)).fetchall()
@@ -395,7 +396,7 @@ class Database:
                 COUNT(g.id) AS recent_grades
             FROM students s
             LEFT JOIN grades g ON g.student_id = s.id
-            LEFT JOIN lessons l ON g.lesson_id = l.id AND l.date >= date('now', ? || ' days') AND l.status != 'free'
+            LEFT JOIN lessons l ON g.lesson_id = l.id AND l.date >= date('now', ? || ' days') AND l.status NOT IN ('cancelled', 'replaced')
             WHERE s.group_id = ?
             GROUP BY s.id
             HAVING COUNT(g.id) < ?
@@ -407,44 +408,24 @@ class Database:
     def seed_default(self) -> None:
         if not self._is_empty():
             return
-        groups = ['ИС-11', 'ПО-21', 'БД-31']
-        students_data = {
-            'ИС-11': [
-                ('Иванов', 'Иван', 'Иванович'),
-                ('Петров', 'Пётр', 'Петрович'),
-                ('Сидорова', 'Мария', 'Сергеевна'),
-                ('Кузнецов', 'Алексей', 'Андреевич'),
-                ('Смирнова', 'Ольга', 'Викторовна'),
-            ],
-            'ПО-21': [
-                ('Зайцев', 'Михаил', 'Дмитриевич'),
-                ('Волкова', 'Анна', 'Викторовна'),
-                ('Козлов', 'Дмитрий', 'Алексеевич'),
-                ('Морозова', 'Елена', 'Игоревна'),
-                ('Новиков', 'Артём', 'Павлович'),
-            ],
-            'БД-31': [
-                ('Соколова', 'Татьяна', 'Алексеевна'),
-                ('Медведев', 'Николай', 'Сергеевич'),
-                ('Григорьев', 'Владимир', 'Иванович'),
-                ('Фёдорова', 'Анастасия', 'Дмитриевна'),
-                ('Титов', 'Андрей', 'Олегович'),
-            ],
-        }
-        for grp_name in groups:
-            gid = self.add_group(grp_name)
-            for s in students_data[grp_name]:
-                self.add_student(gid, *s)
-            math_id = self.add_subject('Математика', 100, gid)
-            lit_id = self.add_subject('Литература', 100, gid)
-            self.get_free_subject_id(gid)
-            for day in range(1, 6):
-                self.add_schedule_entry(day, 1, math_id, 0)
-                self.add_schedule_entry(day, 2, lit_id, 0)
-            self.add_schedule_entry(6, 1, lit_id, 1)
-            self.add_schedule_entry(6, 2, lit_id, 1)
-            self.add_schedule_entry(6, 1, math_id, 2)
-            self.add_schedule_entry(6, 2, math_id, 2)
+        gid = self.add_group('ИС-11')
+        for s in [
+            ('Иванов', 'Иван', 'Иванович'),
+            ('Петров', 'Пётр', 'Петрович'),
+            ('Сидорова', 'Мария', 'Сергеевна'),
+            ('Кузнецов', 'Алексей', 'Андреевич'),
+            ('Смирнова', 'Ольга', 'Викторовна'),
+        ]:
+            self.add_student(gid, *s)
+        math_id = self.add_subject('Математика', 100, gid)
+        lit_id = self.add_subject('Литература', 100, gid)
+        for day in range(1, 6):
+            self.add_schedule_entry(day, 1, math_id, 0)
+            self.add_schedule_entry(day, 2, lit_id, 0)
+        self.add_schedule_entry(6, 1, lit_id, 1)
+        self.add_schedule_entry(6, 2, lit_id, 1)
+        self.add_schedule_entry(6, 1, math_id, 2)
+        self.add_schedule_entry(6, 2, math_id, 2)
 
     def close(self) -> None:
         self.conn.close()

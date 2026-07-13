@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Generate default database with seed data."""
 import os
 from database import Database
@@ -11,10 +12,10 @@ db = Database(DB_PATH)
 db.seed_default()
 
 total = db.conn.execute("SELECT COUNT(*) AS c FROM students").fetchone()['c']
-subjs = db.conn.execute("SELECT COUNT(*) AS c FROM subjects WHERE name != 'СВОБОДНО'").fetchone()['c']
+subjs = db.conn.execute("SELECT COUNT(*) AS c FROM subjects").fetchone()['c']
 schedule_entries = db.conn.execute("SELECT COUNT(*) AS c FROM schedule").fetchone()['c']
 
 print(f"Default database created: {DB_PATH}")
-print(f"  Groups: 3, Students: {total}, Subjects: {subjs}, Schedule entries: {schedule_entries}")
+print(f"  Groups: 1, Students: {total}, Subjects: {subjs}, Schedule entries: {schedule_entries}")
 print("  No lessons, no grades.")
 db.close()
