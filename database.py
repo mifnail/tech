@@ -13,7 +13,8 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.init_schema()
         self._migrate()
-        self.seed_default()
+        if self.db_path != ':memory:':
+            self.seed_default()
 
     def __enter__(self) -> 'Database':
         return self
