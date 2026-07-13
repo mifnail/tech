@@ -303,23 +303,16 @@ class Database:
         """, (lesson['subject_id'], lesson['date'])).fetchone()
         return (prev_row['id'] if prev_row else None, next_row['id'] if next_row else None)
 
-    def substitute_lesson(self, lesson_id: int, new_subject_id: int) -> None:
-        self.conn.execute("UPDATE lessons SET actual_subject_id = ?, status = 'replaced' WHERE id = ?",
-                          (new_subject_id, lesson_id))
-        self.conn.execute("DELETE FROM grades WHERE lesson_id = ?", (lesson_id,))
-        self.conn.commit()
+    def substitute_lesson(self, lesson_id: int, new_subject_id: int) -> int:
+        lesson = self.conn.execute("SELECT date FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
+        if not lesson:
+            raise ValueError("Lesson not found")
+        self.cancel_lesson(lesson_id)
+        new_id = self.add_lesson(new_subject_id, lesson['date'], new_subject_id, 'held')
+        return new_id
 
     def get_substitutions(self) -> Sequence[sqlite3.Row]:
-        return self.conn.execute("""
-            SELECT l.*, ps.name AS planned_subject, COALESCE(fs.name, ps.name) AS actual_subject_name,
-                g.name AS group_name
-            FROM lessons l
-            JOIN subjects ps ON l.subject_id = ps.id
-            LEFT JOIN subjects fs ON l.actual_subject_id = fs.id
-            JOIN groups g ON ps.group_id = g.id
-            WHERE l.actual_subject_id IS NOT NULL AND l.actual_subject_id != l.subject_id
-            ORDER BY l.date DESC
-        """).fetchall()
+        return []
 
     def mark_attendance(self, lesson_id: int, student_id: int, grade: str) -> None:
         if not grade:

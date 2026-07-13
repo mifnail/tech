@@ -98,14 +98,14 @@ class TestScenarioFullDay:
         # 9. Делаем замену на первом занятии
         db = get_db()
         s3 = db.add_subject('Литература', 24, gid)
-        client.patch(f'/api/lessons/{lid1}/substitute',
-                     json={'new_subject_id': s3})
-        lesson = client.get(f'/api/lessons/{lid1}').json
-        assert lesson['status'] == 'replaced'
-
-        # 10. Проверяем замены теперь
-        subs = client.get('/api/reports/substitutions').json
-        assert len(subs) >= 0
+        rv = client.patch(f'/api/lessons/{lid1}/substitute',
+                          json={'new_subject_id': s3})
+        assert 'new_lesson_id' in rv.json
+        original = client.get(f'/api/lessons/{lid1}').json
+        assert original['status'] == 'cancelled'
+        new_lesson = client.get(f'/api/lessons/{rv.json["new_lesson_id"]}').json
+        assert new_lesson['status'] == 'held'
+        assert new_lesson['actual_subject_name'] == 'Литература'
 
         # 11. Проверяем прогресс предмета
         subjects = client.get(f'/api/subjects?group_id={gid}').json
@@ -122,7 +122,7 @@ class TestScenarioFullDay:
 
         # 13. Ежедневный отчёт
         report = client.get('/api/reports/daily?date=2026-09-01').json
-        assert len(report) == 2
+        assert len(report) == 3  # cancelled original + new replacement + lid2
 
         # 14. Навигация по занятиям
         adj1 = client.get(f'/api/lessons/{lid1}/adjacent').json
@@ -152,24 +152,47 @@ class TestScenarioSubstitution:
         db = get_db()
         student_id = db.add_student(gid, 'Иванов', 'Иван')
 
-        # Create lesson with substitution
+class TestScenarioSubstitution:
+    """Scenario: замена предмета на другой."""
+
+    def test_substitution_flow(self, client):
+        gid = client.post('/api/groups', json={'name': 'ПО-21'}).json['id']
+        math = client.post('/api/subjects', json={
+            'name': 'Математика', 'total_hours': 32, 'group_id': gid
+        }).json['id']
+        phys = client.post('/api/subjects', json={
+            'name': 'Физика', 'total_hours': 24, 'group_id': gid
+        }).json['id']
+        db = get_db()
+        student_id = db.add_student(gid, 'Иванов', 'Иван')
+
+        # Create a regular lesson
         lid = client.post('/api/lessons', json={
-            'subject_id': math, 'actual_subject_id': phys,
+            'subject_id': math, 'actual_subject_id': math,
             'date': '2026-09-01', 'status': 'held'
         }).json['id']
 
-        # Check substitution is listed
-        subs = client.get('/api/reports/substitutions').json
-        assert len(subs) == 1
-        assert subs[0]['planned_subject'] == 'Математика'
-        assert subs[0]['actual_subject_name'] == 'Физика'
+        # Substitute it
+        rv = client.patch(f'/api/lessons/{lid}/substitute',
+                          json={'new_subject_id': phys})
+        assert 'new_lesson_id' in rv.json
+        new_id = rv.json['new_lesson_id']
 
-        # Grade the student
-        client.post(f'/api/lessons/{lid}/attendance', json={
+        # Original is cancelled
+        original = client.get(f'/api/lessons/{lid}').json
+        assert original['status'] == 'cancelled'
+
+        # New lesson is held with replacement subject
+        new_lesson = client.get(f'/api/lessons/{new_id}').json
+        assert new_lesson['status'] == 'held'
+        assert new_lesson['actual_subject_name'] == 'Физика'
+
+        # Grade the student on the new lesson
+        client.post(f'/api/lessons/{new_id}/attendance', json={
             'student_id': student_id, 'grade': '4'
         })
 
-        # Check grade shows under Physics (actual subject)
+        # Check grade shows under Physics
         phys_gradebook = client.get(f'/api/subjects/{phys}/gradebook').json
         assert len(phys_gradebook['lessons']) >= 1
 

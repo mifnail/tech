@@ -16,7 +16,7 @@ App.API = {
   get(path) { return this.request('GET', path); },
   post(path, body) { return this.request('POST', path, body); },
   patch(path, body) { return this.request('PATCH', path, body); },
-  delete(path) { return this.request('DELETE', path); }
+  _delete(path) { return this.request('DELETE', path); }
 };
 
 App.Loading = {
@@ -128,19 +128,11 @@ App.Pages = {
             <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">Отменено</span></div>
             </div>`;
           } else {
-            const existingReplaced = lessons.find(l => l.subject_id === e.subject_id && l.status === 'replaced');
-            if (existingReplaced) {
-              html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existingReplaced.id}'">
-              <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-              <div class="card-sub">${e.group_name} · <span class="badge badge-warning">Заменили</span></div>
-              </div>`;
-            } else {
-              html += `<div class="card">
-              <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-              <div class="card-sub">${e.group_name}</div>
-                <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.startLesson(${e.subject_id})">Начать занятие</button>
-              </div>`;
-            }
+            html += `<div class="card">
+            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+            <div class="card-sub">${e.group_name}</div>
+              <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.startLesson(${e.subject_id})">Начать занятие</button>
+            </div>`;
           }
         }
       }
@@ -149,12 +141,11 @@ App.Pages = {
     if (otherLessons.length) {
       html += `<h2>Другие занятия</h2>`;
       for (const l of otherLessons) {
-        const cls = l.status === 'cancelled' ? 'badge-cancelled' : (l.status === 'replaced' ? 'badge-warning' : 'badge-held');
-        const label = l.status === 'cancelled' ? 'Отменено' : (l.status === 'replaced' ? 'Заменили' : 'Проведено');
+        const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
+        const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
         html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
           <div class="card-title">${l.actual_subject_name}</div>
-          <div class="card-sub">${l.group_name} · <span class="badge ${cls}">${label}</span>
-            ${l.status === 'replaced' ? '· Замена: ' + l.planned_subject : ''}</div>
+          <div class="card-sub">${l.group_name} · <span class="badge ${cls}">${label}</span></div>
         </div>`;
       }
     }
@@ -252,28 +243,21 @@ App.Pages = {
       html += `<button class="btn btn-muted btn-sm" style="margin-bottom:8px" onclick="location='#today'">📅 Все предметы</button>`;
     }
 
-    if (schedule.length) {
-      html += `<h2>Расписание</h2>`;
-      for (const e of schedule) {
-        const existing = lessons.find(l => l.subject_id === e.subject_id && l.status === 'held');
-        if (existing) {
-          html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existing.id}'">
-            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-            <div class="card-sub">${e.group_name} · <span class="badge badge-held">Проведено</span></div>
-          </div>`;
-        } else {
-          const existingCancelled = lessons.find(l => l.subject_id === e.subject_id && l.status === 'cancelled');
-          if (existingCancelled) {
-            html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existingCancelled.id}'">
-            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-            <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">Отменено</span></div>
+      if (schedule.length) {
+        html += `<h2>Расписание</h2>`;
+        for (const e of schedule) {
+          const existing = lessons.find(l => l.subject_id === e.subject_id && l.status === 'held');
+          if (existing) {
+            html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existing.id}'">
+              <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
+              <div class="card-sub">${e.group_name} · <span class="badge badge-held">Проведено</span></div>
             </div>`;
           } else {
-            const existingReplaced = lessons.find(l => l.subject_id === e.subject_id && l.status === 'replaced');
-            if (existingReplaced) {
-              html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existingReplaced.id}'">
+            const existingCancelled = lessons.find(l => l.subject_id === e.subject_id && l.status === 'cancelled');
+            if (existingCancelled) {
+              html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existingCancelled.id}'">
               <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-              <div class="card-sub">${e.group_name} · <span class="badge badge-warning">Заменили</span></div>
+              <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">Отменено</span></div>
               </div>`;
             } else {
               html += `<div class="card">
@@ -285,23 +269,22 @@ App.Pages = {
           }
         }
       }
-    }
 
-    if (lessons.length && !subjectId) {
-      const otherLessons = lessons.filter(l => !schedule.some(s => s.subject_id === l.subject_id));
-      if (otherLessons.length) {
-        html += `<h2>Другие занятия</h2>`;
-        for (const l of otherLessons) {
-          const cls = l.status === 'cancelled' ? 'badge-cancelled' : (l.status === 'replaced' ? 'badge-warning' : 'badge-held');
-          const label = l.status === 'cancelled' ? 'Отменено' : (l.status === 'replaced' ? 'Заменили' : 'Проведено');
-          html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
-            <div class="card-title">${l.actual_subject_name}</div>
-            <div class="card-sub">${l.group_name} · <span class="badge ${cls}">${label}</span>
-              ${l.status === 'replaced' ? '· Замена: ' + l.planned_subject : ''}</div>
-          </div>`;
+      if (lessons.length && !subjectId) {
+        const otherLessons = lessons.filter(l => !schedule.some(s => s.subject_id === l.subject_id));
+        if (otherLessons.length) {
+          html += `<h2>Другие занятия</h2>`;
+          for (const l of otherLessons) {
+            const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
+            const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
+            html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
+              <div class="card-title">${l.actual_subject_name}</div>
+              <div class="card-sub">${l.group_name} · <span class="badge ${cls}">${label}</span>
+                ${l.status === 'cancelled' ? '· Отменено' : ''}</div>
+            </div>`;
+          }
         }
       }
-    }
 
     if (!schedule.length && !lessons.length) {
       html += `<div class="card"><div class="card-sub">${currentSubject ? 'Сегодня занятий по этому предмету нет' : 'Сегодня занятий нет'}</div></div>`;
@@ -369,12 +352,12 @@ App.Pages = {
     if (allLessons.length) {
       html += `<div class="card">`;
       for (const l of allLessons) {
-        const cls = l.status === 'cancelled' ? 'badge-cancelled' : (l.status === 'replaced' ? 'badge-warning' : 'badge-held');
-        const label = l.status === 'cancelled' ? 'Отменено' : (l.status === 'replaced' ? 'Заменили' : 'Проведено');
+        const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
+        const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
         html += `<div class="row" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
           <div style="flex:1">
             <div style="font-weight:500">${l.date}</div>
-            <div><span class="badge ${cls}">${label}</span> ${l.status === 'replaced' ? '· Замена' : ''}</div>
+            <div><span class="badge ${cls}">${label}</span></div>
           </div>
           <span style="color:#007aff;font-size:20px">›</span>
         </div>`;
@@ -428,9 +411,7 @@ App.Pages = {
       ? `<button class="btn btn-muted btn-sm" style="width:auto;padding:8px 16px" onclick="location='#lesson/${adjacent.prev_id}'">‹</button>`
       : `<div style="width:44px"></div>`;
     html += `<div style="flex:1;text-align:center">`;
-    html += (l.status === 'cancelled' || l.status === 'replaced')
-      ? `<h1 style="margin:0">${l.actual_subject_name}</h1>`
-      : `<h1 style="margin:0">${l.actual_subject_name}</h1>`;
+    html += `<h1 style="margin:0">${l.actual_subject_name}</h1>`;
     html += `</div>`;
     html += adjacent.next_id
       ? `<button class="btn btn-muted btn-sm" style="width:auto;padding:8px 16px" onclick="location='#lesson/${adjacent.next_id}'">›</button>`
@@ -439,21 +420,11 @@ App.Pages = {
 
     html += `<div class="card">
       <div class="card-sub">${l.date} · ${l.group_name}</div>
-      ${l.status === 'replaced' ? `<div class="badge badge-warning">Замена вместо: ${l.planned_subject}</div>` : ''}
-      ${l.status === 'cancelled' ? `<div class="badge badge-cancelled">Отменено</div>` : (l.status === 'replaced' ? `<span class="badge badge-warning">Заменили</span>` : `<span class="badge badge-held">Проведено</span>`)}
+      ${l.status === 'cancelled' ? `<div class="badge badge-cancelled">Отменено</div>` : `<span class="badge badge-held">Проведено</span>`}
     </div>`;
 
     if (l.status === 'cancelled') {
       html += `<button class="btn btn-muted btn-sm" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал</button>`;
-      document.getElementById('app').innerHTML = html;
-      return;
-    }
-
-    if (l.status === 'replaced') {
-      html += `<div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn btn-danger btn-sm" style="flex:1" onclick="App.Pages.confirmCancelLesson(${lessonId})">✕ Отменить</button>
-        <button class="btn btn-success" style="flex:1" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал предмета</button>
-      </div>`;
       document.getElementById('app').innerHTML = html;
       return;
     }
@@ -594,10 +565,10 @@ App.Pages.showLessonSubstitution = async function(lessonId) {
 
 App.Pages.createSubstitution = async function(lessonId) {
   const actualSubjectId = +document.getElementById('subst-subject').value;
-  await App.API.patch(`/api/lessons/${lessonId}/substitute`, { new_subject_id: actualSubjectId });
+  const result = await App.API.patch(`/api/lessons/${lessonId}/substitute`, { new_subject_id: actualSubjectId });
   App.UI.closePopup();
   App.UI.notify('Замена выполнена');
-  location = `#lesson/${lessonId}`;
+  location = `#lesson/${result.new_lesson_id}`;
 };
 
 App.Pages.confirmCancelLesson = function(lessonId) {
@@ -623,22 +594,15 @@ App.Pages.showCustomLesson = function() {
     App.UI.showPopup(`
       <h2>Создать занятие</h2>
       <select id="custom-subject">${opts}</select>
-      <label><input type="checkbox" id="custom-substitute"> Замена</label>
-      <select id="custom-actual" style="display:none">${opts}</select>
       <button class="btn btn-primary btn-sm" onclick="App.Pages.createCustomLesson()">Создать</button>
     `);
-    document.getElementById('custom-substitute').onchange = function() {
-      document.getElementById('custom-actual').style.display = this.checked ? 'block' : 'none';
-    };
   });
 };
 
 App.Pages.createCustomLesson = async function() {
   const subjectId = +document.getElementById('custom-subject').value;
-  const isSubst = document.getElementById('custom-substitute').checked;
-  const actualId = isSubst ? +document.getElementById('custom-actual').value : subjectId;
   await App.API.post('/api/lessons', {
-    subject_id: subjectId, actual_subject_id: actualId || subjectId, status: isSubst ? 'replaced' : 'held'
+    subject_id: subjectId, actual_subject_id: subjectId, status: 'held'
   });
   App.UI.notify('Занятие создано');
   App.UI.closePopup();
@@ -716,7 +680,7 @@ App.Pages.createScheduleEntry = async function() {
 
 App.Pages.deleteScheduleEntry = async function(id) {
   if (!confirm('Удалить?')) return;
-  await App.API.delete(`/api/schedule/${id}`);
+  await App.API._delete(`/api/schedule/${id}`);
   App.Pages.schedule();
 };
 

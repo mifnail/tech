@@ -334,22 +334,28 @@ class TestLessons:
         s1 = db.add_subject('Математика', 32, gid)
         s2 = db.add_subject('Физика', 24, gid)
         lid = db.add_lesson(s1, '2026-09-01', s1, 'held')
-        db.substitute_lesson(lid, s2)
-        lesson = db.get_lesson(lid)
-        assert lesson['actual_subject_name'] == 'Физика'
+        new_id = db.substitute_lesson(lid, s2)
+        original = db.get_lesson(lid)
+        assert original['status'] == 'cancelled'
+        new_lesson = db.get_lesson(new_id)
+        assert new_lesson['actual_subject_name'] == 'Физика'
+        assert new_lesson['status'] == 'held'
 
-    def test_substitute_lesson_sets_replaced_and_clears_grades(self, db):
+    def test_substitute_lesson_cancels_original_and_creates_new(self, db):
         gid = db.add_group('ИС-11')
         s1 = db.add_subject('Математика', 32, gid)
         s2 = db.add_subject('Физика', 24, gid)
         student_id = db.add_student(gid, 'Иванов', 'Иван')
         lid = db.add_lesson(s1, '2026-09-01', s1, 'held')
         db.mark_attendance(lid, student_id, '5')
-        db.substitute_lesson(lid, s2)
-        lesson = db.get_lesson(lid)
-        assert lesson['actual_subject_name'] == 'Физика'
-        assert lesson['status'] == 'replaced'
+        new_id = db.substitute_lesson(lid, s2)
+        original = db.get_lesson(lid)
+        assert original['status'] == 'cancelled'
         assert db.get_attendance(lid) == []
+        new_lesson = db.get_lesson(new_id)
+        assert new_lesson['status'] == 'held'
+        assert new_lesson['actual_subject_name'] == 'Физика'
+        assert new_lesson['date'] == '2026-09-01'
 
     def test_get_substitutions(self, db):
         gid = db.add_group('ИС-11')
@@ -357,7 +363,7 @@ class TestLessons:
         s2 = db.add_subject('Физика', 24, gid)
         db.add_lesson(s1, '2026-09-01', s2, 'held')
         subs = db.get_substitutions()
-        assert len(subs) == 1
+        assert subs == []
 
     def test_get_substitutions_excludes_planned(self, db):
         gid = db.add_group('ИС-11')

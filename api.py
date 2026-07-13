@@ -216,8 +216,8 @@ def get_lesson(lesson_id: int):
 @lessons_bp.route('/<int:lesson_id>/substitute', methods=['PATCH'])
 @require_fields('new_subject_id')
 def substitute_lesson(lesson_id: int):
-    get_db().substitute_lesson(lesson_id, request.json['new_subject_id'])
-    return jsonify({'ok': True})
+    new_id = get_db().substitute_lesson(lesson_id, request.json['new_subject_id'])
+    return jsonify({'ok': True, 'new_lesson_id': new_id})
 
 
 @lessons_bp.route('/<int:lesson_id>/cancel', methods=['PATCH'])

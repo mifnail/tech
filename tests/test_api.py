@@ -254,8 +254,12 @@ class TestLessonsAPI:
         rv = client.patch(f'/api/lessons/{lid}/substitute',
                           json={'new_subject_id': s2})
         assert rv.json['ok'] is True
-        lesson = client.get(f'/api/lessons/{lid}').json
-        assert lesson['status'] == 'replaced'
+        assert 'new_lesson_id' in rv.json
+        original = client.get(f'/api/lessons/{lid}').json
+        assert original['status'] == 'cancelled'
+        new_lesson = client.get(f'/api/lessons/{rv.json["new_lesson_id"]}').json
+        assert new_lesson['status'] == 'held'
+        assert new_lesson['actual_subject_name'] == 'Физика'
 
     def test_update_status(self, client):
         _, sid, _ = self._setup(client)
@@ -332,9 +336,9 @@ class TestReportsAPI:
         gid, sid, _ = self._setup(client)
         db = get_db()
         s2 = db.add_subject('Физика', 24, gid)
-        lid = db.add_lesson(sid, '2026-09-02', s2, 'held')
+        db.add_lesson(sid, '2026-09-02', s2, 'held')
         rv = client.get('/api/reports/substitutions')
-        assert len(rv.json) == 1
+        assert rv.json == []
 
     def test_average(self, client):
         _, sid, _ = self._setup(client)
