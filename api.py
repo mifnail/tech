@@ -121,9 +121,12 @@ def create_subject():
 @subjects_bp.route('/<int:subject_id>/gradebook')
 def subject_gradebook(subject_id: int):
     db = get_db()
+    students, lessons, grades = db.subject_gradebook(subject_id)
     return jsonify({
         'summary': dict_row(db.subject_summary(subject_id)),
-        'grades': [dict(r) for r in db.subject_gradebook(subject_id)]
+        'students': students,
+        'lessons': lessons,
+        'grades': grades
     })
 
 
@@ -213,6 +216,12 @@ def get_lesson(lesson_id: int):
 @require_fields('new_subject_id')
 def substitute_lesson(lesson_id: int):
     get_db().substitute_lesson(lesson_id, request.json['new_subject_id'])
+    return jsonify({'ok': True})
+
+
+@lessons_bp.route('/<int:lesson_id>/cancel', methods=['PATCH'])
+def cancel_lesson(lesson_id: int):
+    get_db().cancel_lesson(lesson_id)
     return jsonify({'ok': True})
 
 

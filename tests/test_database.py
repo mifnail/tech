@@ -171,8 +171,11 @@ class TestSubjects:
         student_id = db.add_student(gid, 'Иванов', 'Иван')
         lid = db.add_lesson(sid, '2026-09-01', sid, 'held')
         db.mark_attendance(lid, student_id, '5')
-        grades = db.subject_gradebook(sid)
-        assert len(grades) == 1
+        students, lessons, grades = db.subject_gradebook(sid)
+        assert len(students) == 1
+        assert len(lessons) == 1
+        assert str(student_id) in grades
+        assert str(lid) in grades[str(student_id)]
 
 # ======================== FREE SUBJECT ========================
 

@@ -171,7 +171,7 @@ class TestScenarioSubstitution:
 
         # Check grade shows under Physics (actual subject)
         phys_gradebook = client.get(f'/api/subjects/{phys}/gradebook').json
-        assert len(phys_gradebook['grades']) >= 1
+        assert len(phys_gradebook['lessons']) >= 1
 
 
 class TestScenarioCancelledLesson:

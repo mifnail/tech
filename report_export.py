@@ -10,26 +10,25 @@ from database import Database
 
 
 def export_grades_csv(subject_id: int, filepath: Optional[str] = None, db: Optional[Database] = None) -> str:
-    """Экспортирует ведомость по предмету в CSV."""
+    """Экспортирует ведомость по предмету в CSV (таблица студенты × занятия)."""
     if db is None:
         db = Database()
     if filepath is None:
         filepath = os.path.join(os.path.dirname(__file__), f'grades_{subject_id}.csv')
-    rows = db.subject_gradebook(subject_id)
+    students, lessons, grades = db.subject_gradebook(subject_id)
     summary = db.subject_summary(subject_id)
     subj_name = dict(summary)['name'] if summary else f'Subject #{subject_id}'
 
     with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
         writer = csv.writer(f)
         writer.writerow([subj_name])
-        writer.writerow(['Студент', 'Оценка', 'Дата'])
-        for r in rows:
-            rd = dict(r)
-            writer.writerow([
-                f"{rd['last_name']} {rd['first_name']}",
-                rd.get('grade', ''),
-                rd.get('date', ''),
-            ])
+        header = ['Студент'] + [str(i + 1) for i in range(len(lessons))]
+        writer.writerow(header)
+        for s in students:
+            row = [f"{s['last_name']} {s['first_name']}"]
+            for l in lessons:
+                row.append(grades.get(str(s['id']), {}).get(str(l['id']), ''))
+            writer.writerow(row)
     return filepath
 
 

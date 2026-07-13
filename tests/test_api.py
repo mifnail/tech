@@ -156,7 +156,8 @@ class TestSubjectsAPI:
         db.mark_attendance(lid, student_id, '5')
         rv = client.get(f'/api/subjects/{sid}/gradebook')
         assert rv.json['summary'] is not None
-        assert len(rv.json['grades']) > 0
+        assert len(rv.json['students']) == 1
+        assert len(rv.json['lessons']) == 1
 
 # ======================== SCHEDULE ========================
 

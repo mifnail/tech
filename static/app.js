@@ -138,7 +138,7 @@ App.Pages = {
               html += `<div class="card">
               <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
               <div class="card-sub">${e.group_name}</div>
-                <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}', ${e.id})">Начать занятие</button>
+                <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.startLesson(${e.subject_id})">Начать занятие</button>
               </div>`;
             }
           }
@@ -273,7 +273,7 @@ App.Pages = {
               html += `<div class="card">
               <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
               <div class="card-sub">${e.group_name}</div>
-                <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.lessonDialog(${e.subject_id}, '${e.group_name}')">Начать занятие</button>
+                <button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.startLesson(${e.subject_id})">Начать занятие</button>
               </div>`;
             }
           }
@@ -378,12 +378,19 @@ App.Pages = {
 
     html += `<h2>Ведомость</h2><div class="card" style="overflow-x:auto">`;
     html += `<table style="width:100%;font-size:13px;border-collapse:collapse">`;
-    html += `<tr><th style="text-align:left;padding:4px">Студент</th><th style="padding:4px">Оценка</th><th style="padding:4px">Дата</th></tr>`;
-    for (const r of data.grades || []) {
-      const gc = App.Grades.colorClass(r.grade);
-      html += `<tr><td style="padding:4px">${r.last_name} ${r.first_name}</td>
-        <td style="padding:4px;text-align:center"><span class="grade grade-${gc}" style="display:inline-flex;width:28px;height:28px">${r.grade}</span></td>
-        <td style="padding:4px">${r.date || ''}</td></tr>`;
+    html += `<tr><th style="text-align:left;padding:4px;position:sticky;left:0;background:#fff">Студент</th>`;
+    for (let i = 0; i < data.lessons.length; i++) {
+      html += `<th style="padding:4px;text-align:center;min-width:32px">${i + 1}</th>`;
+    }
+    html += `</tr>`;
+    for (const s of data.students) {
+      html += `<tr><td style="padding:4px;position:sticky;left:0;background:#fff;font-weight:500">${s.last_name} ${s.first_name}</td>`;
+      for (const l of data.lessons) {
+        const grade = (data.grades[s.id] || {})[l.id] || '';
+        const gc = App.Grades.colorClass(grade);
+        html += `<td style="padding:4px;text-align:center"><span class="grade grade-${gc}" style="display:inline-flex;width:28px;height:28px">${grade || '—'}</span></td>`;
+      }
+      html += `</tr>`;
     }
     html += `</table></div>`;
     html += `<button class="btn btn-muted btn-sm" style="margin-top:8px" onclick="history.back()">Назад</button>`;
@@ -434,6 +441,15 @@ App.Pages = {
       return;
     }
 
+    if (l.status === 'replaced') {
+      html += `<div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-danger btn-sm" style="flex:1" onclick="App.Pages.confirmCancelLesson(${lessonId})">✕ Отменить</button>
+        <button class="btn btn-success" style="flex:1" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал предмета</button>
+      </div>`;
+      document.getElementById('app').innerHTML = html;
+      return;
+    }
+
     const attMap = {};
     for (const a of data.attendance) attMap[a.student_id] = a.grade;
 
@@ -450,7 +466,9 @@ App.Pages = {
     html += `</div>`;
 
     html += `<div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-success" style="flex:1" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал предмета</button>
+      <button class="btn btn-warning btn-sm" style="flex:1" onclick="App.Pages.showLessonSubstitution(${lessonId})">🔄 Заменить</button>
+      <button class="btn btn-danger btn-sm" style="flex:1" onclick="App.Pages.confirmCancelLesson(${lessonId})">✕ Отменить</button>
+      <button class="btn btn-success" style="flex:1" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал</button>
     </div>`;
     document.getElementById('app').innerHTML = html;
   },
@@ -544,50 +562,51 @@ App.Pages = {
 
 /* ===== Dialog / Action helpers (on window for onclick access) ===== */
 
-App.Pages.lessonDialog = async function(subjectId, groupName, scheduleEntryId) {
-  App.UI.showPopup(`
-    <h2>Начать занятие</h2>
-    <p style="margin-bottom:12px;color:#86868b">Группа ${groupName}</p>
-    <div class="grid-2">
-      <button class="btn btn-success" onclick="App.Pages.createHeldLesson(${subjectId}, ${subjectId})">✅ Проведено</button>
-      <button class="btn btn-warning" onclick="App.Pages.showSubstitution(${subjectId})">🔄 Замена</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
-    </div>
-  `);
-};
-
-App.Pages.createHeldLesson = async function(subjectId, actualSubjectId) {
+App.Pages.startLesson = async function(subjectId) {
   const result = await App.API.post('/api/lessons', {
-    subject_id: subjectId, actual_subject_id: actualSubjectId, status: 'held'
+    subject_id: subjectId, actual_subject_id: subjectId, status: 'held'
   });
-  App.UI.closePopup();
   location = `#lesson/${result.id}`;
 };
 
-App.Pages.showSubstitution = async function(subjectId) {
-  const subs = await App.API.get(`/api/subjects/${subjectId}/substitution-list`);
+App.Pages.showLessonSubstitution = async function(lessonId) {
+  const lesson = await App.API.get(`/api/lessons/${lessonId}`);
+  const subs = await App.API.get(`/api/subjects/${lesson.subject_id}/substitution-list`);
   const opts = subs.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
   App.UI.showPopup(`
     <h2>Замена</h2>
     <p style="margin-bottom:8px">Выберите предмет:</p>
     <select id="subst-subject">${opts}</select>
     <div class="grid-2" style="margin-top:8px">
-      <button class="btn btn-success" onclick="App.Pages.createSubstitution(${subjectId})">Заменить</button>
+      <button class="btn btn-success" onclick="App.Pages.createSubstitution(${lessonId})">Заменить</button>
       <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
     </div>
   `);
 };
 
-App.Pages.createSubstitution = async function(subjectId) {
+App.Pages.createSubstitution = async function(lessonId) {
   const actualSubjectId = +document.getElementById('subst-subject').value;
-  await App.API.post('/api/lessons', {
-    subject_id: subjectId,
-    actual_subject_id: actualSubjectId,
-    status: 'replaced'
-  });
+  await App.API.patch(`/api/lessons/${lessonId}/substitute`, { new_subject_id: actualSubjectId });
   App.UI.closePopup();
   App.UI.notify('Замена выполнена');
-  location = `#subject/${subjectId}`;
+  location = `#lesson/${lessonId}`;
+};
+
+App.Pages.confirmCancelLesson = function(lessonId) {
+  App.UI.showPopup(`
+    <h2>Отменить занятие?</h2>
+    <p style="margin-bottom:12px;color:#86868b">Оценки будут удалены.</p>
+    <div class="grid-2">
+      <button class="btn btn-danger" onclick="App.Pages.cancelLesson(${lessonId})">Отменить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
+    </div>
+  `);
+};
+
+App.Pages.cancelLesson = async function(lessonId) {
+  await App.API.patch(`/api/lessons/${lessonId}/cancel`);
+  App.UI.closePopup();
+  location = `#lesson/${lessonId}`;
 };
 
 App.Pages.showCustomLesson = function() {

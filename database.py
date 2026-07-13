@@ -158,16 +158,24 @@ class Database:
             return self.conn.execute(base + where + order, (group_id,)).fetchall()
         return self.conn.execute(base + where + order).fetchall()
 
-    def subject_gradebook(self, subject_id: int) -> Sequence[sqlite3.Row]:
-        return self.conn.execute("""
-            SELECT s.id AS student_id, s.last_name, s.first_name, s.middle_name,
-                g.grade, g.lesson_id, l.date
-            FROM students s
-            LEFT JOIN grades g ON g.student_id = s.id
-            LEFT JOIN lessons l ON g.lesson_id = l.id AND l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced')
-            WHERE s.group_id = (SELECT group_id FROM subjects WHERE id = ?)
-            ORDER BY s.last_name, s.first_name, l.date
-        """, (subject_id, subject_id)).fetchall()
+    def subject_gradebook(self, subject_id: int) -> tuple[list, list, dict]:
+        group_id = self.conn.execute("SELECT group_id FROM subjects WHERE id = ?", (subject_id,)).fetchone()['group_id']
+        students = [dict(r) for r in self.conn.execute("""
+            SELECT id, last_name, first_name, middle_name FROM students WHERE group_id = ? ORDER BY last_name, first_name
+        """, (group_id,)).fetchall()]
+        lessons = [dict(r) for r in self.conn.execute("""
+            SELECT l.id, l.date FROM lessons l
+            WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced')
+            ORDER BY l.date
+        """, (subject_id,)).fetchall()]
+        grades = {}
+        for row in self.conn.execute("""
+            SELECT g.student_id, g.lesson_id, g.grade FROM grades g
+            JOIN lessons l ON g.lesson_id = l.id
+            WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced')
+        """, (subject_id,)).fetchall():
+            grades.setdefault(str(row['student_id']), {})[str(row['lesson_id'])] = row['grade']
+        return students, lessons, grades
 
     def subject_summary(self, subject_id: int) -> Optional[sqlite3.Row]:
         return self.conn.execute("""
@@ -251,6 +259,11 @@ class Database:
 
     def set_lesson_status(self, lesson_id: int, status: str) -> None:
         self.conn.execute("UPDATE lessons SET status = ? WHERE id = ?", (status, lesson_id))
+        self.conn.commit()
+
+    def cancel_lesson(self, lesson_id: int) -> None:
+        self.conn.execute("UPDATE lessons SET status = 'cancelled' WHERE id = ?", (lesson_id,))
+        self.conn.execute("DELETE FROM grades WHERE lesson_id = ?", (lesson_id,))
         self.conn.commit()
 
     def list_lessons_by_date(self, date: str) -> Sequence[sqlite3.Row]:
