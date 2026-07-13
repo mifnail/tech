@@ -1,10 +1,11 @@
 from __future__ import annotations
 import functools
+import io
 from datetime import date
 from typing import Any
 import os
 
-from flask import Flask, Blueprint, request, jsonify, send_from_directory
+from flask import Flask, Blueprint, request, jsonify, send_from_directory, send_file, Response
 
 from database import Database
 
@@ -296,3 +297,53 @@ def neglected_students(group_id: int):
 
 
 app.register_blueprint(reports_bp)
+
+
+# ---- Export ----
+from report_export import export_grades_pdf, export_grades_xlsx, export_report_pdf, export_report_xlsx
+from calendar_export import generate_schedule_ics, export_lessons_to_ics
+
+export_bp = Blueprint('export', __name__, url_prefix='/api/export')
+
+
+@export_bp.route('/grades/<int:subject_id>.<fmt>')
+def download_grades(subject_id: int, fmt: str):
+    if fmt == 'pdf':
+        data = export_grades_pdf(subject_id)
+        return send_file(io.BytesIO(data), mimetype='application/pdf',
+                         as_attachment=True, download_name=f'grades_{subject_id}.pdf')
+    elif fmt == 'xlsx':
+        data = export_grades_xlsx(subject_id)
+        return send_file(io.BytesIO(data),
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                         as_attachment=True, download_name=f'grades_{subject_id}.xlsx')
+    return 'Unsupported format', 400
+
+
+@export_bp.route('/report/<date>.<fmt>')
+def download_report(date: str, fmt: str):
+    if fmt == 'pdf':
+        data = export_report_pdf(date)
+        return send_file(io.BytesIO(data), mimetype='application/pdf',
+                         as_attachment=True, download_name=f'report_{date}.pdf')
+    elif fmt == 'xlsx':
+        data = export_report_xlsx(date)
+        return send_file(io.BytesIO(data),
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                         as_attachment=True, download_name=f'report_{date}.xlsx')
+    return 'Unsupported format', 400
+
+
+@export_bp.route('/lessons.ics')
+def download_lessons_ics():
+    return Response(export_lessons_to_ics(), mimetype='text/calendar',
+                    headers={'Content-Disposition': 'attachment; filename=lessons.ics'})
+
+
+@export_bp.route('/schedule.ics')
+def download_schedule_ics():
+    return Response(generate_schedule_ics(), mimetype='text/calendar',
+                    headers={'Content-Disposition': 'attachment; filename=schedule.ics'})
+
+
+app.register_blueprint(export_bp)

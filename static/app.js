@@ -213,6 +213,12 @@ App.Pages = {
     html += `<div style="display:flex;gap:8px;margin-top:8px">
       <button class="btn btn-primary" style="flex:1" onclick="App.Pages.showAddSubject()">+ Предмет</button>
       <button class="btn btn-muted" style="flex:1" onclick="App.Pages.showAddGroup()">+ Группа</button>
+    </div>
+    <h2>Экспорт</h2><div class="grid-2">
+      <button class="btn btn-muted btn-sm" onclick="window.open('/api/export/report/${today.date}.pdf')">Отчёт (PDF)</button>
+      <button class="btn btn-muted btn-sm" onclick="window.open('/api/export/report/${today.date}.xlsx')">Отчёт (Excel)</button>
+      <button class="btn btn-muted btn-sm" onclick="window.open('/api/export/lessons.ics')">Занятия (ICS)</button>
+      <button class="btn btn-muted btn-sm" onclick="window.open('/api/export/schedule.ics')">Расписание (ICS)</button>
     </div>`;
 
     document.getElementById('app').innerHTML = html;
@@ -340,6 +346,8 @@ App.Pages = {
       <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
       <div class="card-sub" style="margin-top:8px">Группа: ${s.group_name}</div>`;
       html += `<div class="grid-2" style="margin-top:8px">
+        <button class="btn btn-muted btn-sm" onclick="window.open('/api/export/grades/${subjectId}.pdf')">PDF</button>
+        <button class="btn btn-muted btn-sm" onclick="window.open('/api/export/grades/${subjectId}.xlsx')">Excel</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
       </div></div>`;
     }
