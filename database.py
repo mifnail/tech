@@ -13,6 +13,7 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.init_schema()
         self._migrate()
+        self.seed_default()
 
     def __enter__(self) -> 'Database':
         return self
@@ -398,6 +399,51 @@ class Database:
             GROUP BY s.id
             HAVING COUNT(g.id) < ?
         """, (f'-{days}', group_id, min_grades)).fetchall()
+
+    def _is_empty(self) -> bool:
+        return self.conn.execute("SELECT COUNT(*) AS c FROM groups").fetchone()['c'] == 0
+
+    def seed_default(self) -> None:
+        if not self._is_empty():
+            return
+        groups = ['ИС-11', 'ПО-21', 'БД-31']
+        students_data = {
+            'ИС-11': [
+                ('Иванов', 'Иван', 'Иванович'),
+                ('Петров', 'Пётр', 'Петрович'),
+                ('Сидорова', 'Мария', 'Сергеевна'),
+                ('Кузнецов', 'Алексей', 'Андреевич'),
+                ('Смирнова', 'Ольга', 'Викторовна'),
+            ],
+            'ПО-21': [
+                ('Зайцев', 'Михаил', 'Дмитриевич'),
+                ('Волкова', 'Анна', 'Викторовна'),
+                ('Козлов', 'Дмитрий', 'Алексеевич'),
+                ('Морозова', 'Елена', 'Игоревна'),
+                ('Новиков', 'Артём', 'Павлович'),
+            ],
+            'БД-31': [
+                ('Соколова', 'Татьяна', 'Алексеевна'),
+                ('Медведев', 'Николай', 'Сергеевич'),
+                ('Григорьев', 'Владимир', 'Иванович'),
+                ('Фёдорова', 'Анастасия', 'Дмитриевна'),
+                ('Титов', 'Андрей', 'Олегович'),
+            ],
+        }
+        for grp_name in groups:
+            gid = self.add_group(grp_name)
+            for s in students_data[grp_name]:
+                self.add_student(gid, *s)
+            math_id = self.add_subject('Математика', 100, gid)
+            lit_id = self.add_subject('Литература', 100, gid)
+            self.get_free_subject_id(gid)
+            for day in range(1, 6):
+                self.add_schedule_entry(day, 1, math_id, 0)
+                self.add_schedule_entry(day, 2, lit_id, 0)
+            self.add_schedule_entry(6, 1, lit_id, 1)
+            self.add_schedule_entry(6, 2, lit_id, 1)
+            self.add_schedule_entry(6, 1, math_id, 2)
+            self.add_schedule_entry(6, 2, math_id, 2)
 
     def close(self) -> None:
         self.conn.close()
