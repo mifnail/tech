@@ -70,6 +70,12 @@ def create_group():
     return jsonify({'id': gid}), 201
 
 
+@groups_bp.route('/<int:group_id>', methods=['DELETE'])
+def delete_group(group_id: int):
+    get_db().delete_group(group_id)
+    return jsonify({'ok': True})
+
+
 app.register_blueprint(groups_bp)
 
 
@@ -97,6 +103,12 @@ def student_grades(student_id: int):
     return jsonify([dict(r) for r in get_db().student_grades(student_id, subject_id)])
 
 
+@students_bp.route('/<int:student_id>', methods=['DELETE'])
+def delete_student(student_id: int):
+    get_db().delete_student(student_id)
+    return jsonify({'ok': True})
+
+
 app.register_blueprint(students_bp)
 
 
@@ -117,6 +129,12 @@ def create_subject():
     data = request.json
     sid = get_db().add_subject(data['name'], data['total_hours'], data['group_id'])
     return jsonify({'id': sid}), 201
+
+
+@subjects_bp.route('/<int:subject_id>', methods=['DELETE'])
+def delete_subject(subject_id: int):
+    get_db().delete_subject(subject_id)
+    return jsonify({'ok': True})
 
 
 @subjects_bp.route('/<int:subject_id>/gradebook')

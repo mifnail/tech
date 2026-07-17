@@ -57,6 +57,12 @@ class TestGroupsAPI:
         rv = client.post('/api/groups', json={})
         assert rv.status_code == 400
 
+    def test_delete(self, client):
+        gid = client.post('/api/groups', json={'name': 'ИС-11'}).json['id']
+        rv = client.delete(f'/api/groups/{gid}')
+        assert rv.json['ok'] is True
+        assert client.get('/api/groups').json == []
+
 # ======================== STUDENTS ========================
 
 class TestStudentsAPI:
@@ -90,6 +96,14 @@ class TestStudentsAPI:
         rv = client.get(f'/api/students?group_id={gid}')
         assert len(rv.json) == 1
         assert rv.json[0]['last_name'] == 'Иванов'
+
+    def test_delete(self, client):
+        gid = self._setup(client)
+        db = get_db()
+        sid = db.add_student(gid, 'Иванов', 'Иван')
+        rv = client.delete(f'/api/students/{sid}')
+        assert rv.json['ok'] is True
+        assert client.get(f'/api/students?group_id={gid}').json == []
 
 # ======================== SUBJECTS ========================
 
@@ -134,6 +148,15 @@ class TestSubjectsAPI:
         # СВОБОДНО should not appear in substitution list
         free_names = [n for n in names if '\u0421\u0412\u041e\u0411\u041e\u0414\u041d\u041e' in n]
         assert len(free_names) == 0, f'СВОБОДНО should not appear: {names}'
+
+    def test_delete(self, client):
+        gid = self._setup(client)
+        sid = client.post('/api/subjects', json={
+            'name': 'Математика', 'total_hours': 32, 'group_id': gid
+        }).json['id']
+        rv = client.delete(f'/api/subjects/{sid}')
+        assert rv.json['ok'] is True
+        assert client.get(f'/api/subjects?group_id={gid}').json == []
 
     def test_subject_lessons(self, client):
         gid = self._setup(client)

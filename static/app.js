@@ -179,10 +179,15 @@ App.Pages = {
     html += `<h2>Предметы</h2>`;
     for (const s of subjects) {
       const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
-      html += `<div class="card" style="cursor:pointer" onclick="location='#subject/${s.id}'">
-        <div class="card-title">${s.name}</div>
-        <div class="card-sub">${s.group_name} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
-        <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+      html += `<div class="card">
+        <div class="row" style="cursor:pointer" onclick="location='#subject/${s.id}'">
+          <div style="flex:1">
+            <div class="card-title">${s.name}</div>
+            <div class="card-sub">${s.group_name} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
+            <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+          </div>
+        </div>
+        <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteSubject(${s.id}, '${s.name}')">✕</button>
       </div>`;
     }
 
@@ -196,6 +201,7 @@ App.Pages = {
       for (const g of groups) {
         html += `<div class="card" style="cursor:pointer;text-align:center" onclick="location='#students/${g.id}'">
           <div class="card-title">${g.name}</div>
+          <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteGroup(${g.id}, '${g.name}')">✕</button>
         </div>`;
       }
       html += `</div>`;
@@ -502,7 +508,10 @@ App.Pages = {
     html += `<button class="btn btn-primary btn-sm" onclick="App.Pages.showAddStudents(${groupId})">+ Добавить студентов</button>`;
     html += `<div class="card">`;
     for (const s of students) {
-      html += `<div class="row"><div style="flex:1"><span style="font-weight:500">${s.last_name} ${s.first_name}</span> ${s.middle_name || ''}</div></div>`;
+      html += `<div class="row">
+        <div style="flex:1"><span style="font-weight:500">${s.last_name} ${s.first_name}</span> ${s.middle_name || ''}</div>
+        <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.confirmDeleteStudent(${s.id})">✕</button>
+      </div>`;
     }
     html += `</div>`;
     html += `<button class="btn btn-muted btn-sm" onclick="history.back()">Назад</button>`;
@@ -734,6 +743,60 @@ App.Pages.createStudents = async function(groupId) {
   App.UI.notify(`Добавлено ${students.length} студентов`);
   App.UI.closePopup();
   App.Pages.students(groupId);
+};
+
+App.Pages.confirmDeleteStudent = function(studentId) {
+  App.UI.showPopup(`
+    <h2>Удалить студента?</h2>
+    <p style="margin-bottom:12px;color:#86868b">Оценки будут удалены.</p>
+    <div class="grid-2">
+      <button class="btn btn-danger" onclick="App.Pages.deleteStudent(${studentId})">Удалить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
+    </div>
+  `);
+};
+
+App.Pages.deleteStudent = async function(studentId) {
+  await App.API._delete(`/api/students/${studentId}`);
+  App.UI.closePopup();
+  App.UI.notify('Студент удалён');
+  App.Router.handle();
+};
+
+App.Pages.confirmDeleteGroup = function(groupId, name) {
+  App.UI.showPopup(`
+    <h2>Удалить группу «${name}»?</h2>
+    <p style="margin-bottom:12px;color:#86868b">Все студенты, предметы и занятия будут удалены.</p>
+    <div class="grid-2">
+      <button class="btn btn-danger" onclick="App.Pages.deleteGroup(${groupId})">Удалить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
+    </div>
+  `);
+};
+
+App.Pages.deleteGroup = async function(groupId) {
+  await App.API._delete(`/api/groups/${groupId}`);
+  App.UI.closePopup();
+  App.UI.notify('Группа удалена');
+  App.Router.handle();
+};
+
+App.Pages.confirmDeleteSubject = function(subjectId, name) {
+  App.UI.showPopup(`
+    <h2>Удалить предмет «${name}»?</h2>
+    <p style="margin-bottom:12px;color:#86868b">Занятия и оценки будут удалены.</p>
+    <div class="grid-2">
+      <button class="btn btn-danger" onclick="App.Pages.deleteSubject(${subjectId})">Удалить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
+    </div>
+  `);
+};
+
+App.Pages.deleteSubject = async function(subjectId) {
+  await App.API._delete(`/api/subjects/${subjectId}`);
+  App.UI.closePopup();
+  App.UI.notify('Предмет удалён');
+  App.Router.handle();
 };
 
 /* ===== INIT ===== */

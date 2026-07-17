@@ -41,6 +41,11 @@ class TestGroups:
         groups = db.list_groups()
         assert groups[0]['name'] == 'ИС-11'
 
+    def test_delete_group(self, db):
+        gid = db.add_group('ИС-11')
+        db.delete_group(gid)
+        assert db.list_groups() == []
+
 # ======================== STUDENTS ========================
 
 class TestStudents:
@@ -110,6 +115,12 @@ class TestStudents:
         count = db.add_students_bulk(gid, students)
         assert count == 2  # Петров + Иванов (only one Иванов inserted, duplicate ignored)
 
+    def test_delete_student(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_student(gid, 'Иванов', 'Иван')
+        db.delete_student(sid)
+        assert db.list_students(gid) == []
+
 # ======================== SUBJECTS ========================
 
 class TestSubjects:
@@ -176,6 +187,12 @@ class TestSubjects:
         assert len(lessons) == 1
         assert str(student_id) in grades
         assert str(lid) in grades[str(student_id)]
+
+    def test_delete_subject(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_subject('Математика', 32, gid)
+        db.delete_subject(sid)
+        assert db.list_subjects() == []
 
 # ======================== FREE SUBJECT ========================
 

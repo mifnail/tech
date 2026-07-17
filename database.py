@@ -110,6 +110,10 @@ class Database:
     def list_groups(self) -> Sequence[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM groups ORDER BY name").fetchall()
 
+    def delete_group(self, group_id: int) -> None:
+        self.conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+        self.conn.commit()
+
     def add_student(self, group_id: int, last_name: str, first_name: str, middle_name: str = '') -> int:
         cur = self.conn.execute(
             "INSERT INTO students (group_id, last_name, first_name, middle_name) VALUES (?, ?, ?, ?)",
@@ -124,6 +128,10 @@ class Database:
         self.conn.commit()
         return cur.rowcount
 
+    def delete_student(self, student_id: int) -> None:
+        self.conn.execute("DELETE FROM students WHERE id = ?", (student_id,))
+        self.conn.commit()
+
     def list_students(self, group_id: Optional[int] = None) -> Sequence[sqlite3.Row]:
         if group_id is not None:
             return self.conn.execute(
@@ -136,6 +144,10 @@ class Database:
             (name, total_hours, group_id))
         self.conn.commit()
         return cur.lastrowid
+
+    def delete_subject(self, subject_id: int) -> None:
+        self.conn.execute("DELETE FROM subjects WHERE id = ?", (subject_id,))
+        self.conn.commit()
 
     def list_subjects(self, group_id: Optional[int] = None, include_free: bool = False) -> Sequence[sqlite3.Row]:
         base = """SELECT s.*, g.name AS group_name,
