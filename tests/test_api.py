@@ -311,14 +311,22 @@ class TestLessonsAPI:
         student_id = get_db().add_student(gid, 'Иванов', 'Иван')
         return gid, sid, student_id
 
-    def test_create_lesson(self, client):
+        assert rv.status_code == 201
+        assert 'id' in rv.json
+
+    def test_create_duplicate_lesson(self, client):
         _, sid, _ = self._setup(client)
-        rv = client.post('/api/lessons', json={
+        rv1 = client.post('/api/lessons', json={
             'subject_id': sid, 'actual_subject_id': sid,
             'date': '2026-09-01', 'status': 'held'
         })
-        assert rv.status_code == 201
-        assert 'id' in rv.json
+        rv2 = client.post('/api/lessons', json={
+            'subject_id': sid, 'actual_subject_id': sid,
+            'date': '2026-09-01', 'status': 'held'
+        })
+        assert rv1.status_code == 201
+        assert rv2.status_code == 201
+        assert rv1.json['id'] != rv2.json['id']
 
     def test_get_lesson(self, client):
         _, sid, _ = self._setup(client)

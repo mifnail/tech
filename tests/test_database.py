@@ -319,6 +319,14 @@ class TestLessons:
         lid = db.add_lesson(sid, '2026-09-01', sid, 'held')
         assert isinstance(lid, int) and lid > 0
 
+    def test_add_duplicate_lesson(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_subject('Математика', 32, gid)
+        lid1 = db.add_lesson(sid, '2026-09-01', sid, 'held')
+        lid2 = db.add_lesson(sid, '2026-09-01', sid, 'held')
+        assert lid1 != lid2
+        assert len(db.list_lessons_by_date('2026-09-01')) == 2
+
     def test_add_lesson_without_actual(self, db):
         gid = db.add_group('ИС-11')
         sid = db.add_subject('Математика', 32, gid)
