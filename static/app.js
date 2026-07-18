@@ -55,6 +55,8 @@ App.UI = {
 };
 
 App.Download = {
+  _lastBlob: null,
+  _lastName: '',
   async as(name, url) {
     const res = await fetch(url);
     if (!res.ok) { App.UI.notify('Ошибка скачивания'); return; }
@@ -64,8 +66,38 @@ App.Download = {
     a.download = name;
     a.click();
     URL.revokeObjectURL(a.href);
+    this._lastBlob = blob;
+    this._lastName = name;
+    App.UI.notify(`Скачано: ${name}`);
+    this._showShare(name, blob);
+  },
+  _showShare(name, blob) {
+    App.UI.showPopup(`
+      <h2>Скачано: ${name}</h2>
+      <div class="grid-2">
+        <button class="btn btn-primary" onclick="App.Download.share()">Поделиться</button>
+        <button class="btn btn-muted" onclick="App.UI.closePopup()">Закрыть</button>
+      </div>
+    `);
+  },
+  async share() {
+    const blob = this._lastBlob;
+    const name = this._lastName;
+    if (!blob) { App.UI.notify('Нет файла для отправки'); return; }
+    try {
+      const file = new File([blob], name, { type: blob.type });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: name });
+      } else if (navigator.share) {
+        await navigator.share({ title: name, text: `Файл: ${name}` });
+      } else {
+        App.UI.notify('Файл сохранён: ' + name);
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') App.UI.notify('Ошибка: ' + e.message);
+    }
+    App.UI.closePopup();
   }
-};
 };
 
 App.Nav = {
