@@ -114,6 +114,10 @@ class Database:
         self.conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
         self.conn.commit()
 
+    def update_group(self, group_id: int, name: str) -> None:
+        self.conn.execute("UPDATE groups SET name = ? WHERE id = ?", (name, group_id))
+        self.conn.commit()
+
     def add_student(self, group_id: int, last_name: str, first_name: str, middle_name: str = '') -> int:
         cur = self.conn.execute(
             "INSERT INTO students (group_id, last_name, first_name, middle_name) VALUES (?, ?, ?, ?)",
@@ -132,6 +136,13 @@ class Database:
         self.conn.execute("DELETE FROM students WHERE id = ?", (student_id,))
         self.conn.commit()
 
+    def update_student(self, student_id: int, last_name: str, first_name: str, middle_name: str = '') -> None:
+        self.conn.execute(
+            "UPDATE students SET last_name = ?, first_name = ?, middle_name = ? WHERE id = ?",
+            (last_name, first_name, middle_name, student_id)
+        )
+        self.conn.commit()
+
     def list_students(self, group_id: Optional[int] = None) -> Sequence[sqlite3.Row]:
         if group_id is not None:
             return self.conn.execute(
@@ -147,6 +158,13 @@ class Database:
 
     def delete_subject(self, subject_id: int) -> None:
         self.conn.execute("DELETE FROM subjects WHERE id = ?", (subject_id,))
+        self.conn.commit()
+
+    def update_subject(self, subject_id: int, name: str, total_hours: int) -> None:
+        self.conn.execute(
+            "UPDATE subjects SET name = ?, total_hours = ? WHERE id = ?",
+            (name, total_hours, subject_id)
+        )
         self.conn.commit()
 
     def list_subjects(self, group_id: Optional[int] = None, include_free: bool = False) -> Sequence[sqlite3.Row]:

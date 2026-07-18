@@ -76,6 +76,15 @@ def delete_group(group_id: int):
     return jsonify({'ok': True})
 
 
+@groups_bp.route('/<int:group_id>', methods=['PATCH'])
+def update_group(group_id: int):
+    data = request.get_json()
+    if not data or 'name' not in data:
+        return jsonify({'error': 'name is required'}), 400
+    get_db().update_group(group_id, data['name'])
+    return jsonify({'ok': True})
+
+
 app.register_blueprint(groups_bp)
 
 
@@ -109,6 +118,20 @@ def delete_student(student_id: int):
     return jsonify({'ok': True})
 
 
+@students_bp.route('/<int:student_id>', methods=['PATCH'])
+def update_student(student_id: int):
+    data = request.get_json()
+    if not data or 'last_name' not in data or 'first_name' not in data:
+        return jsonify({'error': 'last_name and first_name are required'}), 400
+    get_db().update_student(
+        student_id,
+        data['last_name'],
+        data['first_name'],
+        data.get('middle_name', '')
+    )
+    return jsonify({'ok': True})
+
+
 app.register_blueprint(students_bp)
 
 
@@ -134,6 +157,15 @@ def create_subject():
 @subjects_bp.route('/<int:subject_id>', methods=['DELETE'])
 def delete_subject(subject_id: int):
     get_db().delete_subject(subject_id)
+    return jsonify({'ok': True})
+
+
+@subjects_bp.route('/<int:subject_id>', methods=['PATCH'])
+def update_subject(subject_id: int):
+    data = request.get_json()
+    if not data or 'name' not in data or 'total_hours' not in data:
+        return jsonify({'error': 'name and total_hours are required'}), 400
+    get_db().update_subject(subject_id, data['name'], data['total_hours'])
     return jsonify({'ok': True})
 
 

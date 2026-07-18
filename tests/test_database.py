@@ -46,6 +46,11 @@ class TestGroups:
         db.delete_group(gid)
         assert db.list_groups() == []
 
+    def test_update_group(self, db):
+        gid = db.add_group('ИС-11')
+        db.update_group(gid, 'ПО-21')
+        assert db.list_groups()[0]['name'] == 'ПО-21'
+
 # ======================== STUDENTS ========================
 
 class TestStudents:
@@ -121,6 +126,15 @@ class TestStudents:
         db.delete_student(sid)
         assert db.list_students(gid) == []
 
+    def test_update_student(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_student(gid, 'Иванов', 'Иван')
+        db.update_student(sid, 'Петров', 'Пётр', 'Сергеевич')
+        s = db.list_students(gid)[0]
+        assert s['last_name'] == 'Петров'
+        assert s['first_name'] == 'Пётр'
+        assert s['middle_name'] == 'Сергеевич'
+
 # ======================== SUBJECTS ========================
 
 class TestSubjects:
@@ -193,6 +207,14 @@ class TestSubjects:
         sid = db.add_subject('Математика', 32, gid)
         db.delete_subject(sid)
         assert db.list_subjects() == []
+
+    def test_update_subject(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_subject('Математика', 32, gid)
+        db.update_subject(sid, 'Физика', 48)
+        s = db.list_subjects()[0]
+        assert s['name'] == 'Физика'
+        assert s['total_hours'] == 48
 
 # ======================== FREE SUBJECT ========================
 

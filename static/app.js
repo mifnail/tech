@@ -187,6 +187,7 @@ App.Pages = {
             <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
           </div>
         </div>
+        <button class="btn btn-muted btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.showEditSubject(${s.id}, '${s.name}', ${s.total_hours})">✎</button>
         <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteSubject(${s.id}, '${s.name}')">✕</button>
       </div>`;
     }
@@ -201,7 +202,10 @@ App.Pages = {
       for (const g of groups) {
         html += `<div class="card" style="cursor:pointer;text-align:center" onclick="location='#students/${g.id}'">
           <div class="card-title">${g.name}</div>
-          <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteGroup(${g.id}, '${g.name}')">✕</button>
+          <div style="display:flex;gap:4px;justify-content:center;margin-top:4px">
+            <button class="btn btn-muted btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.showEditGroup(${g.id}, '${g.name}')">✎</button>
+            <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteGroup(${g.id}, '${g.name}')">✕</button>
+          </div>
         </div>`;
       }
       html += `</div>`;
@@ -510,6 +514,7 @@ App.Pages = {
     for (const s of students) {
       html += `<div class="row">
         <div style="flex:1"><span style="font-weight:500">${s.last_name} ${s.first_name}</span> ${s.middle_name || ''}</div>
+        <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditStudent(${s.id}, '${s.last_name}', '${s.first_name}', '${s.middle_name || ''}')">✎</button>
         <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.confirmDeleteStudent(${s.id})">✕</button>
       </div>`;
     }
@@ -745,7 +750,25 @@ App.Pages.createStudents = async function(groupId) {
   App.Pages.students(groupId);
 };
 
-App.Pages.confirmDeleteStudent = function(studentId) {
+App.Pages.showEditStudent = function(studentId, lastName, firstName, middleName) {
+  App.UI.showPopup(`
+    <h2>Редактировать студента</h2>
+    <input id="edit-student-last" class="input" value="${lastName}" placeholder="Фамилия">
+    <input id="edit-student-first" class="input" value="${firstName}" placeholder="Имя">
+    <input id="edit-student-middle" class="input" value="${middleName}" placeholder="Отчество">
+    <div class="grid-2">
+      <button class="btn btn-primary" onclick="App.Pages.editStudent(${studentId})">Сохранить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
+    </div>
+  `);
+};
+
+App.Pages.editStudent = async function(studentId) {
+  const last = document.getElementById('edit-student-last').value.trim();
+  const first = document.getElementById('edit-student-first').value.trim();
+  const middle = document.getElementById('edit-student-middle').value.trim();
+  if (!last || !first) { App.UI.notify('Фамилия и имя обязательны'); return; }
+  await App.API.patch(`/api/students/${studentId}`, { last_name: last, first_name: first, middle_name: middle });
   App.UI.showPopup(`
     <h2>Удалить студента?</h2>
     <p style="margin-bottom:12px;color:#86868b">Оценки будут удалены.</p>

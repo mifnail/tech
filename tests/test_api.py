@@ -63,6 +63,17 @@ class TestGroupsAPI:
         assert rv.json['ok'] is True
         assert client.get('/api/groups').json == []
 
+    def test_update(self, client):
+        gid = client.post('/api/groups', json={'name': 'ИС-11'}).json['id']
+        rv = client.patch(f'/api/groups/{gid}', json={'name': 'ПО-21'})
+        assert rv.json['ok'] is True
+        assert client.get('/api/groups').json[0]['name'] == 'ПО-21'
+
+    def test_update_missing_name(self, client):
+        gid = client.post('/api/groups', json={'name': 'ФИ-33'}).json['id']
+        rv = client.patch(f'/api/groups/{gid}', json={})
+        assert rv.status_code == 400
+
 # ======================== STUDENTS ========================
 
 class TestStudentsAPI:
@@ -105,7 +116,24 @@ class TestStudentsAPI:
         assert rv.json['ok'] is True
         assert client.get(f'/api/students?group_id={gid}').json == []
 
-# ======================== SUBJECTS ========================
+    def test_update(self, client):
+        gid = self._setup(client)
+        db = get_db()
+        sid = db.add_student(gid, 'Иванов', 'Иван')
+        rv = client.patch(f'/api/students/{sid}', json={
+            'last_name': 'Петров', 'first_name': 'Пётр', 'middle_name': 'Сергеевич'
+        })
+        assert rv.json['ok'] is True
+        s = client.get(f'/api/students?group_id={gid}').json[0]
+        assert s['last_name'] == 'Петров'
+        assert s['first_name'] == 'Пётр'
+
+    def test_update_student_missing_fields(self, client):
+        gid = client.post('/api/groups', json={'name': 'ФИ-32'}).json['id']
+        db = get_db()
+        sid = db.add_student(gid, 'Иванов', 'Иван')
+        rv = client.patch(f'/api/students/{sid}', json={})
+        assert rv.status_code == 400
 
 class TestSubjectsAPI:
     def _setup(self, client):
@@ -158,7 +186,26 @@ class TestSubjectsAPI:
         assert rv.json['ok'] is True
         assert client.get(f'/api/subjects?group_id={gid}').json == []
 
-    def test_subject_lessons(self, client):
+    def test_update(self, client):
+        gid = self._setup(client)
+        sid = client.post('/api/subjects', json={
+            'name': 'Математика', 'total_hours': 32, 'group_id': gid
+        }).json['id']
+        rv = client.patch(f'/api/subjects/{sid}', json={
+            'name': 'Физика', 'total_hours': 48
+        })
+        assert rv.json['ok'] is True
+        s = client.get(f'/api/subjects?group_id={gid}').json[0]
+        assert s['name'] == 'Физика'
+        assert s['total_hours'] == 48
+
+    def test_update_subject_missing_fields(self, client):
+        gid = client.post('/api/groups', json={'name': 'ФИ-31'}).json['id']
+        sid = client.post('/api/subjects', json={
+            'name': 'Математика', 'total_hours': 32, 'group_id': gid
+        }).json['id']
+        rv = client.patch(f'/api/subjects/{sid}', json={})
+        assert rv.status_code == 400
         gid = self._setup(client)
         sid = client.post('/api/subjects', json={
             'name': 'Математика', 'total_hours': 32, 'group_id': gid
