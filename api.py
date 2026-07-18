@@ -288,6 +288,12 @@ def cancel_lesson(lesson_id: int):
     return jsonify({'ok': True})
 
 
+@lessons_bp.route('/<int:lesson_id>', methods=['DELETE'])
+def delete_lesson(lesson_id: int):
+    get_db().delete_lesson(lesson_id)
+    return jsonify({'ok': True})
+
+
 @lessons_bp.route('/<int:lesson_id>/status', methods=['PATCH'])
 @require_fields('status')
 def update_lesson_status(lesson_id: int):

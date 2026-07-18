@@ -311,6 +311,11 @@ class Database:
         self.conn.execute("DELETE FROM grades WHERE lesson_id = ?", (lesson_id,))
         self.conn.commit()
 
+    def delete_lesson(self, lesson_id: int) -> None:
+        self.conn.execute("DELETE FROM grades WHERE lesson_id = ?", (lesson_id,))
+        self.conn.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
+        self.conn.commit()
+
     def list_lessons_by_date(self, date: str) -> Sequence[sqlite3.Row]:
         return self.conn.execute("""
             SELECT l.*, ps.name AS planned_subject,

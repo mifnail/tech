@@ -469,6 +469,13 @@ class TestLessons:
         prev, next = db.get_adjacent_lessons(999)
         assert prev is None and next is None
 
+    def test_delete_lesson(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_subject('Математика', 32, gid)
+        lid = db.add_lesson(sid, '2026-09-01', sid, 'held')
+        db.delete_lesson(lid)
+        assert db.get_lesson(lid) is None
+
 # ======================== GRADES ========================
 
 class TestGrades:

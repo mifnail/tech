@@ -411,7 +411,13 @@ class TestLessonsAPI:
         rv = client.get('/api/lessons/date/2099-01-01')
         assert rv.json == []
 
-# ======================== REPORTS ========================
+    def test_delete_lesson(self, client):
+        gid, sid, student_id = self._setup(client)
+        lid = get_db().add_lesson(sid, '2026-09-01', sid, 'held')
+        rv = client.delete(f'/api/lessons/{lid}')
+        assert rv.json['ok'] is True
+        rv = client.get(f'/api/lessons/{lid}')
+        assert rv.status_code == 404
 
 class TestReportsAPI:
     def _setup(self, client):

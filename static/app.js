@@ -266,6 +266,7 @@ App.Pages = {
             html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existing.id}'">
               <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
               <div class="card-sub">${e.group_name} · <span class="badge badge-held">Проведено</span></div>
+              <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${existing.id})">✕</button>
             </div>`;
           } else {
             const existingCancelled = lessons.find(l => l.subject_id === e.subject_id && l.status === 'cancelled');
@@ -273,6 +274,7 @@ App.Pages = {
               html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${existingCancelled.id}'">
               <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
               <div class="card-sub">${e.group_name} · <span class="badge badge-cancelled">Отменено</span></div>
+              <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${existingCancelled.id})">✕</button>
               </div>`;
             } else {
               html += `<div class="card">
@@ -296,6 +298,7 @@ App.Pages = {
               <div class="card-title">${l.actual_subject_name}</div>
               <div class="card-sub">${l.group_name} · <span class="badge ${cls}">${label}</span>
                 ${l.status === 'cancelled' ? '· Отменено' : ''}</div>
+              <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
             </div>`;
           }
         }
@@ -462,6 +465,7 @@ App.Pages = {
     html += `<div style="display:flex;gap:8px;margin-top:8px">
       <button class="btn btn-warning btn-sm" style="flex:1" onclick="App.Pages.showLessonSubstitution(${lessonId})">🔄 Заменить</button>
       <button class="btn btn-danger btn-sm" style="flex:1" onclick="App.Pages.confirmCancelLesson(${lessonId})">✕ Отменить</button>
+      <button class="btn btn-danger btn-sm" style="flex:1" onclick="App.Pages.confirmDeleteLesson(${lessonId})">🗑 Удалить</button>
       <button class="btn btn-success" style="flex:1" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал</button>
     </div>`;
     document.getElementById('app').innerHTML = html;
@@ -606,6 +610,23 @@ App.Pages.cancelLesson = async function(lessonId) {
   await App.API.patch(`/api/lessons/${lessonId}/cancel`);
   App.UI.closePopup();
   location = `#lesson/${lessonId}`;
+};
+
+App.Pages.confirmDeleteLesson = function(lessonId) {
+  App.UI.showPopup(`
+    <h2>Удалить занятие?</h2>
+    <p style="margin-bottom:12px;color:#86868b">Занятие и оценки будут полностью удалены.</p>
+    <div class="grid-2">
+      <button class="btn btn-danger" onclick="App.Pages.deleteLesson(${lessonId})">Удалить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
+    </div>
+  `);
+};
+
+App.Pages.deleteLesson = async function(lessonId) {
+  await App.API._delete(`/api/lessons/${lessonId}`);
+  App.UI.closePopup();
+  App.Router.handle();
 };
 
 App.Pages.showCustomLesson = function() {
