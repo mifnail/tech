@@ -46,6 +46,11 @@ App.UI = {
   closePopup() {
     const p = document.getElementById('popup');
     if (p) p.remove();
+  },
+  formatDate(iso) {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-');
+    return `${d}.${m}.${y}`;
   }
 };
 
@@ -168,7 +173,7 @@ App.Pages = {
     html += `<h1>Учёт занятий</h1>`;
 
     html += `<div class="card" style="cursor:pointer" onclick="App.Pages._showToday = !App.Pages._showToday; App.Pages.home()">
-      <div class="card-title">Сегодня (${today.date})</div>
+      <div class="card-title">Сегодня (${App.UI.formatDate(today.date)})</div>
       <div class="card-sub">${today.schedule.length} запланировано · ${today.lessons.length} занятий · ${App.Pages._showToday ? '▲' : '▼'}</div>
     </div>`;
 
@@ -245,7 +250,7 @@ App.Pages = {
     let html = App.Nav.render();
     const title = currentSubject ? `${currentSubject.name} — сегодня` : 'Сегодня';
     html += `<h1>${title}</h1>`;
-    html += `<div class="card"><div class="card-title">${data.date}</div>`;
+    html += `<div class="card"><div class="card-title">${App.UI.formatDate(data.date)}</div>`;
     html += `<div class="card-sub">День ${data.day_of_week}</div></div>`;
 
     if (currentSubject) {
@@ -366,7 +371,7 @@ App.Pages = {
         const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
         html += `<div class="row" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
           <div style="flex:1">
-            <div style="font-weight:500">${l.date}</div>
+            <div style="font-weight:500">${App.UI.formatDate(l.date)}</div>
             <div><span class="badge ${cls}">${label}</span></div>
           </div>
           <span style="color:#007aff;font-size:20px">›</span>
@@ -429,7 +434,7 @@ App.Pages = {
     html += `</div>`;
 
     html += `<div class="card">
-      <div class="card-sub">${l.date} · ${l.group_name}</div>
+      <div class="card-sub">${App.UI.formatDate(l.date)} · ${l.group_name}</div>
       ${l.status === 'cancelled' ? `<div class="badge badge-cancelled">Отменено</div>` : `<span class="badge badge-held">Проведено</span>`}
     </div>`;
 
