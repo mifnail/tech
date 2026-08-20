@@ -177,7 +177,7 @@ App.Pages = {
             <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
           </div>`;
         }
-        html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.startLesson(${e.subject_id})">Начать занятие</button>`;
+        html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.startLesson(${e.subject_id}, ${e.lesson_number})">Начать занятие</button>`;
         html += `</div>`;
       }
     }
@@ -312,7 +312,7 @@ App.Pages = {
               <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
             </div>`;
           }
-          html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.startLesson(${e.subject_id})">Начать занятие</button>`;
+html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.startLesson(${e.subject_id}, ${e.lesson_number})">Начать занятие</button>`;
           html += `</div>`;
         }
       }
@@ -595,9 +595,9 @@ App.Pages = {
 
 /* ===== Dialog / Action helpers (on window for onclick access) ===== */
 
-App.Pages.startLesson = async function(subjectId) {
+App.Pages.startLesson = async function(subjectId, lessonNumber) {
   const result = await App.API.post('/api/lessons', {
-    subject_id: subjectId, actual_subject_id: subjectId, status: 'held'
+    subject_id: subjectId, actual_subject_id: subjectId, status: 'held', lesson_number: lessonNumber
   });
   location = `#lesson/${result.id}`;
 };
