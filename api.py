@@ -242,6 +242,7 @@ def schedule_today():
     db = get_db()
     return jsonify({
         'date': today.isoformat(),
+        'formatted_date': today.strftime('%d.%m.%Y'),
         'day_of_week': day,
         'schedule': [dict(r) for r in db.get_schedule_for_day(day, week_type)],
         'lessons': [dict(r) for r in db.list_lessons_by_date(today.isoformat())]
@@ -263,7 +264,8 @@ def create_lesson():
         data['subject_id'],
         data.get('date', date.today().isoformat()),
         data.get('actual_subject_id'),
-        data.get('status', 'held'))
+        data.get('status', 'held'),
+        data.get('lesson_number'))
     return jsonify({'id': lid}), 201
 
 
@@ -272,7 +274,16 @@ def get_lesson(lesson_id: int):
     lesson = get_db().get_lesson(lesson_id)
     if not lesson:
         return jsonify({'error': 'not found'}), 404
-    return jsonify(dict(lesson))
+    lesson_dict = dict(lesson)
+    # Add formatted_date for frontend convenience
+    if lesson_dict.get('date'):
+        from datetime import datetime
+        try:
+            dt = datetime.strptime(lesson_dict['date'], '%Y-%m-%d')
+            lesson_dict['formatted_date'] = dt.strftime('%d.%m.%Y')
+        except ValueError:
+            lesson_dict['formatted_date'] = lesson_dict['date']
+    return jsonify(lesson_dict)
 
 
 @lessons_bp.route('/<int:lesson_id>/substitute', methods=['PATCH'])
