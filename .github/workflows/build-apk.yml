@@ -5,7 +5,20 @@ name: Build debug APK
 
 on:
   push:
-    branches: [ "**" ]
+    branches: [ "main" ]
+    paths:
+      - 'api.py'
+      - 'database.py'
+      - 'main.py'
+      - 'buildozer.spec'
+      - 'requirements.txt'
+      - 'static/**'
+      - 'templates/**'
+      - 'calendar_export.py'
+      - 'report_export.py'
+      - 'crash_reporter.py'
+      - 'seed_db.py'
+      - 'schedule_file.py'
   workflow_dispatch: {}
 
 jobs:
