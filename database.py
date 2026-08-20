@@ -89,6 +89,12 @@ class Database:
             pass
         self.conn.execute("UPDATE lessons SET status = 'cancelled' WHERE status = 'free'")
         self.conn.commit()
+        # Add lesson_number column for duplicate lessons support
+        try:
+            self.conn.execute("ALTER TABLE lessons ADD COLUMN lesson_number INTEGER")
+            self.conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def get_free_subject_id(self, group_id: int) -> int:
         row = self.conn.execute("SELECT id FROM subjects WHERE name = 'СВОБОДНО' AND group_id = ?", (group_id,)).fetchone()
@@ -283,10 +289,10 @@ class Database:
             (day_of_week, lesson_number, subject_id, week_type, entry_id))
         self.conn.commit()
 
-    def add_lesson(self, subject_id: int, date: str, actual_subject_id: Optional[int] = None, status: str = 'held') -> int:
+    def add_lesson(self, subject_id: int, date: str, actual_subject_id: Optional[int] = None, status: str = 'held', lesson_number: Optional[int] = None) -> int:
         cur = self.conn.execute(
-            "INSERT INTO lessons (subject_id, actual_subject_id, date, status) VALUES (?, ?, ?, ?)",
-            (subject_id, actual_subject_id, date, status))
+            "INSERT INTO lessons (subject_id, actual_subject_id, date, status, lesson_number) VALUES (?, ?, ?, ?, ?)",
+            (subject_id, actual_subject_id, date, status, lesson_number))
         self.conn.commit()
         return cur.lastrowid
 
@@ -354,11 +360,11 @@ class Database:
         return (prev_row['id'] if prev_row else None, next_row['id'] if next_row else None)
 
     def substitute_lesson(self, lesson_id: int, new_subject_id: int) -> int:
-        lesson = self.conn.execute("SELECT date FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
+        lesson = self.conn.execute("SELECT date, lesson_number FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
         if not lesson:
             raise ValueError("Lesson not found")
         self.cancel_lesson(lesson_id)
-        new_id = self.add_lesson(new_subject_id, lesson['date'], new_subject_id, 'held')
+        new_id = self.add_lesson(new_subject_id, lesson['date'], new_subject_id, 'held', lesson['lesson_number'])
         return new_id
 
     def get_substitutions(self) -> Sequence[sqlite3.Row]:
