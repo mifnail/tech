@@ -5,6 +5,8 @@ from datetime import date
 from typing import Any
 import os
 
+import sqlite3
+
 from flask import Flask, Blueprint, request, jsonify, send_from_directory, send_file, Response
 
 from database import Database
@@ -66,7 +68,10 @@ def list_groups():
 @groups_bp.route('', methods=['POST'])
 @require_fields('name')
 def create_group():
-    gid = get_db().add_group(request.json['name'])
+    try:
+        gid = get_db().add_group(request.json['name'])
+    except sqlite3.IntegrityError as e:
+        return jsonify({'error': 'duplicate or invalid group', 'detail': str(e)}), 400
     return jsonify({'id': gid}), 201
 
 
@@ -81,7 +86,10 @@ def update_group(group_id: int):
     data = request.get_json()
     if not data or 'name' not in data:
         return jsonify({'error': 'name is required'}), 400
-    get_db().update_group(group_id, data['name'])
+    try:
+        get_db().update_group(group_id, data['name'])
+    except sqlite3.IntegrityError as e:
+        return jsonify({'error': 'duplicate or invalid group', 'detail': str(e)}), 400
     return jsonify({'ok': True})
 
 
@@ -123,12 +131,15 @@ def update_student(student_id: int):
     data = request.get_json()
     if not data or 'last_name' not in data or 'first_name' not in data:
         return jsonify({'error': 'last_name and first_name are required'}), 400
-    get_db().update_student(
-        student_id,
-        data['last_name'],
-        data['first_name'],
-        data.get('middle_name', '')
-    )
+    try:
+        get_db().update_student(
+            student_id,
+            data['last_name'],
+            data['first_name'],
+            data.get('middle_name', '')
+        )
+    except sqlite3.IntegrityError as e:
+        return jsonify({'error': 'duplicate or invalid student', 'detail': str(e)}), 400
     return jsonify({'ok': True})
 
 
@@ -150,7 +161,10 @@ def list_subjects():
 @require_fields('name', 'total_hours', 'group_id')
 def create_subject():
     data = request.json
-    sid = get_db().add_subject(data['name'], data['total_hours'], data['group_id'])
+    try:
+        sid = get_db().add_subject(data['name'], data['total_hours'], data['group_id'])
+    except sqlite3.IntegrityError as e:
+        return jsonify({'error': 'duplicate or invalid subject', 'detail': str(e)}), 400
     return jsonify({'id': sid}), 201
 
 
@@ -165,7 +179,10 @@ def update_subject(subject_id: int):
     data = request.get_json()
     if not data or 'name' not in data or 'total_hours' not in data:
         return jsonify({'error': 'name and total_hours are required'}), 400
-    get_db().update_subject(subject_id, data['name'], data['total_hours'])
+    try:
+        get_db().update_subject(subject_id, data['name'], data['total_hours'])
+    except sqlite3.IntegrityError as e:
+        return jsonify({'error': 'duplicate or invalid subject', 'detail': str(e)}), 400
     return jsonify({'ok': True})
 
 
