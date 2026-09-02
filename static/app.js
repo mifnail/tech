@@ -51,6 +51,12 @@ App.UI = {
     if (!iso) return '';
     const [y, m, d] = iso.split('-');
     return `${d}.${m}.${y}`;
+  },
+  escHtml(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  },
+  escJs(s) {
+    return (s || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/\n/g,'\\n');
   }
 };
 
@@ -231,8 +237,8 @@ App.Pages = {
             <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
           </div>
         </div>
-        <button class="btn btn-muted btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.showEditSubject(${s.id}, '${s.name}', ${s.total_hours})">✎</button>
-        <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteSubject(${s.id}, '${s.name}')">✕</button>
+        <button class="btn btn-muted btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.showEditSubject(${s.id}, '${App.UI.escJs(s.name)}', ${s.total_hours})">✎</button>
+        <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteSubject(${s.id}, '${App.UI.escJs(s.name)}')">✕</button>
       </div>`;
     }
 
@@ -247,8 +253,8 @@ App.Pages = {
         html += `<div class="card" style="cursor:pointer;text-align:center" onclick="location='#students/${g.id}'">
           <div class="card-title">${g.name}</div>
           <div style="display:flex;gap:4px;justify-content:center;margin-top:4px">
-            <button class="btn btn-muted btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.showEditGroup(${g.id}, '${g.name}')">✎</button>
-            <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteGroup(${g.id}, '${g.name}')">✕</button>
+            <button class="btn btn-muted btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.showEditGroup(${g.id}, '${App.UI.escJs(g.name)}')">✎</button>
+            <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteGroup(${g.id}, '${App.UI.escJs(g.name)}')">✕</button>
           </div>
         </div>`;
       }
@@ -553,7 +559,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     for (const s of students) {
       html += `<div class="row">
         <div style="flex:1"><span style="font-weight:500">${s.last_name} ${s.first_name}</span> ${s.middle_name || ''}</div>
-        <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditStudent(${s.id}, '${s.last_name}', '${s.first_name}', '${s.middle_name || ''}')">✎</button>
+        <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditStudent(${s.id}, '${App.UI.escJs(s.last_name)}', '${App.UI.escJs(s.first_name)}', '${App.UI.escJs(s.middle_name || '')}')">✎</button>
         <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.confirmDeleteStudent(${s.id})">✕</button>
       </div>`;
     }
