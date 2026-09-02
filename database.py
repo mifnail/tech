@@ -57,7 +57,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS lessons (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
-                actual_subject_id INTEGER REFERENCES subjects(id),
+                actual_subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
                 date TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'held'
             );
@@ -163,6 +163,14 @@ class Database:
         return cur.lastrowid
 
     def delete_subject(self, subject_id: int) -> None:
+        # Совместимость со старыми БД где actual_subject_id без ON DELETE CASCADE
+        # Удаляем занятия, где этот предмет — фактический (замены)
+        self.conn.execute("DELETE FROM grades WHERE lesson_id IN (SELECT id FROM lessons WHERE actual_subject_id = ?)", (subject_id,))
+        self.conn.execute("DELETE FROM lessons WHERE actual_subject_id = ?", (subject_id,))
+        # subject_id каскадно удалится сам, но на всякий случай чистим и по нему
+        self.conn.execute("DELETE FROM grades WHERE lesson_id IN (SELECT id FROM lessons WHERE subject_id = ?)", (subject_id,))
+        self.conn.execute("DELETE FROM lessons WHERE subject_id = ?", (subject_id,))
+        self.conn.execute("DELETE FROM schedule WHERE subject_id = ?", (subject_id,))
         self.conn.execute("DELETE FROM subjects WHERE id = ?", (subject_id,))
         self.conn.commit()
 
