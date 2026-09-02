@@ -527,7 +527,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
               <div class="card-sub">${e.subject_name} · ${e.group_name} · ${weekTypes[e.week_type] || 'Каждую'}</div>
             </div>
             <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditScheduleEntry(${e.id}, ${JSON.stringify(e).replace(/"/g, '&quot;')})">✎</button>
-            <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.deleteScheduleEntry(${e.id})">✕</button>
+            <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.confirmDeleteScheduleEntry(${e.id})">✕</button>
           </div>
         </div>`;
       }
@@ -654,9 +654,16 @@ App.Pages.confirmDeleteLesson = function(lessonId) {
 };
 
 App.Pages.deleteLesson = async function(lessonId) {
-  await App.API._delete(`/api/lessons/${lessonId}`);
-  App.UI.closePopup();
-  App.Router.handle();
+  try {
+    await App.API._delete(`/api/lessons/${lessonId}`);
+    App.UI.closePopup();
+    App.UI.notify('Занятие удалено');
+    // если были на странице занятия — уходим на главную, иначе просто обновляем
+    if (location.hash.startsWith('#lesson/')) location.hash = '#home';
+    else App.Router.handle();
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка удаления занятия');
+  }
 };
 
 App.Pages.showCustomLesson = function() {
@@ -778,10 +785,25 @@ App.Pages.updateScheduleEntry = async function(id) {
   App.Pages.schedule();
 };
 
+App.Pages.confirmDeleteScheduleEntry = function(id) {
+  App.UI.showPopup(`
+    <h2>Удалить запись расписания?</h2>
+    <div class="grid-2">
+      <button class="btn btn-danger" onclick="App.Pages.deleteScheduleEntry(${id})">Удалить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
+    </div>
+  `);
+};
+
 App.Pages.deleteScheduleEntry = async function(id) {
-  if (!confirm('Удалить?')) return;
-  await App.API._delete(`/api/schedule/${id}`);
-  App.Pages.schedule();
+  try {
+    await App.API._delete(`/api/schedule/${id}`);
+    App.UI.closePopup();
+    App.UI.notify('Запись удалена');
+    App.Pages.schedule();
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка удаления');
+  }
 };
 
 App.Pages.showAddStudents = function(groupId) {
@@ -824,7 +846,17 @@ App.Pages.editStudent = async function(studentId) {
   const first = document.getElementById('edit-student-first').value.trim();
   const middle = document.getElementById('edit-student-middle').value.trim();
   if (!last || !first) { App.UI.notify('Фамилия и имя обязательны'); return; }
-  await App.API.patch(`/api/students/${studentId}`, { last_name: last, first_name: first, middle_name: middle });
+  try {
+    await App.API.patch(`/api/students/${studentId}`, { last_name: last, first_name: first, middle_name: middle });
+    App.UI.closePopup();
+    App.UI.notify('Студент обновлён');
+    App.Router.handle();
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка сохранения');
+  }
+};
+
+App.Pages.confirmDeleteStudent = function(studentId) {
   App.UI.showPopup(`
     <h2>Удалить студента?</h2>
     <p style="margin-bottom:12px;color:#86868b">Оценки будут удалены.</p>
@@ -836,10 +868,14 @@ App.Pages.editStudent = async function(studentId) {
 };
 
 App.Pages.deleteStudent = async function(studentId) {
-  await App.API._delete(`/api/students/${studentId}`);
-  App.UI.closePopup();
-  App.UI.notify('Студент удалён');
-  App.Router.handle();
+  try {
+    await App.API._delete(`/api/students/${studentId}`);
+    App.UI.closePopup();
+    App.UI.notify('Студент удалён');
+    App.Router.handle();
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка удаления студента');
+  }
 };
 
 App.Pages.confirmDeleteGroup = function(groupId, name) {
@@ -854,10 +890,14 @@ App.Pages.confirmDeleteGroup = function(groupId, name) {
 };
 
 App.Pages.deleteGroup = async function(groupId) {
-  await App.API._delete(`/api/groups/${groupId}`);
-  App.UI.closePopup();
-  App.UI.notify('Группа удалена');
-  App.Router.handle();
+  try {
+    await App.API._delete(`/api/groups/${groupId}`);
+    App.UI.closePopup();
+    App.UI.notify('Группа удалена');
+    location.hash = '#home';
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка удаления группы');
+  }
 };
 
 App.Pages.confirmDeleteSubject = function(subjectId, name) {
@@ -872,10 +912,66 @@ App.Pages.confirmDeleteSubject = function(subjectId, name) {
 };
 
 App.Pages.deleteSubject = async function(subjectId) {
-  await App.API._delete(`/api/subjects/${subjectId}`);
-  App.UI.closePopup();
-  App.UI.notify('Предмет удалён');
-  App.Router.handle();
+  try {
+    await App.API._delete(`/api/subjects/${subjectId}`);
+    App.UI.closePopup();
+    App.UI.notify('Предмет удалён');
+    App.Router.handle();
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка удаления предмета');
+  }
+};
+
+App.Pages.showEditGroup = function(groupId, name) {
+  const safe = (name || '').replace(/"/g, '&quot;');
+  App.UI.showPopup(`
+    <h2>Редактировать группу</h2>
+    <input id="edit-group-name" value="${safe}" placeholder="Название группы">
+    <div class="grid-2">
+      <button class="btn btn-primary" onclick="App.Pages.editGroup(${groupId})">Сохранить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
+    </div>
+  `);
+};
+
+App.Pages.editGroup = async function(groupId) {
+  const name = document.getElementById('edit-group-name').value.trim();
+  if (!name) { App.UI.notify('Введите название'); return; }
+  try {
+    await App.API.patch(`/api/groups/${groupId}`, { name });
+    App.UI.closePopup();
+    App.UI.notify('Группа обновлена');
+    App.Router.handle();
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка сохранения');
+  }
+};
+
+App.Pages.showEditSubject = function(subjectId, name, totalHours) {
+  const safe = (name || '').replace(/"/g, '&quot;');
+  App.UI.showPopup(`
+    <h2>Редактировать предмет</h2>
+    <input id="edit-subj-name" value="${safe}" placeholder="Название предмета">
+    <input id="edit-subj-hours" type="number" value="${totalHours}" placeholder="Всего часов" min="1">
+    <div class="grid-2">
+      <button class="btn btn-primary" onclick="App.Pages.editSubject(${subjectId})">Сохранить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
+    </div>
+  `);
+};
+
+App.Pages.editSubject = async function(subjectId) {
+  const name = document.getElementById('edit-subj-name').value.trim();
+  const hours = +document.getElementById('edit-subj-hours').value;
+  if (!name || !hours) { App.UI.notify('Заполните все поля'); return; }
+  try {
+    await App.API.patch(`/api/subjects/${subjectId}`, { name, total_hours: hours });
+    App.UI.closePopup();
+    App.UI.notify('Предмет обновлён');
+    App.Router.handle();
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка сохранения');
+  }
 };
 
 /* ===== INIT ===== */
