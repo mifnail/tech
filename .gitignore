@@ -4,4 +4,6 @@ __pycache__/
 *.apk
 bin/
 .buildozer/
-*.db
+lessons.db-journal
+lessons.db-wal
+lessons.db-shm
