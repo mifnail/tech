@@ -136,11 +136,22 @@ App.Grades = {
     const map = { '0': '#e8f5e9', 'present': '#e8f5e9', '5': '#ffebee', '4': '#e3f2fd', '3': '#fff8e1', '2': '#e0e0e0' };
     return map[grade] || '';
   },
-  async cycle(lessonId, studentId, currentGrade, rowEl) {
+  async cycle(lessonId, studentId, currentGrade) {
     const idx = this.CYCLE.indexOf(currentGrade || '');
     const next = this.CYCLE[(idx + 1) % this.CYCLE.length];
     await App.API.post(`/api/lessons/${lessonId}/attendance`, { student_id: studentId, grade: next });
-    App.Pages.lesson(lessonId, studentId);
+    // Обновляем строку студентa на месте — без перерисовки всей страницы
+    const row = document.getElementById('att-' + studentId);
+    if (!row) { App.Pages.lesson(lessonId); return; }
+    const gc = App.Grades.colorClass(next);
+    const label = next || '—';
+    const bg = next ? `background:${App.Grades.bgColor(next)}` : '';
+    row.style.cssText = bg;
+    row.className = 'attendance-row' + (next ? ' marked' : '');
+    row.setAttribute('onclick', `App.Grades.cycle(${lessonId}, ${studentId}, '${next}')`);
+    row.querySelector('.grade').className = 'grade grade-' + gc;
+    row.querySelector('.grade').textContent = label;
+    // Обновляем счётчик «Сдано» в заголовке, если есть
   }
 };
 
@@ -443,7 +454,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
   },
 
   /* ----- Lesson page ----- */
-  async lesson(lessonId, scrollToStudentId) {
+  async lesson(lessonId) {
     App.Loading.show();
     const [data, adjacent] = await Promise.all([
       App.API.get(`/api/lessons/${lessonId}/attendance`),
@@ -505,12 +516,6 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       <button class="btn btn-success" style="flex:1" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал</button>
     </div>`;
     document.getElementById('app').innerHTML = html;
-    if (scrollToStudentId) {
-      requestAnimationFrame(() => {
-        const row = document.getElementById('att-' + scrollToStudentId);
-        if (row) row.scrollIntoView({ block: 'center', behavior: 'auto' });
-      });
-    }
   },
 
   /* ----- Schedule management ----- */
