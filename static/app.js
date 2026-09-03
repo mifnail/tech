@@ -140,29 +140,7 @@ App.Grades = {
     const idx = this.CYCLE.indexOf(currentGrade || '');
     const next = this.CYCLE[(idx + 1) % this.CYCLE.length];
     await App.API.post(`/api/lessons/${lessonId}/attendance`, { student_id: studentId, grade: next });
-    /* --- Обновление строки на месте (без перерисовки всей страницы) --- */
-    const row = document.getElementById('att-' + studentId);
-    if (row) {
-      const gc = App.Grades.colorClass(next);
-      const label = next || '—';
-      if (next) {
-        row.style.background = App.Grades.bgColor(next);
-      } else {
-        row.style.removeProperty('background');
-      }
-      row.className = 'attendance-row' + (next ? ' marked' : '');
-      row.onclick = function() { App.Grades.cycle(lessonId, studentId, next || ''); };
-      const gEl = row.querySelector('.grade');
-      if (gEl) {
-        gEl.className = 'grade grade-' + gc;
-        gEl.textContent = label;
-      }
-    } else {
-      /* fallback: если строку не нашли — полная перерисовка */
-      const sy = window.scrollY || 0;
-      await App.Pages.lesson(lessonId);
-      window.scrollTo(0, sy);
-    }
+    App.Pages.lesson(lessonId);
   }
 };
 
@@ -508,17 +486,22 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     const attMap = {};
     for (const a of data.attendance) attMap[a.student_id] = a.grade;
 
-    html += `<h2>Отметки</h2><div class="card">`;
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 8px 0">`;
+    html += `<h2 style="margin:0;font-size:16px">Отметки (${(data.students || []).length})</h2>`;
+    html += `</div>`;
+    html += `<div class="card" style="padding:10px">`;
+    html += `<div class="attendance-grid">`;
     for (const s of data.students || []) {
       const grade = attMap[s.id] || null;
       const label = (grade === null || grade === '') ? '—' : grade;
       const bgStyle = grade === null ? '' : `background:${App.Grades.bgColor(grade)}`;
-      html += `<div id="att-${s.id}" class="attendance-row ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}', this)" style="${bgStyle}">
-        <div class="grade grade-${App.Grades.colorClass(grade)}">${label}</div>
-        <div style="flex:1"><div style="font-weight:500">${s.last_name} ${s.first_name}</div><div style="font-size:12px;color:#86868b">${s.middle_name || ''}</div></div>
+      const shortName = `${s.last_name} ${s.first_name ? s.first_name[0] + '.' : ''}`;
+      html += `<div class="attendance-tile ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}')" style="${bgStyle}" title="${s.last_name} ${s.first_name} ${s.middle_name || ''}">
+        <div class="tile-grade grade-${App.Grades.colorClass(grade)}">${label}</div>
+        <div class="tile-name">${shortName}</div>
       </div>`;
     }
-    html += `</div>`;
+    html += `</div></div>`;
 
     html += `<div style="display:flex;gap:8px;margin-top:8px">
       <button class="btn btn-warning btn-sm" style="flex:1" onclick="App.Pages.showLessonSubstitution(${lessonId})">🔄 Заменить</button>

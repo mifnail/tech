@@ -346,6 +346,67 @@ h2 {
 }
 
 /* Attendance & Grades */
+.attendance-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+@media (max-width: 360px) {
+  .attendance-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.attendance-tile {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+  min-height: 82px;
+  text-align: center;
+}
+
+.attendance-tile:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.attendance-tile:active {
+  transform: scale(0.96);
+}
+
+.attendance-tile .tile-grade {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 4px;
+  box-shadow: var(--shadow-sm);
+}
+
+.attendance-tile .tile-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text);
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
 .attendance-row {
   display: flex;
   align-items: center;
