@@ -140,18 +140,29 @@ App.Grades = {
     const idx = this.CYCLE.indexOf(currentGrade || '');
     const next = this.CYCLE[(idx + 1) % this.CYCLE.length];
     await App.API.post(`/api/lessons/${lessonId}/attendance`, { student_id: studentId, grade: next });
-    // Обновляем строку студентa на месте — без перерисовки всей страницы
+    /* --- Обновление строки на месте (без перерисовки всей страницы) --- */
     const row = document.getElementById('att-' + studentId);
-    if (!row) { App.Pages.lesson(lessonId); return; }
-    const gc = App.Grades.colorClass(next);
-    const label = next || '—';
-    const bg = next ? `background:${App.Grades.bgColor(next)}` : '';
-    row.style.cssText = bg;
-    row.className = 'attendance-row' + (next ? ' marked' : '');
-    row.setAttribute('onclick', `App.Grades.cycle(${lessonId}, ${studentId}, '${next}')`);
-    row.querySelector('.grade').className = 'grade grade-' + gc;
-    row.querySelector('.grade').textContent = label;
-    // Обновляем счётчик «Сдано» в заголовке, если есть
+    if (row) {
+      const gc = App.Grades.colorClass(next);
+      const label = next || '—';
+      if (next) {
+        row.style.background = App.Grades.bgColor(next);
+      } else {
+        row.style.removeProperty('background');
+      }
+      row.className = 'attendance-row' + (next ? ' marked' : '');
+      row.onclick = function() { App.Grades.cycle(lessonId, studentId, next || ''); };
+      const gEl = row.querySelector('.grade');
+      if (gEl) {
+        gEl.className = 'grade grade-' + gc;
+        gEl.textContent = label;
+      }
+    } else {
+      /* fallback: если строку не нашли — полная перерисовка */
+      const sy = window.scrollY || 0;
+      await App.Pages.lesson(lessonId);
+      window.scrollTo(0, sy);
+    }
   }
 };
 
