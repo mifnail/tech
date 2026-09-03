@@ -17,8 +17,6 @@ class Database:
             pass
         self.init_schema()
         self._migrate()
-        if self.db_path != ':memory:':
-            self.seed_default()
 
     def __enter__(self) -> 'Database':
         return self
