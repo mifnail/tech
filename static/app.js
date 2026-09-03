@@ -136,11 +136,11 @@ App.Grades = {
     const map = { '0': '#e8f5e9', 'present': '#e8f5e9', '5': '#ffebee', '4': '#e3f2fd', '3': '#fff8e1', '2': '#e0e0e0' };
     return map[grade] || '';
   },
-  async cycle(lessonId, studentId, currentGrade) {
+  async cycle(lessonId, studentId, currentGrade, rowEl) {
     const idx = this.CYCLE.indexOf(currentGrade || '');
     const next = this.CYCLE[(idx + 1) % this.CYCLE.length];
     await App.API.post(`/api/lessons/${lessonId}/attendance`, { student_id: studentId, grade: next });
-    App.Pages.lesson(lessonId);
+    App.Pages.lesson(lessonId, studentId);
   }
 };
 
@@ -443,7 +443,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
   },
 
   /* ----- Lesson page ----- */
-  async lesson(lessonId) {
+  async lesson(lessonId, scrollToStudentId) {
     App.Loading.show();
     const [data, adjacent] = await Promise.all([
       App.API.get(`/api/lessons/${lessonId}/attendance`),
@@ -491,7 +491,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       const grade = attMap[s.id] || null;
       const label = (grade === null || grade === '') ? '—' : grade;
       const bgStyle = grade === null ? '' : `background:${App.Grades.bgColor(grade)}`;
-      html += `<div class="attendance-row ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}')" style="${bgStyle}">
+      html += `<div id="att-${s.id}" class="attendance-row ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}', this)" style="${bgStyle}">
         <div class="grade grade-${App.Grades.colorClass(grade)}">${label}</div>
         <div style="flex:1"><div style="font-weight:500">${s.last_name} ${s.first_name}</div><div style="font-size:12px;color:#86868b">${s.middle_name || ''}</div></div>
       </div>`;
@@ -505,6 +505,12 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       <button class="btn btn-success" style="flex:1" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал</button>
     </div>`;
     document.getElementById('app').innerHTML = html;
+    if (scrollToStudentId) {
+      requestAnimationFrame(() => {
+        const row = document.getElementById('att-' + scrollToStudentId);
+        if (row) row.scrollIntoView({ block: 'center', behavior: 'auto' });
+      });
+    }
   },
 
   /* ----- Schedule management ----- */
