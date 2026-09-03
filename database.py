@@ -1,9 +1,42 @@
 from __future__ import annotations
 import sqlite3
 import os
+import shutil
 from typing import Optional, Sequence, Any
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'lessons.db')
+# ─────────────────────── DB path resolution ───────────────────────
+# Desktop: lessons.db рядом со скриптом (как раньше).
+# Android: ANDROID_PRIVATE/files/lessons.db (переживает обновления APK).
+# При первом запуске на Android копируем lessons.db из APK (bundle)
+# в persistent storage, чтобы данные не терялись.
+
+def _is_android() -> bool:
+    return bool(os.environ.get('ANDROID_PRIVATE') or os.environ.get('ANDROID_ARGUMENT'))
+
+def _bundled_db_path() -> str:
+    """Путь к lessons.db внутри APK (read-only, рядом со скриптом)."""
+    return os.path.join(os.path.dirname(__file__), 'lessons.db')
+
+def _persistent_db_path() -> str:
+    """Путь к persistent lessons.db (Android external storage)."""
+    private = os.environ.get('ANDROID_PRIVATE', '')
+    files_dir = os.path.join(private, 'files')
+    os.makedirs(files_dir, exist_ok=True)
+    return os.path.join(files_dir, 'lessons.db')
+
+def _resolve_db_path() -> str:
+    if _is_android():
+        persistent = _persistent_db_path()
+        bundled = _bundled_db_path()
+        if not os.path.exists(persistent):
+            # Первый запуск — копируем bundled DB (если есть) в persistent
+            if os.path.exists(bundled):
+                shutil.copy2(bundled, persistent)
+        return persistent
+    # Desktop — рядом со скриптом
+    return os.path.join(os.path.dirname(__file__), 'lessons.db')
+
+DB_PATH = _resolve_db_path()
 
 class Database:
     def __init__(self, db_path: Optional[str] = None) -> None:
