@@ -13,7 +13,7 @@ version = 0.1
 
 # webview bootstrap — встроенный Android WebView, Kivy не нужен
 # NOTE: reportlab тянет рецепт freetype с download.savannah.gnu.org, который
-# иногда отдаёт 502 — workflow повторяет сборку до 3 раз (см. build-apk.yml).
+# иногда отдаёт 502 — workflow повторяет сборку до 5 раз с backoff (см. build-apk.yml).
 requirements = python3,flask,openpyxl,reportlab
 
 orientation = portrait
