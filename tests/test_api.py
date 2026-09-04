@@ -419,6 +419,35 @@ class TestLessonsAPI:
         rv = client.get('/api/lessons/date/2099-01-01')
         assert rv.json == []
 
+    def test_create_lesson_dedup_same_pair(self, client):
+        _, sid, _ = self._setup(client)
+        rv1 = client.post('/api/lessons', json={
+            'subject_id': sid, 'actual_subject_id': sid,
+            'date': '2026-09-01', 'status': 'held', 'lesson_number': 1
+        })
+        assert rv1.status_code == 201
+        rv2 = client.post('/api/lessons', json={
+            'subject_id': sid, 'actual_subject_id': sid,
+            'date': '2026-09-01', 'status': 'held', 'lesson_number': 1
+        })
+        assert rv2.status_code == 200
+        assert rv2.json['id'] == rv1.json['id']
+        rv3 = client.post('/api/lessons', json={
+            'subject_id': sid, 'actual_subject_id': sid,
+            'date': '2026-09-01', 'status': 'held', 'lesson_number': 2
+        })
+        assert rv3.status_code == 201
+        assert rv3.json['id'] != rv1.json['id']
+
+    def test_export_csv(self, client):
+        _, sid, _ = self._setup(client)
+        rv = client.get(f'/api/export/grades/{sid}.csv')
+        assert rv.status_code == 200
+        assert 'text/csv' in rv.content_type
+        rv = client.get('/api/export/report/2026-09-01.csv')
+        assert rv.status_code == 200
+        assert 'text/csv' in rv.content_type
+
     def test_delete_lesson(self, client):
         gid, sid, student_id = self._setup(client)
         lid = get_db().add_lesson(sid, '2026-09-01', sid, 'held')

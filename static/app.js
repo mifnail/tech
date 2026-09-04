@@ -64,14 +64,29 @@ App.Download = {
   _lastBlob: null,
   _lastName: '',
   async as(name, url) {
-    const res = await fetch(url);
-    if (!res.ok) { App.UI.notify('Ошибка скачивания'); return; }
+    let res;
+    try {
+      res = await fetch(url);
+    } catch (e) {
+      App.UI.notify('Ошибка скачивания: нет связи');
+      return;
+    }
+    if (!res.ok) {
+      let msg = 'Ошибка скачивания';
+      try {
+        const j = await res.json();
+        if (j && j.error) msg = j.error;
+      } catch (e) {}
+      App.UI.notify(msg);
+      return;
+    }
     const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = name;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     this._lastBlob = blob;
     this._lastName = name;
     App.UI.notify(`Скачано: ${name}`);
@@ -171,7 +186,8 @@ App.Pages = {
     if (schedule.length) {
       html += `<h2>Расписание</h2>`;
       for (const e of schedule) {
-        const existing = lessons.filter(l => l.subject_id === e.subject_id);
+        const existing = lessons.filter(l => l.subject_id === e.subject_id
+          && (l.lesson_number == null || e.lesson_number == null || l.lesson_number === e.lesson_number));
         html += `<div class="card">
           <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
           <div class="card-sub">${e.group_name}</div>`;
@@ -268,6 +284,7 @@ App.Pages = {
     <h2>Экспорт</h2><div class="grid-2">
       <button class="btn btn-muted btn-sm" onclick="App.Download.as('report-${today.date}.pdf', '/api/export/report/${today.date}.pdf')">Отчёт (PDF)</button>
       <button class="btn btn-muted btn-sm" onclick="App.Download.as('report-${today.date}.xlsx', '/api/export/report/${today.date}.xlsx')">Отчёт (Excel)</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Download.as('report-${today.date}.csv', '/api/export/report/${today.date}.csv')">Отчёт (CSV)</button>
       <button class="btn btn-muted btn-sm" onclick="App.Download.as('lessons.ics', '/api/export/lessons.ics')">Занятия (ICS)</button>
       <button class="btn btn-muted btn-sm" onclick="App.Download.as('schedule.ics', '/api/export/schedule.ics')">Расписание (ICS)</button>
     </div>`;
@@ -385,6 +402,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       html += `<div class="grid-2" style="margin-top:8px">
         <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.pdf', '/api/export/grades/${subjectId}.pdf')">PDF</button>
         <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.xlsx', '/api/export/grades/${subjectId}.xlsx')">Excel</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.csv', '/api/export/grades/${subjectId}.csv')">CSV</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
       </div></div>`;
     }
@@ -410,7 +428,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
         const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
         html += `<div class="row" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
           <div style="flex:1">
-            <div style="font-weight:500">${App.UI.formatDate(l.date)}</div>
+            <div style="font-weight:500">${App.UI.formatDate(l.date)}${l.lesson_number != null ? ` · Занятие №${l.lesson_number}` : ''}</div>
             <div><span class="badge ${cls}">${label}</span></div>
           </div>
           <span style="color:#007aff;font-size:20px">›</span>
@@ -425,7 +443,9 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     html += `<table style="width:100%;font-size:13px;border-collapse:collapse">`;
     html += `<tr><th style="text-align:left;padding:4px;position:sticky;left:0;background:#fff">Студент</th>`;
     for (let i = 0; i < data.lessons.length; i++) {
-      html += `<th style="padding:4px;text-align:center;min-width:32px">${i + 1}</th>`;
+      const _l = data.lessons[i];
+      const _tip = `${App.UI.formatDate(_l.date)}${_l.lesson_number != null ? ` · №${_l.lesson_number}` : ''}`;
+      html += `<th style="padding:4px;text-align:center;min-width:32px"><a href="#lesson/${_l.id}" title="${_tip}" style="text-decoration:underline dotted">${i + 1}</a></th>`;
     }
     html += `</tr>`;
     for (const s of data.students) {
@@ -466,7 +486,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       : `<div style="width:28px"></div>`;
     html += `<div class="lesson-header-wrap">`;
     html += `<h1 class="lesson-header-title" title="${App.UI.escHtml(l.actual_subject_name)}">${App.UI.escHtml(l.actual_subject_name)}</h1>`;
-    html += `<div style="font-size:11px;opacity:0.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.formatDate(l.date)} · ${App.UI.escHtml(l.group_name)} ${l.status === 'cancelled' ? '· (Отменено)' : ''}</div>`;
+    html += `<div style="font-size:11px;opacity:0.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.formatDate(l.date)} · ${App.UI.escHtml(l.group_name)}${l.lesson_number != null ? ` · Занятие №${l.lesson_number}` : ''} ${l.status === 'cancelled' ? '· (Отменено)' : ''}</div>`;
     html += `</div>`;
     html += adjacent.next_id
       ? `<button class="btn btn-muted btn-sm" style="width:auto;padding:4px 10px;font-size:12px" onclick="location='#lesson/${adjacent.next_id}'">›</button>`

@@ -277,12 +277,21 @@ lessons_bp = Blueprint('lessons', __name__, url_prefix='/api/lessons')
 @require_fields('subject_id')
 def create_lesson():
     data = request.json
-    lid = get_db().add_lesson(
+    db = get_db()
+    lesson_date = data.get('date', date.today().isoformat())
+    lesson_number = data.get('lesson_number')
+    # Дедуп: двойной тап «Начать занятие» не должен плодить дубли —
+    # возвращаем уже созданное проведённое занятие за сегодня.
+    if data.get('status', 'held') == 'held' and lesson_number is not None:
+        existing = db.find_held_lesson(data['subject_id'], lesson_date, lesson_number)
+        if existing:
+            return jsonify({'id': existing['id'], 'deduped': True}), 200
+    lid = db.add_lesson(
         data['subject_id'],
-        data.get('date', date.today().isoformat()),
+        lesson_date,
         data.get('actual_subject_id'),
         data.get('status', 'held'),
-        data.get('lesson_number'))
+        lesson_number)
     return jsonify({'id': lid}), 201
 
 
@@ -402,31 +411,72 @@ from calendar_export import generate_schedule_ics, export_lessons_to_ics
 export_bp = Blueprint('export', __name__, url_prefix='/api/export')
 
 
+def _missing_deps_response(e: Exception):
+    return jsonify({'error': f'export unavailable: {e}. Rebuild APK with openpyxl+reportlab or use CSV.'}), 500
+
+
 @export_bp.route('/grades/<int:subject_id>.<fmt>')
 def download_grades(subject_id: int, fmt: str):
-    if fmt == 'pdf':
-        data = export_grades_pdf(subject_id)
-        return send_file(io.BytesIO(data), mimetype='application/pdf',
-                         as_attachment=True, download_name=f'grades_{subject_id}.pdf')
-    elif fmt == 'xlsx':
-        data = export_grades_xlsx(subject_id)
-        return send_file(io.BytesIO(data),
-                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                         as_attachment=True, download_name=f'grades_{subject_id}.xlsx')
+    try:
+        if fmt == 'pdf':
+            data = export_grades_pdf(subject_id)
+            return send_file(io.BytesIO(data), mimetype='application/pdf',
+                             as_attachment=True, download_name=f'grades_{subject_id}.pdf')
+        elif fmt == 'xlsx':
+            data = export_grades_xlsx(subject_id)
+            return send_file(io.BytesIO(data),
+                             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                             as_attachment=True, download_name=f'grades_{subject_id}.xlsx')
+        elif fmt == 'csv':
+            import csv as _csv
+            db = get_db()
+            students, lessons, grades = db.subject_gradebook(subject_id)
+            buf = io.StringIO()
+            buf.write('\ufeff')
+            w = _csv.writer(buf)
+            w.writerow(['Студент'] + [f"{l.get('date','')} №{l.get('lesson_number') or ''} (#{l['id']})" for l in lessons])
+            for s in students:
+                row = [f"{s['last_name']} {s['first_name']}"]
+                for l in lessons:
+                    row.append(grades.get(str(s['id']), {}).get(str(l['id']), ''))
+                w.writerow(row)
+            raw = buf.getvalue().encode('utf-8')
+            return send_file(io.BytesIO(raw), mimetype='text/csv',
+                             as_attachment=True, download_name=f'grades_{subject_id}.csv')
+    except RuntimeError as e:
+        return _missing_deps_response(e)
     return 'Unsupported format', 400
 
 
 @export_bp.route('/report/<date>.<fmt>')
 def download_report(date: str, fmt: str):
-    if fmt == 'pdf':
-        data = export_report_pdf(date)
-        return send_file(io.BytesIO(data), mimetype='application/pdf',
-                         as_attachment=True, download_name=f'report_{date}.pdf')
-    elif fmt == 'xlsx':
-        data = export_report_xlsx(date)
-        return send_file(io.BytesIO(data),
-                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                         as_attachment=True, download_name=f'report_{date}.xlsx')
+    try:
+        if fmt == 'pdf':
+            data = export_report_pdf(date)
+            return send_file(io.BytesIO(data), mimetype='application/pdf',
+                             as_attachment=True, download_name=f'report_{date}.pdf')
+        elif fmt == 'xlsx':
+            data = export_report_xlsx(date)
+            return send_file(io.BytesIO(data),
+                             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                             as_attachment=True, download_name=f'report_{date}.xlsx')
+        elif fmt == 'csv':
+            import csv as _csv
+            rows = get_db().daily_report(date)
+            buf = io.StringIO()
+            buf.write('\ufeff')
+            w = _csv.writer(buf)
+            w.writerow([f'Отчёт за {date}'])
+            w.writerow(['Занятие #', 'Предмет', 'Группа', 'Статус', 'Оценок', 'Пропусков'])
+            for r in rows:
+                rd = dict(r)
+                w.writerow([rd.get('id',''), rd.get('subject_name',''), rd.get('group_name',''),
+                            rd.get('status',''), rd.get('grades_count',0), rd.get('absent_count',0)])
+            raw = buf.getvalue().encode('utf-8')
+            return send_file(io.BytesIO(raw), mimetype='text/csv',
+                             as_attachment=True, download_name=f'report_{date}.csv')
+    except RuntimeError as e:
+        return _missing_deps_response(e)
     return 'Unsupported format', 400
 
 

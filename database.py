@@ -243,9 +243,9 @@ class Database:
             SELECT id, last_name, first_name, middle_name FROM students WHERE group_id = ? ORDER BY last_name, first_name
         """, (group_id,)).fetchall()]
         lessons = [dict(r) for r in self.conn.execute("""
-            SELECT l.id, l.date FROM lessons l
+            SELECT l.id, l.date, l.lesson_number FROM lessons l
             WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced')
-            ORDER BY l.date
+            ORDER BY l.date, COALESCE(l.lesson_number, 999), l.id
         """, (subject_id,)).fetchall()]
         grades = {}
         for row in self.conn.execute("""
@@ -376,8 +376,18 @@ class Database:
             LEFT JOIN subjects fs ON l.actual_subject_id = fs.id
             JOIN groups g ON ps.group_id = g.id
             WHERE l.date = ?
-            ORDER BY ps.name
+            ORDER BY COALESCE(l.lesson_number, 999), ps.name, l.id
         """, (date,)).fetchall()
+
+    def find_held_lesson(self, subject_id: int, date: str, lesson_number: Optional[int] = None) -> Optional[sqlite3.Row]:
+        """Найти уже созданное проведённое занятие, чтобы не плодить дубли по двойному тапу."""
+        if lesson_number is None:
+            return None
+        return self.conn.execute("""
+            SELECT * FROM lessons
+            WHERE subject_id = ? AND date = ? AND lesson_number = ? AND status = 'held'
+            ORDER BY id LIMIT 1
+        """, (subject_id, date, lesson_number)).fetchone()
 
     def list_lessons_for_subject(self, subject_id: int) -> Sequence[sqlite3.Row]:
         return self.conn.execute("""
@@ -387,20 +397,25 @@ class Database:
             JOIN subjects ps ON l.subject_id = ps.id
             LEFT JOIN subjects fs ON l.actual_subject_id = fs.id
             WHERE l.subject_id = ? OR l.actual_subject_id = ?
-            ORDER BY l.date DESC
+            ORDER BY l.date DESC, COALESCE(l.lesson_number, 999), l.id DESC
         """, (subject_id, subject_id)).fetchall()
 
     def get_adjacent_lessons(self, lesson_id: int) -> tuple[Optional[int], Optional[int]]:
         lesson = self.conn.execute("SELECT subject_id, date FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
         if not lesson:
             return None, None
-        prev_row = self.conn.execute("""
-            SELECT id FROM lessons WHERE subject_id = ? AND date < ? ORDER BY date DESC LIMIT 1
-        """, (lesson['subject_id'], lesson['date'])).fetchone()
-        next_row = self.conn.execute("""
-            SELECT id FROM lessons WHERE subject_id = ? AND date > ? ORDER BY date ASC LIMIT 1
-        """, (lesson['subject_id'], lesson['date'])).fetchone()
-        return (prev_row['id'] if prev_row else None, next_row['id'] if next_row else None)
+        rows = self.conn.execute("""
+            SELECT id FROM lessons WHERE subject_id = ?
+            ORDER BY date, COALESCE(lesson_number, 999), id
+        """, (lesson['subject_id'],)).fetchall()
+        ids = [r['id'] for r in rows]
+        try:
+            i = ids.index(lesson_id)
+        except ValueError:
+            return None, None
+        prev_id = ids[i - 1] if i > 0 else None
+        next_id = ids[i + 1] if i + 1 < len(ids) else None
+        return prev_id, next_id
 
     def substitute_lesson(self, lesson_id: int, new_subject_id: int) -> int:
         lesson = self.conn.execute("SELECT date, lesson_number FROM lessons WHERE id = ?", (lesson_id,)).fetchone()

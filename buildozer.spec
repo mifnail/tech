@@ -12,7 +12,7 @@ source.include_exts = py,png,jpg,html,css,js,txt,db
 version = 0.1
 
 # webview bootstrap — встроенный Android WebView, Kivy не нужен
-requirements = python3,flask
+requirements = python3,flask,openpyxl,reportlab
 
 orientation = portrait
 fullscreen = 0

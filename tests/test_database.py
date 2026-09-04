@@ -477,6 +477,28 @@ class TestLessons:
         prev, next = db.get_adjacent_lessons(999)
         assert prev is None and next is None
 
+    def test_adjacent_same_day_two_lessons(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_subject('Математика', 32, gid)
+        l1 = db.add_lesson(sid, '2026-09-01', sid, 'held', 1)
+        l2 = db.add_lesson(sid, '2026-09-01', sid, 'held', 2)
+        prev, next = db.get_adjacent_lessons(l1)
+        assert prev is None
+        assert next == l2
+        prev2, next2 = db.get_adjacent_lessons(l2)
+        assert prev2 == l1
+        assert next2 is None
+
+    def test_find_held_lesson_dedup(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_subject('Математика', 32, gid)
+        lid = db.add_lesson(sid, '2026-09-01', sid, 'held', 1)
+        found = db.find_held_lesson(sid, '2026-09-01', 1)
+        assert found is not None
+        assert found['id'] == lid
+        assert db.find_held_lesson(sid, '2026-09-01', 2) is None
+        assert db.find_held_lesson(sid, '2026-09-01', None) is None
+
     def test_delete_lesson(self, db):
         gid = db.add_group('ИС-11')
         sid = db.add_subject('Математика', 32, gid)
