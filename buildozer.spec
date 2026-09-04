@@ -34,6 +34,15 @@ android.allow_backup = 1
 android.accept_sdk_license = True
 android.ndk = 25c
 
+# Стабильная подпись: один ключ на все сборки -> обновления ставятся без конфликта.
+# Ключ лежит в репо (личное приложение, уровень доверия как у shared debug key).
+# ВАЖНО: уже установленный APK подписан другим (одноразовым debug-ключом CI),
+# поэтому нужен ОДИН ручной снос/переустановка — дальше обновления сами.
+android.release_keystore = release.keystore
+android.release_keystore_password = teachhelper
+android.release_key_password = teachhelper
+android.release_keyalias = teachhelper
+
 # webview bootstrap + порт
 p4a.bootstrap = webview
 p4a.port = 5000
