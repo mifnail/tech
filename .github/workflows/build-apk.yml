@@ -76,8 +76,13 @@ jobs:
           echo "--- Tool versions ---"
           java -version 2>&1 || true
           buildozer --version 2>&1 || true
-          echo "--- Build ---"
-          buildozer -v android debug 2>&1
+          echo "--- Build (up to 3 attempts: savannah 502 workaround) ---"
+          for attempt in 1 2 3; do
+            echo "Build attempt $attempt/3"
+            buildozer -v android debug 2>&1 && break
+            code=$?
+            if [ "$attempt" -lt 3 ]; then echo "Build failed, retrying in 30s..."; sleep 30; else exit $code; fi
+          done
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
