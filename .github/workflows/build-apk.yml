@@ -86,6 +86,13 @@ jobs:
             if [ "$attempt" -lt 5 ]; then wait_time=$((30 * attempt)); echo "Build failed, retrying in ${wait_time}s..."; sleep $wait_time; else exit $code; fi
           done
 
+      - name: Verify APK signature
+        run: |
+          ls -la bin/
+          APKSIGNER=$(find ~/.buildozer/android/platform/android-sdk/build-tools /usr/local/lib/android/sdk/build-tools -name apksigner 2>/dev/null | head -1)
+          if [ -z "$APKSIGNER" ]; then echo "apksigner not found, skipping verify"; exit 0; fi
+          "$APKSIGNER" verify --print-certs bin/*.apk
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
