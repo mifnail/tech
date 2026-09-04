@@ -1,7 +1,7 @@
 from __future__ import annotations
 import functools
 import io
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 import os
 
@@ -411,6 +411,22 @@ from calendar_export import generate_schedule_ics, export_lessons_to_ics
 export_bp = Blueprint('export', __name__, url_prefix='/api/export')
 
 
+def _build_grades_csv_bytes(db, subject_id: int) -> bytes:
+    """Ведомость предмета в CSV (UTF-8+BOM). Общее для скачивания и публикации."""
+    import csv as _csv
+    students, lessons, grades = db.subject_gradebook(subject_id)
+    buf = io.StringIO()
+    buf.write('\ufeff')
+    w = _csv.writer(buf)
+    w.writerow(['Студент'] + [f"{l.get('date','')} №{l.get('lesson_number') or ''} (#{l['id']})" for l in lessons])
+    for s in students:
+        row = [f"{s['last_name']} {s['first_name']}"]
+        for l in lessons:
+            row.append(grades.get(str(s['id']), {}).get(str(l['id']), ''))
+        w.writerow(row)
+    return buf.getvalue().encode('utf-8')
+
+
 def _missing_deps_response(e: Exception):
     return jsonify({'error': f'export unavailable: {e}. Rebuild APK with openpyxl+reportlab or use CSV.'}), 500
 
@@ -428,19 +444,7 @@ def download_grades(subject_id: int, fmt: str):
                              mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                              as_attachment=True, download_name=f'grades_{subject_id}.xlsx')
         elif fmt == 'csv':
-            import csv as _csv
-            db = get_db()
-            students, lessons, grades = db.subject_gradebook(subject_id)
-            buf = io.StringIO()
-            buf.write('\ufeff')
-            w = _csv.writer(buf)
-            w.writerow(['Студент'] + [f"{l.get('date','')} №{l.get('lesson_number') or ''} (#{l['id']})" for l in lessons])
-            for s in students:
-                row = [f"{s['last_name']} {s['first_name']}"]
-                for l in lessons:
-                    row.append(grades.get(str(s['id']), {}).get(str(l['id']), ''))
-                w.writerow(row)
-            raw = buf.getvalue().encode('utf-8')
+            raw = _build_grades_csv_bytes(get_db(), subject_id)
             return send_file(io.BytesIO(raw), mimetype='text/csv',
                              as_attachment=True, download_name=f'grades_{subject_id}.csv')
     except RuntimeError as e:
@@ -493,3 +497,124 @@ def download_schedule_ics():
 
 
 app.register_blueprint(export_bp)
+
+
+# ---- Publish to Yandex Disk ----
+from yandex_publish import (
+    upload_and_publish, check_token as yandex_check_token,
+    YandexError, YandexAuthError, YandexNetworkError,
+)
+
+publish_bp = Blueprint('publish', __name__, url_prefix='/api/publish')
+
+
+def _publish_file_for_subject(db, subject_id: int):
+    """(ext, bytes): XLSX если есть openpyxl, иначе CSV."""
+    try:
+        return 'xlsx', export_grades_xlsx(subject_id, db)
+    except RuntimeError:
+        return 'csv', _build_grades_csv_bytes(db, subject_id)
+
+
+@publish_bp.route('/<int:subject_id>', methods=['POST'])
+def publish_subject(subject_id: int):
+    db = get_db()
+    if not db.subject_summary(subject_id):
+        return jsonify({'error': 'subject not found'}), 404
+    token = db.get_setting('yandex_token')
+    if not token:
+        return jsonify({'error': 'no yandex token. Add it in Settings.'}), 400
+    folder = (db.get_setting('yandex_folder') or '/TeachHelper').rstrip('/') or '/TeachHelper'
+    ext, data = _publish_file_for_subject(db, subject_id)
+    remote = f"{folder}/vedomost-{subject_id}.{ext}"
+    try:
+        url = upload_and_publish(token, remote, data)
+    except YandexAuthError as e:
+        return jsonify({'error': str(e)}), 401
+    except YandexNetworkError as e:
+        db.set_setting(f'publish_pending_{subject_id}', '1')
+        return jsonify({'error': str(e)}), 502
+    except YandexError as e:
+        return jsonify({'error': str(e)}), 500
+    db.set_setting(f'publish_url_{subject_id}', url)
+    db.set_setting(f'publish_time_{subject_id}', datetime.now().isoformat(timespec='minutes'))
+    db.set_setting(f'publish_pending_{subject_id}', None)
+    return jsonify({'ok': True, 'url': url})
+
+
+@publish_bp.route('/<int:subject_id>/touch', methods=['POST'])
+def touch_publish(subject_id: int):
+    """Пометить ведомость как требующую публикации (после проставления оценки)."""
+    get_db().set_setting(f'publish_pending_{subject_id}', '1')
+    return jsonify({'ok': True})
+
+
+@publish_bp.route('/<int:subject_id>/status', methods=['GET'])
+def publish_status(subject_id: int):
+    db = get_db()
+    return jsonify({
+        'url': db.get_setting(f'publish_url_{subject_id}'),
+        'time': db.get_setting(f'publish_time_{subject_id}'),
+        'pending': db.get_setting(f'publish_pending_{subject_id}') == '1',
+        'has_token': bool(db.get_setting('yandex_token')),
+    })
+
+
+app.register_blueprint(publish_bp)
+
+
+# ---- Yandex settings ----
+settings_bp = Blueprint('settings', __name__, url_prefix='/api/settings')
+
+
+@settings_bp.route('/yandex', methods=['GET'])
+def yandex_settings():
+    db = get_db()
+    return jsonify({
+        'has_token': bool(db.get_setting('yandex_token')),
+        'folder': db.get_setting('yandex_folder') or '/TeachHelper',
+    })
+
+
+@settings_bp.route('/yandex', methods=['POST'])
+def save_yandex_settings():
+    data = request.json or {}
+    db = get_db()
+    if 'token' in data:
+        token = (data['token'] or '').strip()
+        db.set_setting('yandex_token', token or None)
+    if 'folder' in data:
+        folder = (data['folder'] or '').strip() or '/TeachHelper'
+        if not folder.startswith('/'):
+            folder = '/' + folder
+        db.set_setting('yandex_folder', folder)
+    return jsonify({
+        'ok': True,
+        'has_token': bool(db.get_setting('yandex_token')),
+        'folder': db.get_setting('yandex_folder') or '/TeachHelper',
+    })
+
+
+@settings_bp.route('/yandex', methods=['DELETE'])
+def delete_yandex_token():
+    get_db().set_setting('yandex_token', None)
+    return jsonify({'ok': True})
+
+
+@settings_bp.route('/yandex/check', methods=['GET'])
+def check_yandex():
+    token = get_db().get_setting('yandex_token')
+    if not token:
+        return jsonify({'error': 'no yandex token'}), 400
+    try:
+        info = yandex_check_token(token)
+    except YandexAuthError as e:
+        return jsonify({'error': str(e)}), 401
+    except YandexNetworkError as e:
+        return jsonify({'error': str(e)}), 502
+    except YandexError as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True, 'info': {k: info.get(k) for k in ('total_space', 'used_space') if k in info}})
+
+
+app.register_blueprint(settings_bp)

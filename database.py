@@ -105,6 +105,11 @@ class Database:
                 UNIQUE(lesson_id, student_id)
             );
 
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_students_group ON students(group_id);
             CREATE INDEX IF NOT EXISTS idx_subjects_group ON subjects(group_id);
             CREATE INDEX IF NOT EXISTS idx_schedule_subject ON schedule(subject_id);
@@ -130,6 +135,22 @@ class Database:
             self.conn.commit()
         except sqlite3.OperationalError:
             pass
+
+    def get_setting(self, key: str) -> Optional[str]:
+        """Прочитать настройку (токен Яндекса, ссылки публикаций). Нет — None."""
+        row = self.conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return row['value'] if row else None
+
+    def set_setting(self, key: str, value: Optional[str]) -> None:
+        """Сохранить настройку; value=None — удалить."""
+        if value is None:
+            self.conn.execute("DELETE FROM app_settings WHERE key = ?", (key,))
+        else:
+            self.conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value))
+        self.conn.commit()
 
     def get_free_subject_id(self, group_id: int) -> int:
         row = self.conn.execute("SELECT id FROM subjects WHERE name = 'СВОБОДНО' AND group_id = ?", (group_id,)).fetchone()

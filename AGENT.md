@@ -45,6 +45,7 @@ groups (id, name)
 - `schedule_file.py` — парсер schedule.txt.
 - `calendar_export.py` — выгрузка в .ics.
 - `report_export.py` — Excel/PDF отчёты.
+- `yandex_publish.py` — публикация ведомостей на Яндекс Диск (только stdlib).
 - `crash_reporter.py` — обработка исключений.
 - `seed_db.py` — тестовая БД.
 - `tests/` — автотесты (pytest).
