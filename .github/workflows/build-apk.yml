@@ -101,7 +101,7 @@ jobs:
           if [ -z "$APKSIGNER" ]; then echo "apksigner not found"; exit 1; fi
           IN=$(ls bin/*-release-unsigned.apk | head -1)
           OUT=bin/teachhelper4-release-signed.apk
-          "$APKSIGNER" sign --ks android-release.jks --ks-pass:teachhelper --key-pass:teachhelper --ks-key-alias teachhelper --out "$OUT" "$IN"
+          "$APKSIGNER" sign --ks android-release.jks --ks-pass pass:teachhelper --key-pass pass:teachhelper --ks-key-alias teachhelper --out "$OUT" "$IN"
           rm -f "$IN"
           ls -la bin/
 
