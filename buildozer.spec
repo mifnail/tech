@@ -12,6 +12,8 @@ source.include_exts = py,png,jpg,html,css,js,txt,db
 version = 0.1
 
 # webview bootstrap — встроенный Android WebView, Kivy не нужен
+# NOTE: reportlab тянет рецепт freetype с download.savannah.gnu.org, который
+# иногда отдаёт 502 — workflow повторяет сборку до 3 раз (см. build-apk.yml).
 requirements = python3,flask,openpyxl,reportlab
 
 orientation = portrait
