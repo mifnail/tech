@@ -95,6 +95,16 @@ jobs:
             if [ "$attempt" -lt 5 ]; then wait_time=$((30 * attempt)); echo "Build failed, retrying in ${wait_time}s..."; sleep $wait_time; else exit $code; fi
           done
 
+      - name: Sign release APK (stable key)
+        run: |
+          APKSIGNER=$(find ~/.buildozer/android/platform/android-sdk/build-tools /usr/local/lib/android/sdk/build-tools -name apksigner 2>/dev/null | head -1)
+          if [ -z "$APKSIGNER" ]; then echo "apksigner not found"; exit 1; fi
+          IN=$(ls bin/*-release-unsigned.apk | head -1)
+          OUT=bin/teachhelper4-release-signed.apk
+          "$APKSIGNER" sign --ks android-release.jks --ks-pass:teachhelper --key-pass:teachhelper --ks-key-alias teachhelper --out "$OUT" "$IN"
+          rm -f "$IN"
+          ls -la bin/
+
       - name: Verify APK signature
         run: |
           ls -la bin/
