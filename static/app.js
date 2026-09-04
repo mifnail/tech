@@ -189,15 +189,17 @@ App.Publish = {
         prompt('Скопируйте ссылку:', st.url);
       }
     } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+  },
+  /* Best-effort публикация при закрытии (в WebView срабатывает не всегда). */
+  flush() {
+    if (!this._timer || !this._lastSubject) return;
+    if (!navigator.sendBeacon) { this._timer = null; return; }
+    try { navigator.sendBeacon(`/api/publish/${this._lastSubject}`, '{}'); } catch (e) {}
+    this._timer = null;
   }
 };
 
-window.addEventListener('pagehide', () => {
-  /* Best-effort публикация при закрытии (в WebView срабатывает не всегда). */
-  if (App.Publish._timer && App.Publish._lastSubject && navigator.sendBeacon) {
-    try { navigator.sendBeacon(`/api/publish/${App.Publish._lastSubject}`, '{}'); } catch (e) {}
-  }
-};
+window.addEventListener('pagehide', () => { App.Publish.flush(); });
 
 App.Router = {
   init() {
