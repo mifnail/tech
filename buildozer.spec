@@ -12,9 +12,11 @@ source.include_exts = py,png,jpg,html,css,js,txt,db
 version = 0.1
 
 # webview bootstrap — встроенный Android WebView, Kivy не нужен
-# NOTE: reportlab тянет рецепт freetype с download.savannah.gnu.org, который
-# иногда отдаёт 502 — workflow повторяет сборку до 5 раз с backoff (см. build-apk.yml).
-requirements = python3,flask,openpyxl,reportlab
+# NOTE: reportlab НЕ включаем: его рецепт тянет freetype с download.savannah.gnu.org,
+# который лежит (502/timeout) и роняет сборку. PDF-экспорт на устройстве отдаёт
+# понятную ошибку, рабочие форматы — XLSX (openpyxl, pure-python) и CSV.
+# workflow повторяет сборку до 5 раз с backoff (см. build-apk.yml).
+requirements = python3,flask,openpyxl
 
 orientation = portrait
 fullscreen = 0
