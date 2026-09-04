@@ -42,6 +42,8 @@ android.release_keystore = release.keystore
 android.release_keystore_password = teachhelper
 android.release_key_password = teachhelper
 android.release_keyalias = teachhelper
+# APK, а не AAB: файл нужен для ручной установки на устройство (.aab сюда не грузится)
+android.release_artifact = apk
 
 # webview bootstrap + порт
 p4a.bootstrap = webview
