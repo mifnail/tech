@@ -460,24 +460,21 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     const l = data.lesson;
     App.state.lessonSubjectId = l.subject_id;
 
-    html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">`;
+    html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">`;
     html += adjacent.prev_id
-      ? `<button class="btn btn-muted btn-sm" style="width:auto;padding:8px 16px" onclick="location='#lesson/${adjacent.prev_id}'">‹</button>`
-      : `<div style="width:44px"></div>`;
-    html += `<div style="flex:1;text-align:center">`;
-    html += `<h1 style="margin:0">${l.actual_subject_name}</h1>`;
+      ? `<button class="btn btn-muted btn-sm" style="width:auto;padding:4px 10px;font-size:12px" onclick="location='#lesson/${adjacent.prev_id}'">‹</button>`
+      : `<div style="width:28px"></div>`;
+    html += `<div class="lesson-header-wrap">`;
+    html += `<h1 class="lesson-header-title" title="${App.UI.escHtml(l.actual_subject_name)}">${App.UI.escHtml(l.actual_subject_name)}</h1>`;
+    html += `<div style="font-size:11px;opacity:0.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.formatDate(l.date)} · ${App.UI.escHtml(l.group_name)} ${l.status === 'cancelled' ? '· (Отменено)' : ''}</div>`;
     html += `</div>`;
     html += adjacent.next_id
-      ? `<button class="btn btn-muted btn-sm" style="width:auto;padding:8px 16px" onclick="location='#lesson/${adjacent.next_id}'">›</button>`
-      : `<div style="width:44px"></div>`;
+      ? `<button class="btn btn-muted btn-sm" style="width:auto;padding:4px 10px;font-size:12px" onclick="location='#lesson/${adjacent.next_id}'">›</button>`
+      : `<div style="width:28px"></div>`;
     html += `</div>`;
 
-    html += `<div class="card">
-      <div class="card-sub">${App.UI.formatDate(l.date)} · ${l.group_name}</div>
-      ${l.status === 'cancelled' ? `<div class="badge badge-cancelled">Отменено</div>` : `<span class="badge badge-held">Проведено</span>`}
-    </div>`;
-
     if (l.status === 'cancelled') {
+      html += `<div class="card"><div class="badge badge-cancelled" style="margin-bottom:8px">Занятие отменено</div></div>`;
       html += `<button class="btn btn-muted btn-sm" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал</button>`;
       document.getElementById('app').innerHTML = html;
       return;
@@ -486,30 +483,29 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     const attMap = {};
     for (const a of data.attendance) attMap[a.student_id] = a.grade;
 
-    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 8px 0">`;
-    html += `<h2 style="margin:0;font-size:16px">Отметки (${(data.students || []).length})</h2>`;
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 6px 0">`;
+    html += `<h2 style="margin:0;font-size:14px">Отметки (${(data.students || []).length})</h2>`;
     html += `</div>`;
-    html += `<div class="card" style="padding:10px">`;
-    html += `<div class="attendance-grid">`;
+    html += `<div class="card" style="padding:8px">`;
+    html += `<div class="attendance-list-2col">`;
     for (const s of data.students || []) {
       const grade = attMap[s.id] || null;
-      const markLabel = (grade === null || grade === '') ? '' : grade;
+      const label = (grade === null || grade === '') ? '—' : grade;
       const bgStyle = grade === null ? '' : `background:${App.Grades.bgColor(grade)}`;
-      html += `<div class="attendance-tile ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}')" style="${bgStyle}" title="${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name || '')} ${App.UI.escHtml(s.middle_name || '')}">
-        <div class="tile-mark">${markLabel}</div>
-        <div class="tile-fio">
-          <span class="tile-surname">${App.UI.escHtml(s.last_name || '')}</span>
-          <span class="tile-name">${s.first_name ? App.UI.escHtml(s.first_name[0] + '.') : ''}</span>
-        </div>
+      const fullName = `${s.last_name} ${s.first_name || ''} ${s.middle_name || ''}`.trim();
+      const displayName = `${s.last_name} ${s.first_name ? s.first_name[0] + '.' : ''}`;
+      html += `<div class="att-row-2col ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}')" style="${bgStyle}" title="${App.UI.escHtml(fullName)}">
+        <div class="att-name">${App.UI.escHtml(displayName)}</div>
+        <div class="att-badge grade-${App.Grades.colorClass(grade)}">${label}</div>
       </div>`;
     }
     html += `</div></div>`;
 
-    html += `<div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-warning btn-sm" style="flex:1" onclick="App.Pages.showLessonSubstitution(${lessonId})">🔄 Заменить</button>
-      <button class="btn btn-danger btn-sm" style="flex:1" onclick="App.Pages.confirmCancelLesson(${lessonId})">✕ Отменить</button>
-      <button class="btn btn-danger btn-sm" style="flex:1" onclick="App.Pages.confirmDeleteLesson(${lessonId})">🗑 Удалить</button>
-      <button class="btn btn-success" style="flex:1" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал</button>
+    html += `<div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn btn-warning btn-sm" style="flex:1;padding:6px 4px;font-size:11px" onclick="App.Pages.showLessonSubstitution(${lessonId})">🔄 Замена</button>
+      <button class="btn btn-danger btn-sm" style="flex:1;padding:6px 4px;font-size:11px" onclick="App.Pages.confirmCancelLesson(${lessonId})">✕ Отмена</button>
+      <button class="btn btn-danger btn-sm" style="flex:1;padding:6px 4px;font-size:11px" onclick="App.Pages.confirmDeleteLesson(${lessonId})">🗑 Удал.</button>
+      <button class="btn btn-success btn-sm" style="flex:1;padding:6px 4px;font-size:11px" onclick="location='#subject/${App.state.lessonSubjectId}'">📖 Журнал</button>
     </div>`;
     document.getElementById('app').innerHTML = html;
   },
