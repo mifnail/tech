@@ -65,6 +65,15 @@ jobs:
           path: ~/.buildozer
           key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
 
+      - name: Prepare JKS keystore for signing
+        run: |
+          keytool -importkeystore -srckeystore release.keystore -srcstoretype PKCS12 \
+            -srcstorepass teachhelper -srcalias teachhelper \
+            -destkeystore android-release.jks -deststoretype JKS \
+            -deststorepass teachhelper -destkeypass teachhelper \
+            -destalias teachhelper -noprompt
+          ls -la android-release.jks
+
       - name: Install Buildozer and Cython
         run: |
           # Swap: избежать OOM при компиляции Kivy под Android
