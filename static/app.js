@@ -493,12 +493,14 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     html += `<div class="attendance-grid">`;
     for (const s of data.students || []) {
       const grade = attMap[s.id] || null;
-      const label = (grade === null || grade === '') ? '—' : grade;
+      const markLabel = (grade === null || grade === '') ? '' : grade;
       const bgStyle = grade === null ? '' : `background:${App.Grades.bgColor(grade)}`;
-      const shortName = `${s.last_name} ${s.first_name ? s.first_name[0] + '.' : ''}`;
-      html += `<div class="attendance-tile ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}')" style="${bgStyle}" title="${s.last_name} ${s.first_name} ${s.middle_name || ''}">
-        <div class="tile-grade grade-${App.Grades.colorClass(grade)}">${label}</div>
-        <div class="tile-name">${shortName}</div>
+      html += `<div class="attendance-tile ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}')" style="${bgStyle}" title="${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name || '')} ${App.UI.escHtml(s.middle_name || '')}">
+        <div class="tile-mark">${markLabel}</div>
+        <div class="tile-fio">
+          <span class="tile-surname">${App.UI.escHtml(s.last_name || '')}</span>
+          <span class="tile-name">${s.first_name ? App.UI.escHtml(s.first_name[0] + '.') : ''}</span>
+        </div>
       </div>`;
     }
     html += `</div></div>`;
