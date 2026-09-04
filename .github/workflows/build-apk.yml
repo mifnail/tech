@@ -77,10 +77,10 @@ jobs:
           echo "--- Tool versions ---"
           java -version 2>&1 || true
           buildozer --version 2>&1 || true
-          echo "--- Build (up to 5 attempts with backoff: savannah 502 workaround) ---"
+          echo "--- Build release (up to 5 attempts with backoff: savannah 502 workaround) ---"
           for attempt in 1 2 3 4 5; do
             echo "Build attempt $attempt/5"
-            buildozer -v android debug 2>&1 && break
+            buildozer -v android release 2>&1 && break
             code=$?
             if [ "$attempt" -lt 5 ]; then wait_time=$((30 * attempt)); echo "Build failed, retrying in ${wait_time}s..."; sleep $wait_time; else exit $code; fi
           done
