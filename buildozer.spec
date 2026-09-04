@@ -38,7 +38,9 @@ android.ndk = 25c
 # Ключ лежит в репо (личное приложение, уровень доверия как у shared debug key).
 # ВАЖНО: уже установленный APK подписан другим (одноразовым debug-ключом CI),
 # поэтому нужен ОДИН ручной снос/переустановка — дальше обновления сами.
-android.release_keystore = release.keystore
+# JKS собирается в CI из release.keystore (keytool -importkeystore):
+# apksigner через buildozer надёжно работает именно с JKS.
+android.release_keystore = android-release.jks
 android.release_keystore_password = teachhelper
 android.release_key_password = teachhelper
 android.release_keyalias = teachhelper
