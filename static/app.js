@@ -78,11 +78,12 @@ App.Download = {
   async as(name, url) {
     const m = url.match(/\/api\/export\/(grades\/\d+|report\/[0-9-]+)\.xlsx$/);
     if (m && !(navigator.share && navigator.canShare)) {
-      // APK без Web Share: сохраняем системно в Загрузки, файл виден в «Файлах».
+      // APK без Web Share: сохранить в Загрузки и сразу открыть шторку.
       try {
-        const r = await App.API.post(`/api/export/${m[1]}/to-downloads`);
-        App.UI.notify('Сохранено в Загрузки: ' + (r.path || name));
-      } catch (e) { App.UI.notify((e && e.error) || 'Ошибка сохранения'); }
+        const r = await App.API.post(`/api/export/${m[1]}/share`);
+        if (r.shared === false) App.UI.notify('Сохранено в Загрузки: ' + (r.path || name) + '. Поделиться не вышло: ' + (r.error || ''));
+        else App.UI.notify('Открываю отправку…');
+      } catch (e) { App.UI.notify((e && e.error) || 'Ошибка отправки'); }
       return;
     }
     let res;

@@ -376,3 +376,51 @@ class TestNativeSave:
         rv = client.post(f'/api/export/grades/{sid}/to-downloads')
         assert rv.status_code == 200, rv.json
         assert os.path.exists(os.path.join(str(tmp_path), 'Downloads', f'grades_{sid}.xlsx'))
+
+
+class TestNativeShare:
+    def _setup_subject(self, client):
+        gid = client.post('/api/groups', json={'name': 'Г'}).json['id']
+        return client.post('/api/subjects', json={
+            'name': 'П', 'total_hours': 1, 'group_id': gid}).json['id']
+
+    def test_share_ok(self, client, monkeypatch):
+        sid = self._setup_subject(client)
+        seen = {}
+        monkeypatch.setattr(_api_module, '_save_to_downloads_full',
+                            lambda data, fn, mt: ('/fake/' + fn, 'content://fake/1'))
+        monkeypatch.setattr(_api_module, '_share_file',
+                            lambda uri, mt: seen.update(uri=uri, mt=mt))
+        rv = client.post(f'/api/export/grades/{sid}/share')
+        assert rv.status_code == 200, rv.json
+        assert rv.json == {'ok': True, 'path': f'/fake/grades_{sid}.xlsx', 'shared': True}
+        assert seen['uri'] == 'content://fake/1'
+
+    def test_share_report_ok(self, client, monkeypatch):
+        monkeypatch.setattr(_api_module, '_save_to_downloads_full',
+                            lambda data, fn, mt: ('/fake/' + fn, 'content://fake/2'))
+        monkeypatch.setattr(_api_module, '_share_file', lambda uri, mt: None)
+        rv = client.post('/api/export/report/2026-09-01/share')
+        assert rv.status_code == 200
+        assert rv.json['shared'] is True
+
+    def test_share_desktop_no_uri(self, client, monkeypatch):
+        sid = self._setup_subject(client)
+        monkeypatch.setattr(_api_module, '_save_to_downloads_full',
+                            lambda data, fn, mt: ('/fake/' + fn, None))
+        rv = client.post(f'/api/export/grades/{sid}/share')
+        assert rv.status_code == 400
+
+    def test_share_intent_fail_keeps_file(self, client, monkeypatch):
+        sid = self._setup_subject(client)
+        monkeypatch.setattr(_api_module, '_save_to_downloads_full',
+                            lambda data, fn, mt: ('/fake/' + fn, 'content://fake/3'))
+
+        def boom(uri, mt):
+            raise RuntimeError('no activity')
+
+        monkeypatch.setattr(_api_module, '_share_file', boom)
+        rv = client.post(f'/api/export/grades/{sid}/share')
+        assert rv.status_code == 200
+        assert rv.json['shared'] is False
+        assert rv.json['path'] == f'/fake/grades_{sid}.xlsx'

@@ -528,8 +528,8 @@ app.register_blueprint(bot_bp)
 XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 
-def _android_resolver():
-    """ContentResolver без привязки к имени activity.
+def _android_context():
+    """Контекст приложения без привязки к имени activity.
 
     org.kivy.android.PythonActivity есть не во всех бутстрапах (в webview
     его нет — ClassNotFoundException), поэтому сначала пробуем его,
@@ -539,19 +539,26 @@ def _android_resolver():
     err1 = None
     try:
         PythonActivity = autoclass('org.kivy.android.PythonActivity')
-        return PythonActivity.mActivity.getContentResolver()
+        return PythonActivity.mActivity
     except Exception as e1:
         err1 = e1
     try:
         ActivityThread = autoclass('android.app.ActivityThread')
         app = ActivityThread.currentActivityThread().getApplication()
-        return app.getContentResolver()
+        if app is None:
+            raise RuntimeError('application context is None')
+        return app
     except Exception as e2:
         raise RuntimeError(f'no android context ({err1}; {e2})')
 
 
-def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
-    """Сохранить файл в общую папку Загрузки. Возвращает путь для показа."""
+def _android_resolver():
+    """ContentResolver через контекст приложения."""
+    return _android_context().getContentResolver()
+
+
+def _save_to_downloads_full(data: bytes, filename: str, mimetype: str):
+    """Сохранить в Загрузки. Возвращает (путь для показа, content-URI или None)."""
     try:
         from jnius import autoclass  # noqa — только на Android
     except ImportError:
@@ -561,7 +568,7 @@ def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
         path = os.path.join(home, 'Downloads', filename)
         with open(path, 'wb') as f:
             f.write(data)
-        return path
+        return path, None
     # Вложенные Java-классы в pyjnius — только через '$', точка даёт
     # "has no attribute" (это и роняло экспорт на устройстве).
     BuildVersion = autoclass('android.os.Build$VERSION')
@@ -585,14 +592,37 @@ def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
             out.write(data)
         finally:
             out.close()
-        return 'Download/' + filename
+        return 'Download/' + filename, uri.toString()
     path = '/sdcard/Download/' + filename
     try:
         with open(path, 'wb') as f:
             f.write(data)
-        return path
+        return path, None
     except OSError as e:
         raise RuntimeError(f'cannot write {path}: {e}')
+
+
+def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
+    """Совместимость: только путь (используют to-downloads и тесты)."""
+    path, _ = _save_to_downloads_full(data, filename, mimetype)
+    return path
+
+
+def _share_file(uri_string: str, mimetype: str) -> None:
+    """Открыть системную шторку «Поделиться» с файлом (только Android)."""
+    from jnius import autoclass
+    Intent = autoclass('android.content.Intent')
+    Uri = autoclass('android.net.Uri')
+    ctx = _android_context()
+    uri = Uri.parse(uri_string)
+    intent = Intent()
+    intent.setAction(Intent.ACTION_SEND)
+    intent.setType(mimetype)
+    intent.putExtra(Intent.EXTRA_STREAM, uri)
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    chooser = Intent.createChooser(intent, 'Поделиться ведомостью')
+    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    ctx.startActivity(chooser)
 
 
 @export_bp.route('/grades/<int:subject_id>/to-downloads', methods=['POST'])
@@ -619,6 +649,39 @@ def save_report_to_downloads(date: str):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     return jsonify({'ok': True, 'path': where})
+
+
+def _save_and_share(data: bytes, filename: str):
+    """Сохранить в Загрузки и открыть шторку. Файл остаётся, даже если шаринг не вышел."""
+    try:
+        where, uri = _save_to_downloads_full(data, filename, XLSX_MIME)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    if uri is None:
+        return jsonify({'error': 'share available only on Android'}), 400
+    try:
+        _share_file(uri, XLSX_MIME)
+    except Exception as e:
+        return jsonify({'ok': True, 'path': where, 'shared': False, 'error': str(e)})
+    return jsonify({'ok': True, 'path': where, 'shared': True})
+
+
+@export_bp.route('/grades/<int:subject_id>/share', methods=['POST'])
+def share_grades(subject_id: int):
+    try:
+        data = export_grades_xlsx(subject_id, get_db())
+    except RuntimeError as e:
+        return _missing_deps_response(e)
+    return _save_and_share(data, f'grades_{subject_id}.xlsx')
+
+
+@export_bp.route('/report/<date>/share', methods=['POST'])
+def share_report(date: str):
+    try:
+        data = export_report_xlsx(date, get_db())
+    except RuntimeError as e:
+        return _missing_deps_response(e)
+    return _save_and_share(data, f'report_{date}.xlsx')
 
 
 app.register_blueprint(export_bp)
