@@ -540,9 +540,16 @@ def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
         with open(path, 'wb') as f:
             f.write(data)
         return path
-    Build = autoclass('android.os.Build')
-    if int(Build.VERSION.SDK_INT) >= 29:
-        MediaStore = autoclass('android.provider.MediaStore')
+    # Вложенные Java-классы в pyjnius — только через '$', точка даёт
+    # "has no attribute" (это и роняло экспорт на устройстве).
+    BuildVersion = autoclass('android.os.Build$VERSION')
+    if int(BuildVersion.SDK_INT) >= 29:
+        try:
+            Downloads = autoclass('android.provider.MediaStore$Downloads')
+            collection = Downloads.getContentUri('external')
+        except Exception:
+            Files = autoclass('android.provider.MediaStore$Files')
+            collection = Files.getContentUri('external')
         ContentValues = autoclass('android.content.ContentValues')
         PythonActivity = autoclass('org.kivy.android.PythonActivity')
         resolver = PythonActivity.mActivity.getContentResolver()
@@ -551,7 +558,6 @@ def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
         values.put('_display_name', filename)
         values.put('mime_type', mimetype)
         values.put('relative_path', 'Download/')
-        collection = MediaStore.Downloads.getContentUri('external')
         uri = resolver.insert(collection, values)
         out = resolver.openOutputStream(uri)
         try:
