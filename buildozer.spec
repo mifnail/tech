@@ -17,7 +17,8 @@ version = 0.1
 # понятную ошибку, рабочие форматы — XLSX (openpyxl, pure-python) и CSV.
 # workflow повторяет сборку до 5 раз с backoff (см. build-apk.yml).
 # et_xmlfile: на устройстве openpyxl падает без него (No module named 'et_xmlfile').
-requirements = python3,flask,openpyxl,et_xmlfile
+# certifi: CA-сертификаты для HTTPS из приложения (Telegram Bot API).
+requirements = python3,flask,openpyxl,et_xmlfile,certifi
 
 orientation = portrait
 fullscreen = 0

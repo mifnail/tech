@@ -156,7 +156,8 @@ App.Nav = {
   render() {
     const pages = [
       { hash: '#home', label: 'Дом' },
-      { hash: '#schedule', label: 'Расп.' }
+      { hash: '#schedule', label: 'Расп.' },
+      { hash: '#settings', label: 'Настр.' }
     ];
     const active = location.hash.split('?')[0] || '#home';
     return `<div class="nav">${
@@ -205,6 +206,7 @@ App.Router = {
     else if (hash.startsWith('#subject/')) App.Pages.subject(hash.split('/')[1]);
     else if (hash.startsWith('#lesson/')) App.Pages.lesson(hash.split('/')[1]);
     else if (hash.startsWith('#students/')) App.Pages.students(hash.split('/')[1]);
+    else if (hash.startsWith('#settings')) App.Pages.settings();
     else App.Pages.home();
   }
 };
@@ -598,6 +600,11 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       App.API.get(`/api/students?group_id=${groupId}`),
       App.API.get('/api/groups')
     ]);
+    let botBound = {};
+    try {
+      const links = await App.API.get('/api/bot/links');
+      for (const l of links) botBound[l.student_id] = true;
+    } catch (e) {}
     const group = groups.find(g => g.id == groupId);
 
     let html = App.Nav.render();
@@ -606,7 +613,8 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     html += `<div class="card">`;
     for (const s of students) {
       html += `<div class="row">
-        <div style="flex:1"><span style="font-weight:500">${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</span> ${App.UI.escHtml(s.middle_name || '')}</div>
+        <div style="flex:1"><span style="font-weight:500">${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</span> ${App.UI.escHtml(s.middle_name || '')}${botBound[s.id] ? ' <span title="Привязан к Telegram-боту">📱</span>' : ''}</div>
+        ${botBound[s.id] ? `<button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.unbindBot(${s.id})">Отвязать</button>` : ''}
         <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditStudent(${s.id}, '${App.UI.escJs(s.last_name)}', '${App.UI.escJs(s.first_name)}', '${App.UI.escJs(s.middle_name || '')}')">✎</button>
         <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.confirmDeleteStudent(${s.id})">✕</button>
       </div>`;
@@ -648,6 +656,57 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
 };
 
 /* ===== Dialog / Action helpers (on window for onclick access) ===== */
+
+App.Pages.settings = async function() {
+  App.Loading.show();
+  let st = { has_token: false, enabled: false };
+  try { st = await App.API.get('/api/settings/bot'); } catch (e) {}
+  let html = App.Nav.render();
+  html += `<h1>Настройки</h1>`;
+  html += `<div class="card"><div class="card-title">Telegram-бот «Мои оценки»</div>`;
+  html += `<div class="card-sub" style="margin-bottom:8px">Студенты смотрят оценки через бота, пока приложение открыто. Токен: <a href="https://t.me/BotFather" target="_blank">BotFather → /newbot</a></div>`;
+  html += `<div style="font-size:12px;margin-bottom:4px">Статус: ${st.has_token ? 'токен есть' : 'нет токена'}${st.enabled ? ' · включён' : ''}</div>`;
+  html += `<input id="set-btoken" type="password" placeholder="Токен бота" autocomplete="off">`;
+  html += `<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px"><input id="set-benabled" type="checkbox" ${st.enabled ? 'checked' : ''} style="width:auto"> Включить бота</label>`;
+  html += `<div class="grid-2" style="margin-top:8px">
+    <button class="btn btn-primary btn-sm" onclick="App.Pages.saveBot()">Сохранить</button>
+    <button class="btn btn-muted btn-sm" onclick="App.Pages.checkBot()">Проверить</button>
+  </div>`;
+  if (st.has_token) html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.dropBot()">Отключить</button>`;
+  html += `</div>`;
+  document.getElementById('app').innerHTML = html;
+};
+
+App.Pages.saveBot = async function() {
+  const token = document.getElementById('set-btoken').value;
+  const enabled = document.getElementById('set-benabled').checked;
+  const body = { enabled };
+  if (token) body.token = token;
+  try { await App.API.post('/api/settings/bot', body); App.UI.notify('Сохранено. Перезапусти приложение для старта бота.'); }
+  catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+  App.Pages.settings();
+};
+
+App.Pages.checkBot = async function() {
+  try {
+    const r = await App.API.get('/api/settings/bot/check');
+    App.UI.notify(r.username ? ('Бот доступен: @' + r.username) : 'Бот доступен');
+  } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+};
+
+App.Pages.dropBot = async function() {
+  try { await App.API._delete('/api/settings/bot'); App.UI.notify('Отключено'); }
+  catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+  App.Pages.settings();
+};
+
+App.Pages.unbindBot = async function(studentId) {
+  try {
+    await App.API._delete(`/api/bot/links/by-student/${studentId}`);
+    App.UI.notify('Чат отвязан');
+  } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+  App.Router.handle();
+};
 
 App.Pages.startLesson = async function(subjectId, lessonNumber) {
   const result = await App.API.post('/api/lessons', {

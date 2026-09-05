@@ -110,6 +110,12 @@ class Database:
                 value TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS bot_links (
+                chat_id INTEGER PRIMARY KEY,
+                student_id INTEGER NOT NULL UNIQUE REFERENCES students(id) ON DELETE CASCADE,
+                created TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_students_group ON students(group_id);
             CREATE INDEX IF NOT EXISTS idx_subjects_group ON subjects(group_id);
             CREATE INDEX IF NOT EXISTS idx_schedule_subject ON schedule(subject_id);
@@ -151,6 +157,62 @@ class Database:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value))
         self.conn.commit()
+
+    # ---- Telegram bot: привязка чат <-> студент (строго 1:1) ----
+    def find_students_by_surname(self, query: str) -> Sequence[sqlite3.Row]:
+        """Поиск по 'Фамилия' или 'Фамилия Имя' (префикс, без учёта регистра).
+
+        Регистр снимаем в Python (casefold): встроенный LOWER() в SQLite
+        работает только с ASCII и кириллицу не сравнивает.
+        """
+        parts = (query or '').split()
+        if not parts:
+            return []
+        last = parts[0].casefold()
+        first = parts[1].casefold() if len(parts) > 1 else None
+        out = []
+        for r in self.conn.execute(
+                "SELECT * FROM students ORDER BY last_name, first_name").fetchall():
+            if not r['last_name'].casefold().startswith(last):
+                continue
+            if first is not None and not r['first_name'].casefold().startswith(first):
+                continue
+            out.append(r)
+            if len(out) >= 10:
+                break
+        return out
+
+    def bind_chat(self, chat_id: int, student_id: int) -> None:
+        self.conn.execute(
+            "INSERT INTO bot_links (chat_id, student_id) VALUES (?, ?)",
+            (chat_id, student_id))
+        self.conn.commit()
+
+    def unbind_chat(self, chat_id: int) -> None:
+        self.conn.execute("DELETE FROM bot_links WHERE chat_id = ?", (chat_id,))
+        self.conn.commit()
+
+    def unbind_student(self, student_id: int) -> None:
+        self.conn.execute("DELETE FROM bot_links WHERE student_id = ?", (student_id,))
+        self.conn.commit()
+
+    def get_chat_link(self, chat_id: int) -> Optional[int]:
+        row = self.conn.execute(
+            "SELECT student_id FROM bot_links WHERE chat_id = ?", (chat_id,)).fetchone()
+        return row['student_id'] if row else None
+
+    def get_student_chat(self, student_id: int) -> Optional[int]:
+        row = self.conn.execute(
+            "SELECT chat_id FROM bot_links WHERE student_id = ?", (student_id,)).fetchone()
+        return row['chat_id'] if row else None
+
+    def list_bot_links(self) -> Sequence[sqlite3.Row]:
+        return self.conn.execute("""
+            SELECT bl.chat_id, bl.student_id, bl.created,
+                   s.last_name, s.first_name, s.middle_name
+            FROM bot_links bl JOIN students s ON s.id = bl.student_id
+            ORDER BY s.last_name, s.first_name
+        """).fetchall()
 
     def get_free_subject_id(self, group_id: int) -> int:
         row = self.conn.execute("SELECT id FROM subjects WHERE name = 'СВОБОДНО' AND group_id = ?", (group_id,)).fetchone()
@@ -371,6 +433,10 @@ class Database:
             JOIN groups g ON ps.group_id = g.id
             WHERE l.id = ?
         """, (lesson_id,)).fetchone()
+
+    def get_student(self, student_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM students WHERE id = ?", (student_id,)).fetchone()
 
     def set_lesson_status(self, lesson_id: int, status: str) -> None:
         self.conn.execute("UPDATE lessons SET status = ? WHERE id = ?", (status, lesson_id))

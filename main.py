@@ -21,4 +21,38 @@ if __name__ == '__main__':
             webbrowser.open(f'http://127.0.0.1:{port}')
         threading.Thread(target=open_browser, daemon=True).start()
 
+    _maybe_start_bot(debug)
+
     app.run(host=host, port=port, debug=debug)
+
+
+def _maybe_start_bot(debug: bool) -> None:
+    """Telegram polling в фоне, если задан токен и бот включён.
+
+    Без тяжёлых импортов на верхнем уровне: всё лениво и в try/except,
+    сервер никогда не падает из-за бота. При debug-релоадере стартуем
+    только в дочернем процессе (WERKZEUG_RUN_MAIN).
+    """
+    if os.environ.get('TEACHHELPER_NO_BOT') == '1':
+        return
+    if debug and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        return
+    try:
+        from database import Database
+        db = Database()
+        try:
+            token = db.get_setting('bot_token')
+            enabled = db.get_setting('bot_enabled')
+        finally:
+            db.close()
+    except Exception as e:
+        print('bot not started (db):', e)
+        return
+    if not token or enabled != '1':
+        return
+    try:
+        import tgbot
+        tgbot.start_polling(token)
+        print('telegram bot polling started')
+    except Exception as e:
+        print('bot not started:', e)

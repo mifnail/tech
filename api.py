@@ -451,3 +451,85 @@ def download_schedule_ics():
 
 
 app.register_blueprint(export_bp)
+
+
+# ---- Telegram bot settings ----
+settings_bp = Blueprint('settings', __name__, url_prefix='/api/settings')
+
+
+@settings_bp.route('/bot', methods=['GET'])
+def bot_settings():
+    db = get_db()
+    return jsonify({
+        'has_token': bool(db.get_setting('bot_token')),
+        'enabled': db.get_setting('bot_enabled') == '1',
+    })
+
+
+@settings_bp.route('/bot', methods=['POST'])
+def save_bot_settings():
+    data = request.json or {}
+    db = get_db()
+    if 'token' in data:
+        token = (data['token'] or '').strip()
+        db.set_setting('bot_token', token or None)
+    if 'enabled' in data:
+        v = data['enabled']
+        db.set_setting('bot_enabled', '1' if v in (True, 1, '1', 'on', 'true') else '0')
+    return jsonify({
+        'ok': True,
+        'has_token': bool(db.get_setting('bot_token')),
+        'enabled': db.get_setting('bot_enabled') == '1',
+    })
+
+
+@settings_bp.route('/bot', methods=['DELETE'])
+def delete_bot_settings():
+    db = get_db()
+    db.set_setting('bot_token', None)
+    db.set_setting('bot_enabled', '0')
+    return jsonify({'ok': True})
+
+
+@settings_bp.route('/bot/check', methods=['GET'])
+def check_bot():
+    import urllib.request
+    import urllib.error
+    import json as _json
+    token = get_db().get_setting('bot_token')
+    if not token:
+        return jsonify({'error': 'no bot token'}), 400
+    try:
+        req = urllib.request.Request(
+            f'https://api.telegram.org/bot{token}/getMe', method='GET')
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = _json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError:
+        return jsonify({'error': 'bad bot token (401)'}), 401
+    except urllib.error.URLError as e:
+        return jsonify({'error': f'no connection: {e.reason}'}), 502
+    if not body.get('ok'):
+        return jsonify({'error': 'bad bot token'}), 401
+    info = body.get('result', {})
+    return jsonify({'ok': True, 'username': info.get('username', '')})
+
+
+app.register_blueprint(settings_bp)
+
+
+# ---- Telegram bot chat links ----
+bot_bp = Blueprint('bot', __name__, url_prefix='/api/bot')
+
+
+@bot_bp.route('/links', methods=['GET'])
+def bot_links():
+    return jsonify([dict(r) for r in get_db().list_bot_links()])
+
+
+@bot_bp.route('/links/by-student/<int:student_id>', methods=['DELETE'])
+def bot_unbind_student(student_id: int):
+    get_db().unbind_student(student_id)
+    return jsonify({'ok': True})
+
+
+app.register_blueprint(bot_bp)
