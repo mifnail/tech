@@ -63,6 +63,13 @@ jobs:
         with:
           path: ~/.buildozer
           key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-buildozer-
+
+      - name: Set version from run number
+        run: |
+          sed -i -E "s/^version = .*/version = 0.${{ github.run_number }}/" buildozer.spec
+          grep "^version = " buildozer.spec
 
       - name: Prepare JKS keystore for signing
         run: |
