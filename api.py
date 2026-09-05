@@ -557,6 +557,29 @@ def _android_resolver():
     return _android_context().getContentResolver()
 
 
+def _mediastore_delete_name(resolver, collection, filename: str) -> None:
+    """Удалить старые записи с таким именем. Best-effort: любые ошибки молча."""
+    try:
+        cursor = resolver.query(collection, None, '_display_name=?', [filename], None)
+        if cursor is None:
+            return
+        try:
+            idx = cursor.getColumnIndex('_id')
+            if idx < 0:
+                return
+            from jnius import autoclass as _ac
+            ContentUris = _ac('android.content.ContentUris')
+            while cursor.moveToNext():
+                try:
+                    resolver.delete(ContentUris.withAppendedId(collection, cursor.getLong(idx)), None, None)
+                except Exception:
+                    pass
+        finally:
+            cursor.close()
+    except Exception:
+        pass
+
+
 def _save_to_downloads_full(data: bytes, filename: str, mimetype: str):
     """Сохранить в Загрузки. Возвращает (путь для показа, content-URI или None)."""
     try:
@@ -581,12 +604,23 @@ def _save_to_downloads_full(data: bytes, filename: str, mimetype: str):
             collection = Files.getContentUri('external')
         ContentValues = autoclass('android.content.ContentValues')
         resolver = _android_resolver()
+        # Старый файл с таким именем мешает insert ("Failed to build unique file").
+        _mediastore_delete_name(resolver, collection, filename)
         values = ContentValues()
         values.put('title', filename)
         values.put('_display_name', filename)
         values.put('mime_type', mimetype)
         values.put('relative_path', 'Download/')
-        uri = resolver.insert(collection, values)
+        try:
+            uri = resolver.insert(collection, values)
+        except Exception:
+            # Имя всё ещё занято — дописываем метку времени, уже не collide.
+            import time as _time
+            stem, dot, ext = filename.rpartition('.')
+            filename = f"{stem}_{int(_time.time())}.{ext}" if dot else f"{filename}_{int(_time.time())}"
+            values.put('title', filename)
+            values.put('_display_name', filename)
+            uri = resolver.insert(collection, values)
         out = resolver.openOutputStream(uri)
         try:
             out.write(data)
@@ -671,7 +705,7 @@ def _save_and_share(data: bytes, filename: str):
     if uri is None:
         return jsonify({'error': 'share available only on Android'}), 400
     try:
-        _share_file(uri, XLSX_MIME, filename)
+        _share_file(uri, XLSX_MIME, where.rsplit('/', 1)[-1])
     except Exception as e:
         return jsonify({'ok': True, 'path': where, 'shared': False, 'error': str(e)})
     return jsonify({'ok': True, 'path': where, 'shared': True})
