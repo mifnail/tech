@@ -125,8 +125,7 @@ App.Nav = {
   render() {
     const pages = [
       { hash: '#home', label: 'Дом' },
-      { hash: '#schedule', label: 'Расп.' },
-      { hash: '#settings', label: 'Настр.' }
+      { hash: '#schedule', label: 'Расп.' }
     ];
     const active = location.hash.split('?')[0] || '#home';
     return `<div class="nav">${
@@ -156,50 +155,9 @@ App.Grades = {
     const idx = this.CYCLE.indexOf(currentGrade || '');
     const next = this.CYCLE[(idx + 1) % this.CYCLE.length];
     await App.API.post(`/api/lessons/${lessonId}/attendance`, { student_id: studentId, grade: next });
-    App.Publish.afterGrade(App.state.lessonSubjectId);
     App.Pages.lesson(lessonId);
   }
 };
-
-App.Publish = {
-  _timer: null,
-  _lastSubject: null,
-  /* Вызывается после проставления оценки: метит pending и публикует с дебаунсом. */
-  afterGrade(subjectId) {
-    if (!subjectId) return;
-    this._lastSubject = subjectId;
-    App.API.post(`/api/publish/${subjectId}/touch`).catch(() => {});
-    clearTimeout(this._timer);
-    this._timer = setTimeout(() => this.now(subjectId), 10000);
-  },
-  async now(subjectId) {
-    this._timer = null;
-    try { await App.API.post(`/api/publish/${subjectId}`); }
-    catch (e) { /* pending остаётся — видно на странице предмета */ }
-    if ((location.hash || '').startsWith('#subject/')) App.Router.handle();
-  },
-  async copyLink(subjectId) {
-    try {
-      const st = await App.API.get(`/api/publish/${subjectId}/status`);
-      if (!st.url) { App.UI.notify('Сначала опубликуйте'); return; }
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(st.url);
-        App.UI.notify('Ссылка скопирована');
-      } else {
-        prompt('Скопируйте ссылку:', st.url);
-      }
-    } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
-  },
-  /* Best-effort публикация при закрытии (в WebView срабатывает не всегда). */
-  flush() {
-    if (!this._timer || !this._lastSubject) return;
-    if (!navigator.sendBeacon) { this._timer = null; return; }
-    try { navigator.sendBeacon(`/api/publish/${this._lastSubject}`, '{}'); } catch (e) {}
-    this._timer = null;
-  }
-};
-
-window.addEventListener('pagehide', () => { App.Publish.flush(); });
 
 App.Router = {
   init() {
@@ -216,7 +174,6 @@ App.Router = {
     else if (hash.startsWith('#subject/')) App.Pages.subject(hash.split('/')[1]);
     else if (hash.startsWith('#lesson/')) App.Pages.lesson(hash.split('/')[1]);
     else if (hash.startsWith('#students/')) App.Pages.students(hash.split('/')[1]);
-    else if (hash.startsWith('#settings')) App.Pages.settings();
     else App.Pages.home();
   }
 };
@@ -428,8 +385,6 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       App.API.get(`/api/reports/average/${subjectId}`)
     ]);
     const allLessons = await App.API.get(`/api/subjects/${subjectId}/lessons`);
-    let pub = null;
-    try { pub = await App.API.get(`/api/publish/${subjectId}/status`); } catch (e) {}
 
     let html = App.Nav.render();
     if (data.summary) {
@@ -449,19 +404,6 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
         <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.xlsx', '/api/export/grades/${subjectId}.xlsx')">Excel</button>
         <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.csv', '/api/export/grades/${subjectId}.csv')">CSV</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
-      </div></div>`;
-      html += `<div class="card" style="margin-top:8px"><div class="card-title">Ссылка для студентов</div>`;
-      if (pub && pub.url) {
-        html += `<div style="font-size:12px;word-break:break-all;margin-bottom:4px"><a href="${pub.url}" target="_blank">${App.UI.escHtml(pub.url)}</a></div>`;
-        html += `<div class="card-sub">Опубликовано: ${App.UI.escHtml(pub.time || '')}${pub.pending ? ' · есть неопубликованные изменения' : ''}</div>`;
-      } else if (pub && !pub.has_token) {
-        html += `<div class="card-sub">Подключите Яндекс Диск в <a href="#settings">настройках</a></div>`;
-      } else {
-        html += `<div class="card-sub">${pub && pub.pending ? 'Ожидает публикации…' : 'Ещё не опубликовано'}</div>`;
-      }
-      html += `<div class="grid-2" style="margin-top:8px">
-        <button class="btn btn-primary btn-sm" onclick="App.Publish.now(${subjectId})">Опубликовать</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Publish.copyLink(${subjectId})">Скопировать ссылку</button>
       </div></div>`;
     }
 
@@ -681,47 +623,6 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
 };
 
 /* ===== Dialog / Action helpers (on window for onclick access) ===== */
-
-App.Pages.settings = async function() {
-  App.Loading.show();
-  let st = { has_token: false, folder: '/TeachHelper' };
-  try { st = await App.API.get('/api/settings/yandex'); } catch (e) {}
-  let html = App.Nav.render();
-  html += `<h1>Настройки</h1>`;
-  html += `<div class="card"><div class="card-title">Яндекс Диск</div>`;
-  html += `<div class="card-sub" style="margin-bottom:8px">Ведомости публикуются на <b>ваш</b> Диск. Токен: <a href="https://oauth.yandex.ru" target="_blank">oauth.yandex.ru</a></div>`;
-  html += `<div style="font-size:12px;margin-bottom:4px">Статус: ${st.has_token ? 'подключено' : 'не подключено'}</div>`;
-  html += `<input id="set-ytoken" type="password" placeholder="OAuth-токен" autocomplete="off">`;
-  html += `<input id="set-yfolder" type="text" value="${App.UI.escHtml(st.folder || '/TeachHelper')}" placeholder="/TeachHelper" style="margin-top:8px">`;
-  html += `<div class="grid-2" style="margin-top:8px">
-    <button class="btn btn-primary btn-sm" onclick="App.Pages.saveYandex()">Сохранить</button>
-    <button class="btn btn-muted btn-sm" onclick="App.Pages.checkYandex()">Проверить</button>
-  </div>`;
-  if (st.has_token) html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.dropYandex()">Отключить</button>`;
-  html += `</div>`;
-  document.getElementById('app').innerHTML = html;
-};
-
-App.Pages.saveYandex = async function() {
-  const token = document.getElementById('set-ytoken').value;
-  const folder = document.getElementById('set-yfolder').value;
-  const body = { folder };
-  if (token) body.token = token;
-  try { await App.API.post('/api/settings/yandex', body); App.UI.notify('Сохранено'); }
-  catch (e) { App.UI.notify(e.error || 'Ошибка'); }
-  App.Pages.settings();
-};
-
-App.Pages.checkYandex = async function() {
-  try { await App.API.get('/api/settings/yandex/check'); App.UI.notify('Диск доступен'); }
-  catch (e) { App.UI.notify(e.error || 'Ошибка'); }
-};
-
-App.Pages.dropYandex = async function() {
-  try { await App.API._delete('/api/settings/yandex'); App.UI.notify('Отключено'); }
-  catch (e) { App.UI.notify(e.error || 'Ошибка'); }
-  App.Pages.settings();
-};
 
 App.Pages.startLesson = async function(subjectId, lessonNumber) {
   const result = await App.API.post('/api/lessons', {

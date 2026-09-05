@@ -111,7 +111,8 @@ def _build_xlsx(title: str, headers: list[str], rows: list[list[str]]) -> bytes:
         raise RuntimeError("openpyxl not installed")
     wb = Workbook()
     ws = wb.active
-    ws.title = title[:31]
+    safe = title.replace(':', ' -').replace('\\', ' ').replace('/', ' ').replace('?', '').replace('*', '').replace('[', '(').replace(']', ')')
+    ws.title = safe[:31]
     ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=14)
     header_row = 3
     for ci, h in enumerate(headers, 1):
