@@ -528,6 +528,28 @@ app.register_blueprint(bot_bp)
 XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 
+def _android_resolver():
+    """ContentResolver без привязки к имени activity.
+
+    org.kivy.android.PythonActivity есть не во всех бутстрапах (в webview
+    его нет — ClassNotFoundException), поэтому сначала пробуем его,
+    затем ActivityThread (фреймворк, всегда на месте).
+    """
+    from jnius import autoclass
+    err1 = None
+    try:
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        return PythonActivity.mActivity.getContentResolver()
+    except Exception as e1:
+        err1 = e1
+    try:
+        ActivityThread = autoclass('android.app.ActivityThread')
+        app = ActivityThread.currentActivityThread().getApplication()
+        return app.getContentResolver()
+    except Exception as e2:
+        raise RuntimeError(f'no android context ({err1}; {e2})')
+
+
 def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
     """Сохранить файл в общую папку Загрузки. Возвращает путь для показа."""
     try:
@@ -551,8 +573,7 @@ def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
             Files = autoclass('android.provider.MediaStore$Files')
             collection = Files.getContentUri('external')
         ContentValues = autoclass('android.content.ContentValues')
-        PythonActivity = autoclass('org.kivy.android.PythonActivity')
-        resolver = PythonActivity.mActivity.getContentResolver()
+        resolver = _android_resolver()
         values = ContentValues()
         values.put('title', filename)
         values.put('_display_name', filename)
