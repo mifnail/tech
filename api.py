@@ -608,17 +608,28 @@ def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
     return path
 
 
-def _share_file(uri_string: str, mimetype: str) -> None:
-    """Открыть системную шторку «Поделиться» с файлом (только Android)."""
+def _share_file(uri_string: str, mimetype: str, label: str = 'vedomost') -> None:
+    """Открыть системную шторку «Поделиться» с файлом (только Android).
+
+    putExtra(EXTRA_STREAM, uri) напрямую не едет: pyjnius выбирает
+    перегрузку (String, String) и падает. Поэтому основной механизм —
+    ClipData (стандарт с API 16), putExtra пробуем best-effort.
+    """
     from jnius import autoclass
     Intent = autoclass('android.content.Intent')
     Uri = autoclass('android.net.Uri')
+    ClipData = autoclass('android.content.ClipData')
     ctx = _android_context()
     uri = Uri.parse(uri_string)
     intent = Intent()
     intent.setAction(Intent.ACTION_SEND)
     intent.setType(mimetype)
-    intent.putExtra(Intent.EXTRA_STREAM, uri)
+    try:
+        intent.putExtra(Intent.EXTRA_STREAM, uri)
+    except Exception:
+        pass
+    clip = ClipData.newUri(ctx.getContentResolver(), label, uri)
+    intent.setClipData(clip)
     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     chooser = Intent.createChooser(intent, 'Поделиться ведомостью')
     chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -660,7 +671,7 @@ def _save_and_share(data: bytes, filename: str):
     if uri is None:
         return jsonify({'error': 'share available only on Android'}), 400
     try:
-        _share_file(uri, XLSX_MIME)
+        _share_file(uri, XLSX_MIME, filename)
     except Exception as e:
         return jsonify({'ok': True, 'path': where, 'shared': False, 'error': str(e)})
     return jsonify({'ok': True, 'path': where, 'shared': True})

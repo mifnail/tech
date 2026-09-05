@@ -390,7 +390,7 @@ class TestNativeShare:
         monkeypatch.setattr(_api_module, '_save_to_downloads_full',
                             lambda data, fn, mt: ('/fake/' + fn, 'content://fake/1'))
         monkeypatch.setattr(_api_module, '_share_file',
-                            lambda uri, mt: seen.update(uri=uri, mt=mt))
+                            lambda uri, mt, label=None: seen.update(uri=uri, mt=mt))
         rv = client.post(f'/api/export/grades/{sid}/share')
         assert rv.status_code == 200, rv.json
         assert rv.json == {'ok': True, 'path': f'/fake/grades_{sid}.xlsx', 'shared': True}
@@ -399,7 +399,7 @@ class TestNativeShare:
     def test_share_report_ok(self, client, monkeypatch):
         monkeypatch.setattr(_api_module, '_save_to_downloads_full',
                             lambda data, fn, mt: ('/fake/' + fn, 'content://fake/2'))
-        monkeypatch.setattr(_api_module, '_share_file', lambda uri, mt: None)
+        monkeypatch.setattr(_api_module, '_share_file', lambda uri, mt, label=None: None)
         rv = client.post('/api/export/report/2026-09-01/share')
         assert rv.status_code == 200
         assert rv.json['shared'] is True
@@ -416,7 +416,7 @@ class TestNativeShare:
         monkeypatch.setattr(_api_module, '_save_to_downloads_full',
                             lambda data, fn, mt: ('/fake/' + fn, 'content://fake/3'))
 
-        def boom(uri, mt):
+        def boom(uri, mt, label=None):
             raise RuntimeError('no activity')
 
         monkeypatch.setattr(_api_module, '_share_file', boom)
