@@ -16,7 +16,8 @@ version = 0.1
 # который лежит (502/timeout) и роняет сборку. PDF-экспорт на устройстве отдаёт
 # понятную ошибку, рабочие форматы — XLSX (openpyxl, pure-python) и CSV.
 # workflow повторяет сборку до 5 раз с backoff (см. build-apk.yml).
-requirements = python3,flask,openpyxl
+# et_xmlfile: на устройстве openpyxl падает без него (No module named 'et_xmlfile').
+requirements = python3,flask,openpyxl,et_xmlfile
 
 orientation = portrait
 fullscreen = 0
