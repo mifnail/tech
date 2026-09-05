@@ -433,67 +433,38 @@ def _missing_deps_response(e: Exception):
 
 @export_bp.route('/grades/<int:subject_id>.<fmt>')
 def download_grades(subject_id: int, fmt: str):
+    if fmt != 'xlsx':
+        return 'Only xlsx is enabled', 400
     try:
-        if fmt == 'pdf':
-            data = export_grades_pdf(subject_id)
-            return send_file(io.BytesIO(data), mimetype='application/pdf',
-                             as_attachment=True, download_name=f'grades_{subject_id}.pdf')
-        elif fmt == 'xlsx':
-            data = export_grades_xlsx(subject_id)
-            return send_file(io.BytesIO(data),
-                             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                             as_attachment=True, download_name=f'grades_{subject_id}.xlsx')
-        elif fmt == 'csv':
-            raw = _build_grades_csv_bytes(get_db(), subject_id)
-            return send_file(io.BytesIO(raw), mimetype='text/csv',
-                             as_attachment=True, download_name=f'grades_{subject_id}.csv')
+        data = export_grades_xlsx(subject_id, get_db())
+        return send_file(io.BytesIO(data),
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                         as_attachment=True, download_name=f'grades_{subject_id}.xlsx')
     except RuntimeError as e:
         return _missing_deps_response(e)
-    return 'Unsupported format', 400
 
 
 @export_bp.route('/report/<date>.<fmt>')
 def download_report(date: str, fmt: str):
+    if fmt != 'xlsx':
+        return 'Only xlsx is enabled', 400
     try:
-        if fmt == 'pdf':
-            data = export_report_pdf(date)
-            return send_file(io.BytesIO(data), mimetype='application/pdf',
-                             as_attachment=True, download_name=f'report_{date}.pdf')
-        elif fmt == 'xlsx':
-            data = export_report_xlsx(date)
-            return send_file(io.BytesIO(data),
-                             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                             as_attachment=True, download_name=f'report_{date}.xlsx')
-        elif fmt == 'csv':
-            import csv as _csv
-            rows = get_db().daily_report(date)
-            buf = io.StringIO()
-            buf.write('\ufeff')
-            w = _csv.writer(buf)
-            w.writerow([f'Отчёт за {date}'])
-            w.writerow(['Занятие #', 'Предмет', 'Группа', 'Статус', 'Оценок', 'Пропусков'])
-            for r in rows:
-                rd = dict(r)
-                w.writerow([rd.get('id',''), rd.get('subject_name',''), rd.get('group_name',''),
-                            rd.get('status',''), rd.get('grades_count',0), rd.get('absent_count',0)])
-            raw = buf.getvalue().encode('utf-8')
-            return send_file(io.BytesIO(raw), mimetype='text/csv',
-                             as_attachment=True, download_name=f'report_{date}.csv')
+        data = export_report_xlsx(date, get_db())
+        return send_file(io.BytesIO(data),
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                         as_attachment=True, download_name=f'report_{date}.xlsx')
     except RuntimeError as e:
         return _missing_deps_response(e)
-    return 'Unsupported format', 400
 
 
 @export_bp.route('/lessons.ics')
 def download_lessons_ics():
-    return Response(export_lessons_to_ics(), mimetype='text/calendar',
-                    headers={'Content-Disposition': 'attachment; filename=lessons.ics'})
+    return 'Only xlsx is enabled', 400
 
 
 @export_bp.route('/schedule.ics')
 def download_schedule_ics():
-    return Response(generate_schedule_ics(), mimetype='text/calendar',
-                    headers={'Content-Disposition': 'attachment; filename=schedule.ics'})
+    return 'Only xlsx is enabled', 400
 
 
 app.register_blueprint(export_bp)

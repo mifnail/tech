@@ -136,12 +136,17 @@ def _build_xlsx(title: str, headers: list[str], rows: list[list[str]]) -> bytes:
 
 
 def export_grades_xlsx(subject_id: int, db: Optional[Database] = None) -> bytes:
-    """Gradebook as Excel, returns bytes."""
+    """Gradebook as Excel, returns bytes. Заголовки: номер + дата."""
     db = _ensure_db(db)
     summary = db.subject_summary(subject_id)
     subj_name = dict(summary)['name'] if summary else f'Предмет #{subject_id}'
     students, lessons, grades = db.subject_gradebook(subject_id)
-    headers = ['Студент'] + [str(i + 1) for i in range(len(lessons))]
+    hdr = []
+    for i, l in enumerate(lessons):
+        d = l.get('date') or ''
+        d2 = f"{d[8:10]}.{d[5:7]}.{d[:4]}" if len(d) >= 10 else d
+        hdr.append(f"{i + 1} {d2}".strip() if d2 else str(i + 1))
+    headers = ['Студент'] + hdr
     rows = []
     for s in students:
         row = [f"{s['last_name']} {s['first_name']}"]

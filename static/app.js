@@ -282,11 +282,7 @@ App.Pages = {
       <button class="btn btn-muted" style="flex:1" onclick="App.Pages.showAddGroup()">+ Группа</button>
     </div>
     <h2>Экспорт</h2><div class="grid-2">
-      <button class="btn btn-muted btn-sm" onclick="App.Download.as('report-${today.date}.pdf', '/api/export/report/${today.date}.pdf')">Отчёт (PDF)</button>
       <button class="btn btn-muted btn-sm" onclick="App.Download.as('report-${today.date}.xlsx', '/api/export/report/${today.date}.xlsx')">Отчёт (Excel)</button>
-      <button class="btn btn-muted btn-sm" onclick="App.Download.as('report-${today.date}.csv', '/api/export/report/${today.date}.csv')">Отчёт (CSV)</button>
-      <button class="btn btn-muted btn-sm" onclick="App.Download.as('lessons.ics', '/api/export/lessons.ics')">Занятия (ICS)</button>
-      <button class="btn btn-muted btn-sm" onclick="App.Download.as('schedule.ics', '/api/export/schedule.ics')">Расписание (ICS)</button>
     </div>`;
 
     document.getElementById('app').innerHTML = html;
@@ -400,9 +396,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
       <div class="card-sub" style="margin-top:8px">Группа: ${s.group_name}</div>`;
       html += `<div class="grid-2" style="margin-top:8px">
-        <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.pdf', '/api/export/grades/${subjectId}.pdf')">PDF</button>
         <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.xlsx', '/api/export/grades/${subjectId}.xlsx')">Excel</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.csv', '/api/export/grades/${subjectId}.csv')">CSV</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
       </div></div>`;
     }

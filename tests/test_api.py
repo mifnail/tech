@@ -441,12 +441,15 @@ class TestLessonsAPI:
 
     def test_export_csv(self, client):
         _, sid, _ = self._setup(client)
+        # CSV/PDF отключены, оставлен только xlsx
         rv = client.get(f'/api/export/grades/{sid}.csv')
-        assert rv.status_code == 200
-        assert 'text/csv' in rv.content_type
+        assert rv.status_code == 400
         rv = client.get('/api/export/report/2026-09-01.csv')
+        assert rv.status_code == 400
+        # xlsx остаётся рабочим
+        rv = client.get(f'/api/export/grades/{sid}.xlsx')
         assert rv.status_code == 200
-        assert 'text/csv' in rv.content_type
+        assert 'spreadsheetml.sheet' in rv.content_type
 
     def test_delete_lesson(self, client):
         gid, sid, student_id = self._setup(client)
