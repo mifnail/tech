@@ -11,11 +11,25 @@
 from __future__ import annotations
 
 import json
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
 
 API = 'https://cloud-api.yandex.net/v1/disk'
+
+def _ssl_ctx():
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        try:
+            return ssl.create_default_context()
+        except Exception:
+            return ssl._create_unverified_context()
+
+_CTX = _ssl_ctx()
+_UNVERIFIED_CTX = ssl._create_unverified_context()
 
 
 class YandexError(Exception):
@@ -30,17 +44,23 @@ class YandexNetworkError(YandexError):
     """Нет связи (DNS/timeout/сеть)."""
 
 
+def _open(req, *, timeout=30, urlopen=None, ctx=None):
+    if urlopen is not None:
+        return urlopen(req, timeout=timeout)
+    if ctx is not None:
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+    return urllib.request.urlopen(req, timeout=timeout, context=_CTX)
+
 def _call(method: str, url: str, token: str, data: bytes | None = None,
           content_type: str | None = None, urlopen=None) -> dict:
     """Один HTTP-вызов к Disk API. urlopen инжектится ради тестов."""
-    opener = urlopen or urllib.request.urlopen
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header('Authorization', f'OAuth {token}')
     req.add_header('Accept', 'application/json')
     if content_type:
         req.add_header('Content-Type', content_type)
     try:
-        with opener(req, timeout=30) as resp:
+        with _open(req, timeout=30, urlopen=urlopen) as resp:
             raw = resp.read()
             if not raw:
                 return {}
@@ -57,6 +77,20 @@ def _call(method: str, url: str, token: str, data: bytes | None = None,
             raise YandexError('disk conflict (409)')
         raise YandexError(f'yandex api error: HTTP {e.code}')
     except urllib.error.URLError as e:
+        reason = str(e.reason)
+        # На Android часто нет системных CA — пробуем без проверки сертификата
+        if 'CERTIFICATE_VERIFY_FAILED' in reason and urlopen is None:
+            try:
+                with _open(req, timeout=30, urlopen=None, ctx=_UNVERIFIED_CTX) as resp:
+                    raw = resp.read()
+                    if not raw:
+                        return {}
+                    try:
+                        return json.loads(raw.decode('utf-8'))
+                    except ValueError:
+                        return {}
+            except Exception as e2:
+                raise YandexNetworkError(f'no connection: {e2}')
         raise YandexNetworkError(f'no connection: {e.reason}')
 
 
