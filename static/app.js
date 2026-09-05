@@ -93,16 +93,35 @@ App.Download = {
       return;
     }
     const blob = await res.blob();
+    this._lastBlob = blob;
+    this._lastName = name;
+    // На Android WebView <a download> часто молча ничего не сохраняет,
+    // поэтому сразу пробуем системный шаринг — файл можно отправить.
+    if (await this._tryShare(name, blob)) return;
+    // Фолбэк: классическое скачивание + ручная кнопка «Поделиться».
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = name;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
-    this._lastBlob = blob;
-    this._lastName = name;
     if (navigator.share) this._showShare(name, blob);
     else App.UI.notify(`Скачано: ${name}`);
+  },
+  async _tryShare(name, blob) {
+    try {
+      if (!navigator.share || !navigator.canShare) return false;
+      const file = new File([blob], name, { type: blob.type });
+      if (!navigator.canShare({ files: [file] })) return false;
+      await navigator.share({ files: [file], title: name });
+      App.UI.notify(`Отправлено: ${name}`);
+      return true;
+    } catch (e) {
+      // AbortError (закрыл шторку) — тоже считаем завершённым, чтобы не дублировать.
+      if (e && e.name === 'AbortError') { App.UI.notify('Отправка отменена'); return true; }
+      // NotAllowedError и прочие (нет жеста после fetch) — ручной фолбэк с кнопкой.
+      return false;
+    }
   },
   _showShare(name, blob) {
     App.UI.showPopup(`
