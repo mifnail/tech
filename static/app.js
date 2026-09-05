@@ -1,3 +1,15 @@
+/* Диагностика на устройстве: любая необработанная ошибка видна прямо в UI. */
+window.addEventListener('error', function(e) {
+  try {
+    if (document.querySelector('.err-overlay')) return;
+    var d = document.createElement('div');
+    d.className = 'err-overlay';
+    d.setAttribute('style', 'position:fixed;top:8px;left:8px;right:8px;z-index:9999;background:#7f1d1d;color:#fff;padding:10px 12px;border-radius:8px;font-size:12px;word-break:break-word');
+    d.textContent = 'Ошибка: ' + (e.message || 'unknown error');
+    (document.getElementById('app') || document.body).prepend(d);
+  } catch (_) {}
+});
+
 const App = {
   state: { lessonSubjectId: null }
 };
@@ -89,8 +101,8 @@ App.Download = {
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     this._lastBlob = blob;
     this._lastName = name;
-    App.UI.notify(`Скачано: ${name}`);
-    this._showShare(name, blob);
+    if (navigator.share) this._showShare(name, blob);
+    else App.UI.notify(`Скачано: ${name}`);
   },
   _showShare(name, blob) {
     App.UI.showPopup(`
@@ -189,8 +201,8 @@ App.Pages = {
         const existing = lessons.filter(l => l.subject_id === e.subject_id
           && (l.lesson_number == null || e.lesson_number == null || l.lesson_number === e.lesson_number));
         html += `<div class="card">
-          <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-          <div class="card-sub">${e.group_name}</div>`;
+          <div class="card-title">Занятие ${e.lesson_number} · ${App.UI.escHtml(e.subject_name)}</div>
+          <div class="card-sub">${App.UI.escHtml(e.group_name)}</div>`;
         for (const l of existing) {
           const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
           const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
@@ -210,8 +222,8 @@ App.Pages = {
         const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
         const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
         html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
-          <div class="card-title">${l.actual_subject_name}</div>
-          <div class="card-sub">${l.group_name} · <span class="badge ${cls}">${label}</span></div>
+          <div class="card-title">${App.UI.escHtml(l.actual_subject_name)}</div>
+          <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${cls}">${label}</span></div>
         </div>`;
       }
     }
@@ -248,8 +260,8 @@ App.Pages = {
       html += `<div class="card">
         <div class="row" style="cursor:pointer" onclick="location='#subject/${s.id}'">
           <div style="flex:1">
-            <div class="card-title">${s.name}</div>
-            <div class="card-sub">${s.group_name} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
+            <div class="card-title">${App.UI.escHtml(s.name)}</div>
+            <div class="card-sub">${App.UI.escHtml(s.group_name)} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
             <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
           </div>
         </div>
@@ -267,7 +279,7 @@ App.Pages = {
       html += `<h2>Группы</h2><div class="grid-2">`;
       for (const g of groups) {
         html += `<div class="card" style="cursor:pointer;text-align:center" onclick="location='#students/${g.id}'">
-          <div class="card-title">${g.name}</div>
+          <div class="card-title">${App.UI.escHtml(g.name)}</div>
           <div style="display:flex;gap:4px;justify-content:center;margin-top:4px">
             <button class="btn btn-muted btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.showEditGroup(${g.id}, '${App.UI.escJs(g.name)}')">✎</button>
             <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteGroup(${g.id}, '${App.UI.escJs(g.name)}')">✕</button>
@@ -321,8 +333,8 @@ App.Pages = {
         for (const e of schedule) {
           const existing = lessons.filter(l => l.subject_id === e.subject_id);
           html += `<div class="card">
-            <div class="card-title">Занятие ${e.lesson_number} · ${e.subject_name}</div>
-            <div class="card-sub">${e.group_name}</div>`;
+            <div class="card-title">Занятие ${e.lesson_number} · ${App.UI.escHtml(e.subject_name)}</div>
+            <div class="card-sub">${App.UI.escHtml(e.group_name)}</div>`;
           for (const l of existing) {
             const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
             const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
@@ -344,8 +356,8 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
             const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
             const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
             html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
-              <div class="card-title">${l.actual_subject_name}</div>
-              <div class="card-sub">${l.group_name} · <span class="badge ${cls}">${label}</span>
+              <div class="card-title">${App.UI.escHtml(l.actual_subject_name)}</div>
+              <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${cls}">${label}</span>
                 ${l.status === 'cancelled' ? '· Отменено' : ''}</div>
               <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
             </div>`;
@@ -386,7 +398,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     if (data.summary) {
       const s = data.summary;
       const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
-      html += `<h1>${s.name}</h1>`;
+      html += `<h1>${App.UI.escHtml(s.name)}</h1>`;
       html += `<div class="card"><div class="grid-2">
         <div class="stat"><div class="stat-value">${s.held_lessons}</div><div class="stat-label">Проведено</div></div>
         <div class="stat"><div class="stat-value">${s.remaining}</div><div class="stat-label">Осталось</div></div>
@@ -394,7 +406,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
         <div class="stat"><div class="stat-value">${s.total_students}</div><div class="stat-label">Студентов</div></div>
       </div>
       <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
-      <div class="card-sub" style="margin-top:8px">Группа: ${s.group_name}</div>`;
+      <div class="card-sub" style="margin-top:8px">Группа: ${App.UI.escHtml(s.group_name)}</div>`;
       html += `<div class="grid-2" style="margin-top:8px">
         <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.xlsx', '/api/export/grades/${subjectId}.xlsx')">Excel</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
@@ -407,7 +419,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       for (const a of avg) {
         const pct = maxAvg > 0 ? (a.average / maxAvg * 100) : 0;
         html += `<div style="margin-bottom:8px">
-          <div style="font-size:13px">${a.last_name} ${a.first_name}</div>
+          <div style="font-size:13px">${App.UI.escHtml(a.last_name)} ${App.UI.escHtml(a.first_name)}</div>
           <div class="chart-bar"><div class="chart-bar-fill" style="width:${pct}%">${a.average}</div></div>
         </div>`;
       }
@@ -443,7 +455,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     }
     html += `</tr>`;
     for (const s of data.students) {
-      html += `<tr><td style="padding:4px;position:sticky;left:0;background:#fff;font-weight:500">${s.last_name} ${s.first_name}</td>`;
+      html += `<tr><td style="padding:4px;position:sticky;left:0;background:#fff;font-weight:500">${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</td>`;
       for (const l of data.lessons) {
         const grade = (data.grades[s.id] || {})[l.id] || '';
         const gc = App.Grades.colorClass(grade);
@@ -547,7 +559,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
           <div class="row">
             <div style="flex:1">
               <div class="card-title">Занятие ${e.lesson_number}</div>
-              <div class="card-sub">${e.subject_name} · ${e.group_name} · ${weekTypes[e.week_type] || 'Каждую'}</div>
+              <div class="card-sub">${App.UI.escHtml(e.subject_name)} · ${App.UI.escHtml(e.group_name)} · ${weekTypes[e.week_type] || 'Каждую'}</div>
             </div>
             <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditScheduleEntry(${e.id}, ${JSON.stringify(e).replace(/"/g, '&quot;')})">✎</button>
             <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.confirmDeleteScheduleEntry(${e.id})">✕</button>
@@ -575,7 +587,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     html += `<div class="card">`;
     for (const s of students) {
       html += `<div class="row">
-        <div style="flex:1"><span style="font-weight:500">${s.last_name} ${s.first_name}</span> ${s.middle_name || ''}</div>
+        <div style="flex:1"><span style="font-weight:500">${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</span> ${App.UI.escHtml(s.middle_name || '')}</div>
         <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditStudent(${s.id}, '${App.UI.escJs(s.last_name)}', '${App.UI.escJs(s.first_name)}', '${App.UI.escJs(s.middle_name || '')}')">✎</button>
         <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.confirmDeleteStudent(${s.id})">✕</button>
       </div>`;
@@ -605,8 +617,8 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     for (const s of subjects) {
       const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
       html += `<div class="card" style="cursor:pointer" onclick="location='#subject/${s.id}'">
-        <div class="card-title">${s.name}</div>
-        <div class="card-sub">${s.group_name} · ${s.held_lessons}/${s.total_hours} · осталось ${s.remaining}</div>
+        <div class="card-title">${App.UI.escHtml(s.name)}</div>
+        <div class="card-sub">${App.UI.escHtml(s.group_name)} · ${s.held_lessons}/${s.total_hours} · осталось ${s.remaining}</div>
         <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
       </div>`;
     }
@@ -628,7 +640,7 @@ App.Pages.startLesson = async function(subjectId, lessonNumber) {
 App.Pages.showLessonSubstitution = async function(lessonId) {
   const lesson = await App.API.get(`/api/lessons/${lessonId}`);
   const subs = await App.API.get(`/api/subjects/${lesson.subject_id}/substitution-list`);
-  const opts = subs.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+  const opts = subs.map(s => `<option value="${s.id}">${App.UI.escHtml(s.name)}</option>`).join('');
   App.UI.showPopup(`
     <h2>Замена</h2>
     <p style="margin-bottom:8px">Выберите предмет:</p>
@@ -648,10 +660,15 @@ App.Pages.createSubstitution = async function(lessonId) {
   location = `#lesson/${result.new_lesson_id}`;
 };
 
-App.Pages.confirmCancelLesson = function(lessonId) {
+App.Pages.confirmCancelLesson = async function(lessonId) {
+  let n = 0;
+  try {
+    const data = await App.API.get(`/api/lessons/${lessonId}/attendance`);
+    n = (data.attendance || []).length;
+  } catch (e) {}
   App.UI.showPopup(`
     <h2>Отменить занятие?</h2>
-    <p style="margin-bottom:12px;color:#86868b">Оценки будут удалены.</p>
+    <p style="margin-bottom:12px;color:#86868b">Оценки будут удалены${n ? ` (${n} шт.)` : ''}. Действие необратимо.</p>
     <div class="grid-2">
       <button class="btn btn-danger" onclick="App.Pages.cancelLesson(${lessonId})">Отменить</button>
       <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
@@ -691,7 +708,7 @@ App.Pages.deleteLesson = async function(lessonId) {
 
 App.Pages.showCustomLesson = function() {
   App.API.get('/api/subjects').then(subjects => {
-    const opts = subjects.map(s => `<option value="${s.id}">${s.name} (${s.group_name})</option>`).join('');
+    const opts = subjects.map(s => `<option value="${s.id}">${App.UI.escHtml(s.name)} (${App.UI.escHtml(s.group_name)})</option>`).join('');
     App.UI.showPopup(`
       <h2>Создать занятие</h2>
       <select id="custom-subject">${opts}</select>
@@ -712,7 +729,7 @@ App.Pages.createCustomLesson = async function() {
 
 App.Pages.showAddSubject = async function() {
   const groups = await App.API.get('/api/groups');
-  const groupOpts = groups.map(g => `<option value="${g.id}">${g.name}</option>`).join('');
+  const groupOpts = groups.map(g => `<option value="${g.id}">${App.UI.escHtml(g.name)}</option>`).join('');
   App.UI.showPopup(`
     <h2>Новый предмет</h2>
     <input id="subj-name" placeholder="Название предмета">
@@ -752,7 +769,7 @@ App.Pages.createGroup = async function() {
 
 App.Pages.showAddScheduleEntry = async function() {
   const subjects = await App.API.get('/api/subjects');
-  const opts = subjects.map(s => `<option value="${s.id}">${s.name} (${s.group_name})</option>`).join('');
+  const opts = subjects.map(s => `<option value="${s.id}">${App.UI.escHtml(s.name)} (${App.UI.escHtml(s.group_name)})</option>`).join('');
   App.UI.showPopup(`
     <h2>Добавить в расписание</h2>
     <select id="sch-day">${[1,2,3,4,5,6].map(d => `<option value="${d}">${['Пн','Вт','Ср','Чт','Пт','Сб'][d-1]}</option>`).join('')}</select>
@@ -781,7 +798,7 @@ App.Pages.createScheduleEntry = async function() {
 
 App.Pages.showEditScheduleEntry = async function(id, entry) {
   const subjects = await App.API.get('/api/subjects');
-  const opts = subjects.map(s => `<option value="${s.id}" ${s.id === entry.subject_id ? 'selected' : ''}>${s.name} (${s.group_name})</option>`).join('');
+  const opts = subjects.map(s => `<option value="${s.id}" ${s.id === entry.subject_id ? 'selected' : ''}>${App.UI.escHtml(s.name)} (${App.UI.escHtml(s.group_name)})</option>`).join('');
   App.UI.showPopup(`
     <h2>Редактировать расписание</h2>
     <select id="edit-sch-day">${[1,2,3,4,5,6].map(d => `<option value="${d}" ${d === entry.day_of_week ? 'selected' : ''}>${['Пн','Вт','Ср','Чт','Пт','Сб'][d-1]}</option>`).join('')}</select>

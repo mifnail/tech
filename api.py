@@ -7,7 +7,7 @@ import os
 
 import sqlite3
 
-from flask import Flask, Blueprint, request, jsonify, send_from_directory, send_file, Response
+from flask import Flask, Blueprint, request, jsonify, send_from_directory, send_file
 
 from database import Database
 
@@ -405,26 +405,9 @@ app.register_blueprint(reports_bp)
 
 
 # ---- Export ----
-from report_export import export_grades_pdf, export_grades_xlsx, export_report_pdf, export_report_xlsx
-from calendar_export import generate_schedule_ics, export_lessons_to_ics
+from report_export import export_grades_xlsx, export_report_xlsx
 
 export_bp = Blueprint('export', __name__, url_prefix='/api/export')
-
-
-def _build_grades_csv_bytes(db, subject_id: int) -> bytes:
-    """Ведомость предмета в CSV (UTF-8+BOM). Общее для скачивания и публикации."""
-    import csv as _csv
-    students, lessons, grades = db.subject_gradebook(subject_id)
-    buf = io.StringIO()
-    buf.write('\ufeff')
-    w = _csv.writer(buf)
-    w.writerow(['Студент'] + [f"{l.get('date','')} №{l.get('lesson_number') or ''} (#{l['id']})" for l in lessons])
-    for s in students:
-        row = [f"{s['last_name']} {s['first_name']}"]
-        for l in lessons:
-            row.append(grades.get(str(s['id']), {}).get(str(l['id']), ''))
-        w.writerow(row)
-    return buf.getvalue().encode('utf-8')
 
 
 def _missing_deps_response(e: Exception):
