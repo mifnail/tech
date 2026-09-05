@@ -16,6 +16,7 @@ on:
       - 'templates/**'
       - 'calendar_export.py'
       - 'report_export.py'
+      - 'tgbot.py'
       - 'crash_reporter.py'
       - 'seed_db.py'
       - 'schedule_file.py'
