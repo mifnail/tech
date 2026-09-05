@@ -13,8 +13,10 @@ try:
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
     HAS_OPENPYXL = True
-except ImportError:
+    _OPENPYXL_IMPORT_ERROR = ''
+except ImportError as _e:
     HAS_OPENPYXL = False
+    _OPENPYXL_IMPORT_ERROR = f'{type(_e).__name__}: {_e}'
 
 try:
     from reportlab.lib import colors
@@ -108,7 +110,7 @@ def export_report_pdf(date: str, db: Optional[Database] = None) -> bytes:
 
 def _build_xlsx(title: str, headers: list[str], rows: list[list[str]]) -> bytes:
     if not HAS_OPENPYXL:
-        raise RuntimeError("openpyxl not installed")
+        raise RuntimeError(f"openpyxl not installed ({_OPENPYXL_IMPORT_ERROR})")
     wb = Workbook()
     ws = wb.active
     safe = title.replace(':', ' -').replace('\\', ' ').replace('/', ' ').replace('?', '').replace('*', '').replace('[', '(').replace(']', ')')
