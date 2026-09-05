@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test deps
-        run: pip install pytest flask
+        run: pip install pytest flask openpyxl
       - name: Run tests
         run: pytest -q
 
