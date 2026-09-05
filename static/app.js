@@ -76,6 +76,15 @@ App.Download = {
   _lastBlob: null,
   _lastName: '',
   async as(name, url) {
+    const m = url.match(/\/api\/export\/(grades\/\d+|report\/[0-9-]+)\.xlsx$/);
+    if (m && !(navigator.share && navigator.canShare)) {
+      // APK без Web Share: сохраняем системно в Загрузки, файл виден в «Файлах».
+      try {
+        const r = await App.API.post(`/api/export/${m[1]}/to-downloads`);
+        App.UI.notify('Сохранено в Загрузки: ' + (r.path || name));
+      } catch (e) { App.UI.notify((e && e.error) || 'Ошибка сохранения'); }
+      return;
+    }
     let res;
     try {
       res = await fetch(url);

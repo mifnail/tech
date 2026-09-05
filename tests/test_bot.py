@@ -315,3 +315,64 @@ class TestBotAPI:
         assert len(rows) == 1 and rows[0]['chat_id'] == 111
         assert client.delete(f'/api/bot/links/by-student/{st}').json == {'ok': True}
         assert client.get('/api/bot/links').json == []
+
+
+# ======================== SSL FALLBACK ========================
+
+class TestTgSslFallback:
+    def test_cert_failover(self, monkeypatch):
+        import urllib.request
+        calls = []
+        body = json.dumps({'ok': True, 'result': {'username': 'b'}}).encode()
+
+        def fake(req, timeout=None, **kw):
+            calls.append(kw.get('context'))
+            if len(calls) == 1:
+                raise urllib.error.URLError('[SSL: CERTIFICATE_VERIFY_FAILED] boom')
+            return FakeResp(body)
+
+        monkeypatch.setattr(urllib.request, 'urlopen', fake)
+        assert tgbot.get_me('t') == {'username': 'b'}
+        assert len(calls) == 2
+
+
+# ======================== NATIVE SAVE ========================
+
+class TestNativeSave:
+    def _setup_subject(self, client):
+        gid = client.post('/api/groups', json={'name': 'Г'}).json['id']
+        return client.post('/api/subjects', json={
+            'name': 'П', 'total_hours': 1, 'group_id': gid}).json['id']
+
+    def test_grades_ok(self, client, monkeypatch):
+        sid = self._setup_subject(client)
+        monkeypatch.setattr(_api_module, '_save_to_downloads',
+                            lambda data, fn, mt: '/fake/' + fn)
+        rv = client.post(f'/api/export/grades/{sid}/to-downloads')
+        assert rv.status_code == 200, rv.json
+        assert rv.json['path'] == f'/fake/grades_{sid}.xlsx'
+
+    def test_report_ok(self, client, monkeypatch):
+        monkeypatch.setattr(_api_module, '_save_to_downloads',
+                            lambda data, fn, mt: '/fake/' + fn)
+        rv = client.post('/api/export/report/2026-09-01/to-downloads')
+        assert rv.status_code == 200
+
+    def test_save_error(self, client, monkeypatch):
+        sid = self._setup_subject(client)
+
+        def boom(data, fn, mt):
+            raise RuntimeError('denied')
+
+        monkeypatch.setattr(_api_module, '_save_to_downloads', boom)
+        rv = client.post(f'/api/export/grades/{sid}/to-downloads')
+        assert rv.status_code == 500
+
+    def test_desktop_branch_tmp_home(self, client, monkeypatch, tmp_path):
+        import os
+        monkeypatch.setenv('HOME', str(tmp_path))
+        monkeypatch.setenv('USERPROFILE', str(tmp_path))
+        sid = self._setup_subject(client)
+        rv = client.post(f'/api/export/grades/{sid}/to-downloads')
+        assert rv.status_code == 200, rv.json
+        assert os.path.exists(os.path.join(str(tmp_path), 'Downloads', f'grades_{sid}.xlsx'))

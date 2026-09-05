@@ -39,6 +39,22 @@ def _ctx():
         return ssl.create_default_context()
 
 
+_UNVERIFIED_CTX = ssl._create_unverified_context()
+
+
+def _read_body(resp) -> dict:
+    try:
+        raw = resp.read()
+    except Exception:
+        return {}
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw.decode('utf-8'))
+    except ValueError:
+        return {}
+
+
 def _call(token: str, method: str, params: dict | None = None,
           urlopen=None, timeout: int = 35):
     """Один вызов Bot API. urlopen инжектится ради тестов."""
@@ -51,10 +67,7 @@ def _call(token: str, method: str, params: dict | None = None,
         else:
             resp = urllib.request.urlopen(req, timeout=timeout, context=_ctx())
         with resp:
-            try:
-                body = json.loads(resp.read().decode('utf-8'))
-            except ValueError:
-                body = {}
+            body = _read_body(resp)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise BotError('bad bot token (401)')
@@ -67,7 +80,15 @@ def _call(token: str, method: str, params: dict | None = None,
             raise BotRateLimited(wait)
         raise BotError(f'telegram api HTTP {e.code}')
     except urllib.error.URLError as e:
-        raise BotError(f'no connection: {e.reason}')
+        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
+            # Сети с MITM / устройства без системных CA: повторяем без проверки.
+            try:
+                with urllib.request.urlopen(req, timeout=timeout, context=_UNVERIFIED_CTX) as resp2:
+                    body = _read_body(resp2)
+            except Exception as e2:
+                raise BotError(f'no connection: {e2}')
+        else:
+            raise BotError(f'no connection: {e.reason}')
     if not body.get('ok'):
         raise BotError(f"telegram error: {body.get('description', '?')}")
     return body.get('result')

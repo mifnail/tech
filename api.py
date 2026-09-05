@@ -450,9 +450,6 @@ def download_schedule_ics():
     return 'Only xlsx is enabled', 400
 
 
-app.register_blueprint(export_bp)
-
-
 # ---- Telegram bot settings ----
 settings_bp = Blueprint('settings', __name__, url_prefix='/api/settings')
 
@@ -493,24 +490,16 @@ def delete_bot_settings():
 
 @settings_bp.route('/bot/check', methods=['GET'])
 def check_bot():
-    import urllib.request
-    import urllib.error
-    import json as _json
+    import tgbot
     token = get_db().get_setting('bot_token')
     if not token:
         return jsonify({'error': 'no bot token'}), 400
     try:
-        req = urllib.request.Request(
-            f'https://api.telegram.org/bot{token}/getMe', method='GET')
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            body = _json.loads(resp.read().decode('utf-8'))
-    except urllib.error.HTTPError:
-        return jsonify({'error': 'bad bot token (401)'}), 401
-    except urllib.error.URLError as e:
-        return jsonify({'error': f'no connection: {e.reason}'}), 502
-    if not body.get('ok'):
-        return jsonify({'error': 'bad bot token'}), 401
-    info = body.get('result', {})
+        info = tgbot.get_me(token) or {}
+    except tgbot.BotError as e:
+        msg = str(e)
+        code = 401 if '401' in msg else 502
+        return jsonify({'error': msg}), code
     return jsonify({'ok': True, 'username': info.get('username', '')})
 
 
@@ -533,3 +522,76 @@ def bot_unbind_student(student_id: int):
 
 
 app.register_blueprint(bot_bp)
+
+
+# ---- Save exports to device Downloads (нативный путь для WebView без шаринга) ----
+XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+
+def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
+    """Сохранить файл в общую папку Загрузки. Возвращает путь для показа."""
+    try:
+        from jnius import autoclass  # noqa — только на Android
+    except ImportError:
+        import os
+        home = os.path.expanduser('~')
+        os.makedirs(os.path.join(home, 'Downloads'), exist_ok=True)
+        path = os.path.join(home, 'Downloads', filename)
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+    Build = autoclass('android.os.Build')
+    if int(Build.VERSION.SDK_INT) >= 29:
+        MediaStore = autoclass('android.provider.MediaStore')
+        ContentValues = autoclass('android.content.ContentValues')
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        resolver = PythonActivity.mActivity.getContentResolver()
+        values = ContentValues()
+        values.put('title', filename)
+        values.put('_display_name', filename)
+        values.put('mime_type', mimetype)
+        values.put('relative_path', 'Download/')
+        collection = MediaStore.Downloads.getContentUri('external')
+        uri = resolver.insert(collection, values)
+        out = resolver.openOutputStream(uri)
+        try:
+            out.write(data)
+        finally:
+            out.close()
+        return 'Download/' + filename
+    path = '/sdcard/Download/' + filename
+    try:
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+    except OSError as e:
+        raise RuntimeError(f'cannot write {path}: {e}')
+
+
+@export_bp.route('/grades/<int:subject_id>/to-downloads', methods=['POST'])
+def save_grades_to_downloads(subject_id: int):
+    try:
+        data = export_grades_xlsx(subject_id, get_db())
+    except RuntimeError as e:
+        return _missing_deps_response(e)
+    try:
+        where = _save_to_downloads(data, f'grades_{subject_id}.xlsx', XLSX_MIME)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True, 'path': where})
+
+
+@export_bp.route('/report/<date>/to-downloads', methods=['POST'])
+def save_report_to_downloads(date: str):
+    try:
+        data = export_report_xlsx(date, get_db())
+    except RuntimeError as e:
+        return _missing_deps_response(e)
+    try:
+        where = _save_to_downloads(data, f'report_{date}.xlsx', XLSX_MIME)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True, 'path': where})
+
+
+app.register_blueprint(export_bp)
