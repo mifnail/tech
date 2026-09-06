@@ -439,6 +439,35 @@ class TestLessonsAPI:
         assert rv3.status_code == 201
         assert rv3.json['id'] != rv1.json['id']
 
+    def test_create_lesson_past_date(self, client):
+        _, sid, _ = self._setup(client)
+        rv = client.post('/api/lessons', json={
+            'subject_id': sid, 'actual_subject_id': sid,
+            'date': '2026-06-15', 'status': 'held'
+        })
+        assert rv.status_code == 201
+        lid = rv.json['id']
+        lesson = get_db().get_lesson(lid)
+        assert lesson['date'] == '2026-06-15'
+
+    def test_create_lesson_future_date_rejected(self, client):
+        _, sid, _ = self._setup(client)
+        rv = client.post('/api/lessons', json={
+            'subject_id': sid, 'actual_subject_id': sid,
+            'date': '2099-12-31', 'status': 'held'
+        })
+        assert rv.status_code == 400
+        assert rv.json['error'] == 'date in future'
+
+    def test_create_lesson_bad_date_rejected(self, client):
+        _, sid, _ = self._setup(client)
+        rv = client.post('/api/lessons', json={
+            'subject_id': sid, 'actual_subject_id': sid,
+            'date': 'not-a-date', 'status': 'held'
+        })
+        assert rv.status_code == 400
+        assert rv.json['error'] == 'bad date'
+
     def test_export_csv(self, client):
         _, sid, _ = self._setup(client)
         # CSV/PDF отключены, оставлен только xlsx

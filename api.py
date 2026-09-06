@@ -278,7 +278,17 @@ lessons_bp = Blueprint('lessons', __name__, url_prefix='/api/lessons')
 def create_lesson():
     data = request.json
     db = get_db()
-    lesson_date = data.get('date', date.today().isoformat())
+    raw_date = data.get('date')
+    if raw_date:
+        try:
+            lesson_date = date.fromisoformat(raw_date)
+        except ValueError:
+            return jsonify({'error': 'bad date'}), 400
+        if lesson_date > date.today():
+            return jsonify({'error': 'date in future'}), 400
+        lesson_date = lesson_date.isoformat()
+    else:
+        lesson_date = date.today().isoformat()
     lesson_number = data.get('lesson_number')
     # Дедуп: двойной тап «Начать занятие» не должен плодить дубли —
     # возвращаем уже созданное проведённое занятие за сегодня.

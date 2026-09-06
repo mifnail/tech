@@ -778,9 +778,26 @@ App.Pages.shareGrades = async function(subjectId) {
 };
 
 App.Pages.startLesson = async function(subjectId, lessonNumber) {
-  const result = await App.API.post('/api/lessons', {
+  const today = new Date().toISOString().slice(0, 10);
+  App.UI.showPopup(`
+    <h2>Начать занятие</h2>
+    <label style="display:block;margin-bottom:4px;font-size:13px">Дата:</label>
+    <input type="date" id="new-lesson-date" value="${today}" max="${today}">
+    <div class="grid-2" style="margin-top:8px">
+      <button class="btn btn-success" onclick="App.Pages.confirmStartLesson(${subjectId}, ${lessonNumber})">Создать</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
+    </div>
+  `);
+};
+
+App.Pages.confirmStartLesson = async function(subjectId, lessonNumber) {
+  const d = document.getElementById('new-lesson-date').value;
+  App.UI.closePopup();
+  const body = {
     subject_id: subjectId, actual_subject_id: subjectId, status: 'held', lesson_number: lessonNumber
-  });
+  };
+  if (d) body.date = d;
+  const result = await App.API.post('/api/lessons', body);
   location = `#lesson/${result.id}`;
 };
 
