@@ -107,7 +107,7 @@ def _post(path: str, token: str, data: dict, urlopen=None, timeout: int = 35):
 
 def check(token: str, urlopen=None):
     """Проверить токен: GET updates?timeout=0&limit=1. Возвращает True-ish dict при успехе."""
-    body = _get('/messages/updates?timeout=0&limit=1', token, urlopen=urlopen)
+    body = _get('/updates?timeout=0&limit=1', token, urlopen=urlopen)
     if body:
         return body
     return {'ok': True}
@@ -207,7 +207,7 @@ def answer_callback(token: str, callback_id: str, notification: str = '', urlope
 
 def get_updates(token: str, marker=None, timeout: int = POLL_TIMEOUT, urlopen=None):
     """Получить обновления. Возвращает (updates, marker)."""
-    path = f'/messages/updates?limit=100&timeout={timeout}'
+    path = f'/updates?limit=100&timeout={timeout}'
     if marker is not None:
         path += f'&marker={marker}'
     body = _get(path, token, urlopen=urlopen, timeout=timeout + 10)
