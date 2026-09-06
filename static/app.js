@@ -444,9 +444,12 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       </div></div>`;
       html += `<div class="card" style="margin-top:8px"><div class="card-title">Тест экспорта (временно)</div>`;
       html += `<div class="grid-2">
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast')">A: cast+putExtra</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'clip')">B: ClipData</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'both')">C: cast+ClipData</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'title')">A: cast+заголовок</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'none')">G: cast+без заглавия</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'jstring')">H: cast+JString</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'direct')">I: cast+без chooser</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'clip', 'none')">B: ClipData+без загл.</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'both', 'none')">C: оба+без загл.</button>
         <button class="btn btn-muted btn-sm" onclick="App.Pages.testShareSave(${subjectId})">D: сохранить</button>
         <button class="btn btn-muted btn-sm" onclick="App.Pages.testDiag()">E: диагностика</button>
         <button class="btn btn-muted btn-sm" onclick="App.Pages.testLaunch()">F: запустить шторку</button>
@@ -727,10 +730,10 @@ App.Pages.unbindBot = async function(studentId) {
   App.Router.handle();
 };
 
-App.Pages.testShare = async function(subjectId, mode) {
+App.Pages.testShare = async function(subjectId, mode, chooser) {
   try {
-    const r = await App.API.post(`/api/export/grades/${subjectId}/share?mode=${mode}`);
-    App.UI.notify(r.shared === false ? ('Не вышло: ' + (r.error || '')) : 'Шторка открыта (' + mode + ')');
+    const r = await App.API.post(`/api/export/grades/${subjectId}/share?mode=${mode}&chooser=${chooser || 'title'}`);
+    App.UI.notify(r.shared === false ? ('Не вышло: ' + (r.error || '')) : 'Шторка открыта (' + mode + '/' + (chooser || 'title') + ')');
   } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
 };
 

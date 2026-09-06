@@ -643,6 +643,7 @@ def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
 
 
 SHARE_MODES = ('cast', 'clip', 'both')
+CHOOSER_VARIANTS = ('title', 'none', 'jstring', 'direct')
 
 
 def _count_handlers(mimetype: str) -> int:
@@ -658,16 +659,20 @@ def _count_handlers(mimetype: str) -> int:
 
 
 def _share_file(uri_string: str, mimetype: str, label: str = 'vedomost',
-                mode: str = 'cast') -> None:
+                mode: str = 'cast', chooser: str = 'title') -> None:
     """Открыть шторку «Поделиться» (только Android).
 
-    mode: 'cast' — proven: cast(Uri→Parcelable) + putExtra(EXTRA_STREAM);
-    'clip' — только ClipData; 'both' — cast + ClipData.
-
-    Источник паттерна: androidstorage4kivy/sharesheet.py (MIT).
+    mode: 'cast' — cast(Uri→Parcelable)+putExtra; 'clip' — ClipData;
+    'both' — оба. Источник: androidstorage4kivy/sharesheet.py (MIT).
+    chooser: 'title' — createChooser(intent, str);
+    'none' — createChooser(intent, None) [как в библиотеке];
+    'jstring' — createChooser(intent, JString);
+    'direct' — без chooser, startActivity(intent) напрямую.
     """
     if mode not in SHARE_MODES:
         raise ValueError(f'bad share mode: {mode}')
+    if chooser not in CHOOSER_VARIANTS:
+        raise ValueError(f'bad chooser: {chooser}')
     from jnius import autoclass, cast
     Intent = autoclass('android.content.Intent')
     Uri = autoclass('android.net.Uri')
@@ -684,9 +689,19 @@ def _share_file(uri_string: str, mimetype: str, label: str = 'vedomost',
         clip = ClipData.newUri(ctx.getContentResolver(), label, uri)
         intent.setClipData(clip)
     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    chooser = Intent.createChooser(intent, 'Поделиться ведомостью')
-    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    ctx.startActivity(chooser)
+    if chooser == 'direct':
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(intent)
+        return
+    if chooser == 'none':
+        target = Intent.createChooser(intent, None)
+    elif chooser == 'jstring':
+        JString = autoclass('java.lang.String')
+        target = Intent.createChooser(intent, JString('Поделиться ведомостью'))
+    else:
+        target = Intent.createChooser(intent, 'Поделиться ведомостью')
+    target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    ctx.startActivity(target)
 
 
 @export_bp.route('/grades/<int:subject_id>/to-downloads', methods=['POST'])
@@ -715,10 +730,13 @@ def save_report_to_downloads(date: str):
     return jsonify({'ok': True, 'path': where})
 
 
-def _save_and_share(data: bytes, filename: str, mode: str = 'clip'):
+def _save_and_share(data: bytes, filename: str, mode: str = 'cast',
+                    chooser: str = 'title'):
     """Сохранить в Загрузки и открыть шторку. Файл остаётся, даже если шаринг не вышел."""
     if mode not in SHARE_MODES:
         return jsonify({'error': f'bad share mode: {mode}'}), 400
+    if chooser not in CHOOSER_VARIANTS:
+        return jsonify({'error': f'bad chooser: {chooser}'}), 400
     try:
         where, uri = _save_to_downloads_full(data, filename, XLSX_MIME)
     except Exception as e:
@@ -726,7 +744,7 @@ def _save_and_share(data: bytes, filename: str, mode: str = 'clip'):
     if uri is None:
         return jsonify({'error': 'share available only on Android'}), 400
     try:
-        _share_file(uri, XLSX_MIME, where.rsplit('/', 1)[-1], mode)
+        _share_file(uri, XLSX_MIME, where.rsplit('/', 1)[-1], mode, chooser)
     except Exception as e:
         return jsonify({'ok': True, 'path': where, 'shared': False, 'error': str(e)})
     return jsonify({'ok': True, 'path': where, 'shared': True})
@@ -739,7 +757,8 @@ def share_grades(subject_id: int):
     except RuntimeError as e:
         return _missing_deps_response(e)
     return _save_and_share(data, f'grades_{subject_id}.xlsx',
-                           request.args.get('mode', 'clip'))
+                           request.args.get('mode', 'cast'),
+                           request.args.get('chooser', 'title'))
 
 
 @export_bp.route('/report/<date>/share', methods=['POST'])
@@ -749,7 +768,8 @@ def share_report(date: str):
     except RuntimeError as e:
         return _missing_deps_response(e)
     return _save_and_share(data, f'report_{date}.xlsx',
-                           request.args.get('mode', 'clip'))
+                           request.args.get('mode', 'cast'),
+                           request.args.get('chooser', 'title'))
 
 
 @export_bp.route('/diag', methods=['POST'])
@@ -853,7 +873,7 @@ def diag_share():
         clip = ClipData.newUri(ctx.getContentResolver(), 'diag_test.txt', uri)
         intent.setClipData(clip)
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        chooser = Intent.createChooser(intent, 'Диагностика: шторка')
+        chooser = Intent.createChooser(intent, None)
         chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ctx.startActivity(chooser)
         return 'sheet fired'
