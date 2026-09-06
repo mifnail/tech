@@ -424,3 +424,36 @@ class TestNativeShare:
         assert rv.status_code == 200
         assert rv.json['shared'] is False
         assert rv.json['path'] == f'/fake/grades_{sid}.xlsx'
+
+
+class TestGetMeRetry:
+    def test_retries_then_ok(self, monkeypatch):
+        import time
+        import urllib.error
+        calls = []
+        body = {'ok': True, 'result': {'username': 'b'}}
+
+        def fake(req, timeout=None):
+            calls.append(1)
+            if len(calls) < 3:
+                raise urllib.error.URLError('reset by peer')
+            return FakeResp(json.dumps(body).encode())
+
+        monkeypatch.setattr(time, 'sleep', lambda s: None)
+        assert tgbot.get_me('t', urlopen=fake) == {'username': 'b'}
+        assert len(calls) == 3
+
+    def test_no_retry_on_401(self):
+        import urllib.error
+        calls = []
+
+        def fake(req, timeout=None):
+            calls.append(1)
+            raise urllib.error.HTTPError(req.full_url, 401, 'Unauthorized', {}, None)
+
+        try:
+            tgbot.get_me('t', urlopen=fake)
+            assert False, 'must raise'
+        except tgbot.BotError as e:
+            assert '401' in str(e)
+        assert len(calls) == 1

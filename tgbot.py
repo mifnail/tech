@@ -94,8 +94,21 @@ def _call(token: str, method: str, params: dict | None = None,
     return body.get('result')
 
 
-def get_me(token: str, urlopen=None):
-    return _call(token, 'getMe', urlopen=urlopen)
+def get_me(token: str, urlopen=None, retries: int = 3):
+    """getMe с ретраями при обрывах сети. HTTP-ошибки (401) — сразу наружу."""
+    import time
+    last = None
+    for i in range(max(1, retries)):
+        try:
+            return _call(token, 'getMe', urlopen=urlopen)
+        except BotRateLimited:
+            raise
+        except BotError as e:
+            last = e
+            if 'no connection' not in str(e) or i == max(1, retries) - 1:
+                raise
+            time.sleep(2)
+    raise last
 
 
 def send_message(token: str, chat_id: int, text: str, urlopen=None):
