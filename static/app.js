@@ -444,11 +444,11 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       </div></div>`;
       html += `<div class="card" style="margin-top:8px"><div class="card-title">Тест экспорта (временно)</div>`;
       html += `<div class="grid-2">
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'clip')">A: ClipData</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'extra')">B: putExtra</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShareSave(${subjectId})">C: сохранить</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testDiag()">D: диагностика</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'wild')">E: */* шаринг</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast')">A: cast+putExtra</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'clip')">B: ClipData</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'both')">C: cast+ClipData</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShareSave(${subjectId})">D: сохранить</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testDiag()">E: диагностика</button>
         <button class="btn btn-muted btn-sm" onclick="App.Pages.testLaunch()">F: запустить шторку</button>
       </div></div>`;
     }

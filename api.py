@@ -642,11 +642,11 @@ def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
     return path
 
 
-SHARE_MODES = ('clip', 'extra', 'both', 'wild')
+SHARE_MODES = ('cast', 'clip', 'both')
 
 
 def _count_handlers(mimetype: str) -> int:
-    """Сколько приложений готовы принять ACTION_SEND с таким MIME (0 — шторка будет пустой)."""
+    """Сколько приложений готовы принять ACTION_SEND с таким MIME."""
     from jnius import autoclass
     Intent = autoclass('android.content.Intent')
     ctx = _android_context()
@@ -658,30 +658,28 @@ def _count_handlers(mimetype: str) -> int:
 
 
 def _share_file(uri_string: str, mimetype: str, label: str = 'vedomost',
-                mode: str = 'clip') -> None:
-    """Открыть системную шторку «Поделиться» с файлом (только Android).
+                mode: str = 'cast') -> None:
+    """Открыть шторку «Поделиться» (только Android).
 
-    mode: 'clip' — ClipData+xlsx; 'extra' — только putExtra(EXTRA_STREAM);
-    'both' — putExtra best-effort + ClipData; 'wild' — ClipData + MIME */*
-    (если ни одно приложение не заявлено на xlsx-MIME). Ошибки наружу.
+    mode: 'cast' — proven: cast(Uri→Parcelable) + putExtra(EXTRA_STREAM);
+    'clip' — только ClipData; 'both' — cast + ClipData.
+
+    Источник паттерна: androidstorage4kivy/sharesheet.py (MIT).
     """
     if mode not in SHARE_MODES:
         raise ValueError(f'bad share mode: {mode}')
-    from jnius import autoclass
+    from jnius import autoclass, cast
     Intent = autoclass('android.content.Intent')
     Uri = autoclass('android.net.Uri')
     ctx = _android_context()
     uri = Uri.parse(uri_string)
     intent = Intent()
     intent.setAction(Intent.ACTION_SEND)
-    intent.setType('*/*' if mode == 'wild' else mimetype)
-    if mode in ('extra', 'both'):
-        try:
-            intent.putExtra(Intent.EXTRA_STREAM, uri)
-        except Exception:
-            if mode == 'extra':
-                raise
-    if mode in ('clip', 'both', 'wild'):
+    intent.setType(mimetype)
+    if mode in ('cast', 'both'):
+        parcelable = cast('android.os.Parcelable', uri)
+        intent.putExtra(Intent.EXTRA_STREAM, parcelable)
+    if mode in ('clip', 'both'):
         ClipData = autoclass('android.content.ClipData')
         clip = ClipData.newUri(ctx.getContentResolver(), label, uri)
         intent.setClipData(clip)
@@ -828,9 +826,12 @@ def diag_share():
         t.putExtra(Intent.EXTRA_STREAM, Uri.parse(box['uri']))
         return 'putExtra ok'
 
-    def do_cleanup():
-        _mediastore_delete_name(box['resolver'], box['collection'], 'diag_test.txt')
-        return 'cleaned'
+    def do_cast():
+        from jnius import cast
+        Uri = autoclass('android.net.Uri')
+        uri = Uri.parse(box['uri'])
+        parcelable = cast('android.os.Parcelable', uri)
+        return f'cast ok: {parcelable}'
 
     def do_handlers():
         nx = _count_handlers(XLSX_MIME)
@@ -838,15 +839,17 @@ def diag_share():
         return f'xlsx:{nx} */*:{nw}'
 
     def do_launch():
-        from jnius import autoclass
+        from jnius import autoclass, cast
         Intent = autoclass('android.content.Intent')
         Uri = autoclass('android.net.Uri')
         ClipData = autoclass('android.content.ClipData')
         ctx = box['ctx']
         uri = Uri.parse(box['uri'])
+        parcelable = cast('android.os.Parcelable', uri)
         intent = Intent()
         intent.setAction(Intent.ACTION_SEND)
         intent.setType(XLSX_MIME)
+        intent.putExtra(Intent.EXTRA_STREAM, parcelable)
         clip = ClipData.newUri(ctx.getContentResolver(), 'diag_test.txt', uri)
         intent.setClipData(clip)
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -858,8 +861,8 @@ def diag_share():
     if (step('context', do_ctx) and step('sdk', do_sdk)
             and step('collection', do_collection)
             and step('insert+write', do_insert_write)
-            and step('clipdata', do_clip) and step('putextra', do_extra)
-            and step('handlers', do_handlers)):
+            and step('cast', do_cast)):
+        step('handlers', do_handlers)
         step('cleanup', do_cleanup)
         if request.args.get('launch') == '1':
             step('launch', do_launch)

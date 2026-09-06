@@ -390,7 +390,7 @@ class TestNativeShare:
         monkeypatch.setattr(_api_module, '_save_to_downloads_full',
                             lambda data, fn, mt: ('/fake/' + fn, 'content://fake/1'))
         monkeypatch.setattr(_api_module, '_share_file',
-                            lambda uri, mt, label=None, mode='clip': seen.update(uri=uri, mt=mt))
+                            lambda uri, mt, label=None, mode='cast': seen.update(uri=uri, mt=mt))
         rv = client.post(f'/api/export/grades/{sid}/share')
         assert rv.status_code == 200, rv.json
         assert rv.json == {'ok': True, 'path': f'/fake/grades_{sid}.xlsx', 'shared': True}
@@ -442,11 +442,11 @@ class TestShareModes:
             seen['mode'] = mode
 
         monkeypatch.setattr(_api_module, '_share_file', fake_share)
-        rv = client.post(f'/api/export/grades/{sid}/share?mode=extra')
+        rv = client.post(f'/api/export/grades/{sid}/share?mode=both')
         assert rv.status_code == 200
-        assert seen.get('mode') == 'extra'
+        assert seen.get('mode') == 'both'
 
-    def test_mode_wild_forwarded(self, client, monkeypatch):
+    def test_mode_clip_forwarded(self, client, monkeypatch):
         sid = self._setup_subject(client)
         seen = {}
         monkeypatch.setattr(_api_module, '_save_to_downloads_full',
@@ -456,9 +456,9 @@ class TestShareModes:
             seen['mode'] = mode
 
         monkeypatch.setattr(_api_module, '_share_file', fake_share)
-        rv = client.post(f'/api/export/grades/{sid}/share?mode=wild')
+        rv = client.post(f'/api/export/grades/{sid}/share?mode=clip')
         assert rv.status_code == 200
-        assert seen.get('mode') == 'wild'
+        assert seen.get('mode') == 'clip'
 
     def test_bad_mode(self, client):
         sid = self._setup_subject(client)
