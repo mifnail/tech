@@ -363,6 +363,36 @@ def mark_attendance(lesson_id: int):
         db.mark_attendance_bulk(lesson_id, data)
     else:
         db.mark_attendance(lesson_id, data['student_id'], data['grade'])
+
+    # MAX notification hook (best-effort, never breaks response)
+    try:
+        pairs = []
+        if isinstance(data, list):
+            pairs = [(r.get('student_id'), r.get('grade')) for r in data]
+        else:
+            pairs = [(data.get('student_id'), data.get('grade'))]
+        pairs = [(sid, g) for sid, g in pairs if g]
+
+        if pairs:
+            lesson = db.get_lesson(lesson_id)
+            if lesson:
+                import threading
+                from tgbot import _fmt_date as _tg_fmt_date
+                date_str = lesson['date']
+                subject_name = lesson.get('actual_subject_name', '')
+                token = db.get_setting('max_bot_token')
+                enabled = db.get_setting('max_bot_enabled')
+                if token and enabled == '1':
+                    import maxbot
+                    for sid, grade in pairs:
+                        threading.Thread(
+                            target=maxbot.notify_grade,
+                            args=(token, sid, grade, date_str, subject_name),
+                            daemon=True
+                        ).start()
+    except Exception:
+        pass
+
     return jsonify({'ok': True})
 
 
@@ -506,6 +536,62 @@ def check_bot():
 app.register_blueprint(settings_bp)
 
 
+# ---- MAX bot settings ----
+maxbot_bp = Blueprint('maxbot_settings', __name__, url_prefix='/api/settings/maxbot')
+
+
+@maxbot_bp.route('', methods=['GET'])
+def maxbot_settings():
+    db = get_db()
+    return jsonify({
+        'has_token': bool(db.get_setting('max_bot_token')),
+        'enabled': db.get_setting('max_bot_enabled') == '1',
+    })
+
+
+@maxbot_bp.route('', methods=['POST'])
+def save_maxbot_settings():
+    data = request.json or {}
+    db = get_db()
+    if 'token' in data:
+        token = (data['token'] or '').strip()
+        db.set_setting('max_bot_token', token or None)
+    if 'enabled' in data:
+        v = data['enabled']
+        db.set_setting('max_bot_enabled', '1' if v in (True, 1, '1', 'on', 'true') else '0')
+    return jsonify({
+        'ok': True,
+        'has_token': bool(db.get_setting('max_bot_token')),
+        'enabled': db.get_setting('max_bot_enabled') == '1',
+    })
+
+
+@maxbot_bp.route('', methods=['DELETE'])
+def delete_maxbot_settings():
+    db = get_db()
+    db.set_setting('max_bot_token', None)
+    db.set_setting('max_bot_enabled', '0')
+    return jsonify({'ok': True})
+
+
+@maxbot_bp.route('/check', methods=['GET'])
+def check_maxbot():
+    import maxbot
+    token = get_db().get_setting('max_bot_token')
+    if not token:
+        return jsonify({'error': 'no bot token'}), 400
+    try:
+        info = maxbot.check(token) or {}
+    except maxbot.MaxError as e:
+        msg = str(e)
+        code = 401 if '401' in msg else 502
+        return jsonify({'error': msg}), code
+    return jsonify({'ok': True})
+
+
+app.register_blueprint(maxbot_bp)
+
+
 # ---- Telegram bot chat links ----
 bot_bp = Blueprint('bot', __name__, url_prefix='/api/bot')
 
@@ -522,6 +608,24 @@ def bot_unbind_student(student_id: int):
 
 
 app.register_blueprint(bot_bp)
+
+
+# ---- MAX bot chat links ----
+maxbot_links_bp = Blueprint('maxbot_links', __name__, url_prefix='/api/maxbot')
+
+
+@maxbot_links_bp.route('/links', methods=['GET'])
+def maxbot_links():
+    return jsonify([dict(r) for r in get_db().list_max_links()])
+
+
+@maxbot_links_bp.route('/links/by-student/<int:student_id>', methods=['DELETE'])
+def maxbot_unbind_student(student_id: int):
+    get_db().unbind_max_student(student_id)
+    return jsonify({'ok': True})
+
+
+app.register_blueprint(maxbot_links_bp)
 
 
 # ---- Save exports to device Downloads (нативный путь для WebView без шаринга) ----

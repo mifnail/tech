@@ -116,6 +116,12 @@ class Database:
                 created TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS max_links (
+                chat_id INTEGER PRIMARY KEY,
+                student_id INTEGER NOT NULL UNIQUE REFERENCES students(id) ON DELETE CASCADE,
+                created TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_students_group ON students(group_id);
             CREATE INDEX IF NOT EXISTS idx_subjects_group ON subjects(group_id);
             CREATE INDEX IF NOT EXISTS idx_schedule_subject ON schedule(subject_id);
@@ -211,6 +217,39 @@ class Database:
             SELECT bl.chat_id, bl.student_id, bl.created,
                    s.last_name, s.first_name, s.middle_name
             FROM bot_links bl JOIN students s ON s.id = bl.student_id
+            ORDER BY s.last_name, s.first_name
+        """).fetchall()
+
+    # ---- MAX bot: привязка чат <-> студент (строго 1:1) ----
+    def bind_max(self, chat_id: int, student_id: int) -> None:
+        self.conn.execute(
+            "INSERT INTO max_links (chat_id, student_id) VALUES (?, ?)",
+            (chat_id, student_id))
+        self.conn.commit()
+
+    def unbind_max(self, chat_id: int) -> None:
+        self.conn.execute("DELETE FROM max_links WHERE chat_id = ?", (chat_id,))
+        self.conn.commit()
+
+    def unbind_max_student(self, student_id: int) -> None:
+        self.conn.execute("DELETE FROM max_links WHERE student_id = ?", (student_id,))
+        self.conn.commit()
+
+    def get_max_link(self, chat_id: int) -> Optional[int]:
+        row = self.conn.execute(
+            "SELECT student_id FROM max_links WHERE chat_id = ?", (chat_id,)).fetchone()
+        return row['student_id'] if row else None
+
+    def get_max_student_chat(self, student_id: int) -> Optional[int]:
+        row = self.conn.execute(
+            "SELECT chat_id FROM max_links WHERE student_id = ?", (student_id,)).fetchone()
+        return row['chat_id'] if row else None
+
+    def list_max_links(self) -> Sequence[sqlite3.Row]:
+        return self.conn.execute("""
+            SELECT ml.chat_id, ml.student_id, ml.created,
+                   s.last_name, s.first_name, s.middle_name
+            FROM max_links ml JOIN students s ON s.id = ml.student_id
             ORDER BY s.last_name, s.first_name
         """).fetchall()
 

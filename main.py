@@ -40,6 +40,34 @@ def _maybe_start_bot(debug: bool) -> None:
         print('bot not started:', e)
 
 
+def _maybe_start_maxbot(debug: bool) -> None:
+    """MAX polling в фоне, если задан токен и бот включён."""
+    if os.environ.get('TEACHHELPER_NO_BOT') == '1':
+        return
+    if debug and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        return
+    try:
+        from database import Database
+        db = Database()
+        try:
+            token = db.get_setting('max_bot_token')
+            enabled = db.get_setting('max_bot_enabled')
+        finally:
+            db.close()
+    except Exception as e:
+        print('maxbot not started (db):', e)
+        return
+    if not token or enabled != '1':
+        return
+    try:
+        import maxbot
+        maxbot.start_polling(token)
+        maxbot.start_reminders(token)
+        print('max bot polling started')
+    except Exception as e:
+        print('maxbot not started:', e)
+
+
 if __name__ == '__main__':
     prod = '--prod' in sys.argv or os.environ.get('MODE') == 'prod'
     debug = not prod and 'ANDROID_ARGUMENT' not in os.environ
@@ -55,5 +83,6 @@ if __name__ == '__main__':
         threading.Thread(target=open_browser, daemon=True).start()
 
     _maybe_start_bot(debug)
+    _maybe_start_maxbot(debug)
 
     app.run(host=host, port=port, debug=debug)

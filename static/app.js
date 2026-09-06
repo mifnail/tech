@@ -615,6 +615,11 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       const links = await App.API.get('/api/bot/links');
       for (const l of links) botBound[l.student_id] = true;
     } catch (e) {}
+    let maxBound = {};
+    try {
+      const mlinks = await App.API.get('/api/maxbot/links');
+      for (const l of mlinks) maxBound[l.student_id] = true;
+    } catch (e) {}
     const group = groups.find(g => g.id == groupId);
 
     let html = App.Nav.render();
@@ -623,10 +628,13 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     html += `<div class="card">`;
     for (const s of students) {
       html += `<div class="row">
-        <div style="flex:1"><span style="font-weight:500">${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</span> ${App.UI.escHtml(s.middle_name || '')}${botBound[s.id] ? ' <span title="Привязан к Telegram-боту">📱</span>' : ''}</div>
-        ${botBound[s.id] ? `<button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.unbindBot(${s.id})">Отвязать</button>` : ''}
+        <div style="flex:1"><span style="font-weight:500">${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</span> ${App.UI.escHtml(s.middle_name || '')}${botBound[s.id] ? ' <span title="Привязан к Telegram-боту">📱</span>' : ''}${maxBound[s.id] ? ' <span title="Привязан к MAX">📨</span>' : ''}</div>
+        <div style="display:flex;gap:4px">
+        ${botBound[s.id] ? `<button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.unbindBot(${s.id})">TG</button>` : ''}
+        ${maxBound[s.id] ? `<button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.unbindMaxBot(${s.id})">MAX</button>` : ''}
         <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditStudent(${s.id}, '${App.UI.escJs(s.last_name)}', '${App.UI.escJs(s.first_name)}', '${App.UI.escJs(s.middle_name || '')}')">✎</button>
         <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.confirmDeleteStudent(${s.id})">✕</button>
+        </div>
       </div>`;
     }
     html += `</div>`;
@@ -671,6 +679,8 @@ App.Pages.settings = async function() {
   App.Loading.show();
   let st = { has_token: false, enabled: false };
   try { st = await App.API.get('/api/settings/bot'); } catch (e) {}
+  let mx = { has_token: false, enabled: false };
+  try { mx = await App.API.get('/api/settings/maxbot'); } catch (e) {}
   let html = App.Nav.render();
   html += `<h1>Настройки</h1>`;
   html += `<div class="card"><div class="card-title">Telegram-бот «Мои оценки»</div>`;
@@ -683,6 +693,17 @@ App.Pages.settings = async function() {
     <button class="btn btn-muted btn-sm" onclick="App.Pages.checkBot()">Проверить</button>
   </div>`;
   if (st.has_token) html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.dropBot()">Отключить</button>`;
+  html += `</div>`;
+  html += `<div class="card"><div class="card-title">MAX-бот «Мои оценки»</div>`;
+  html += `<div class="card-sub" style="margin-bottom:8px">Студенты смотрят оценки через MAX-бота. Токен: <a href="https://max.ru" target="_blank">MAX Platform</a></div>`;
+  html += `<div style="font-size:12px;margin-bottom:4px">Статус: ${mx.has_token ? 'токен есть' : 'нет токена'}${mx.enabled ? ' · включён' : ''}</div>`;
+  html += `<input id="set-mtoken" type="password" placeholder="Токен MAX-бота" autocomplete="off">`;
+  html += `<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px"><input id="set-mlenabled" type="checkbox" ${mx.enabled ? 'checked' : ''} style="width:auto"> Включить бота</label>`;
+  html += `<div class="grid-2" style="margin-top:8px">
+    <button class="btn btn-primary btn-sm" onclick="App.Pages.saveMaxBot()">Сохранить</button>
+    <button class="btn btn-muted btn-sm" onclick="App.Pages.checkMaxBot()">Проверить</button>
+  </div>`;
+  if (mx.has_token) html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.dropMaxBot()">Отключить</button>`;
   html += `</div>`;
   document.getElementById('app').innerHTML = html;
 };
@@ -710,10 +731,41 @@ App.Pages.dropBot = async function() {
   App.Pages.settings();
 };
 
+App.Pages.saveMaxBot = async function() {
+  const token = document.getElementById('set-mtoken').value;
+  const enabled = document.getElementById('set-mlenabled').checked;
+  const body = { enabled };
+  if (token) body.token = token;
+  try { await App.API.post('/api/settings/maxbot', body); App.UI.notify('Сохранено. Перезапусти приложение для старта бота.'); }
+  catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+  App.Pages.settings();
+};
+
+App.Pages.checkMaxBot = async function() {
+  try {
+    const r = await App.API.get('/api/settings/maxbot/check');
+    App.UI.notify(r.ok ? 'MAX-бот доступен' : 'Бот доступен');
+  } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+};
+
+App.Pages.dropMaxBot = async function() {
+  try { await App.API._delete('/api/settings/maxbot'); App.UI.notify('Отключено'); }
+  catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+  App.Pages.settings();
+};
+
 App.Pages.unbindBot = async function(studentId) {
   try {
     await App.API._delete(`/api/bot/links/by-student/${studentId}`);
     App.UI.notify('Чат отвязан');
+  } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+  App.Router.handle();
+};
+
+App.Pages.unbindMaxBot = async function(studentId) {
+  try {
+    await App.API._delete(`/api/maxbot/links/by-student/${studentId}`);
+    App.UI.notify('MAX чат отвязан');
   } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
   App.Router.handle();
 };
