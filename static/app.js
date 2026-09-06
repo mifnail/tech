@@ -715,10 +715,11 @@ App.Pages.settings = async function() {
   if (mx.has_token) html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.dropMaxBot()">Отключить</button>`;
   html += `</div>`;
   html += `<div class="card"><div class="card-title">Бэкап</div>`;
-  html += `<div class="card-sub" style="margin-bottom:8px">Создать резервную копию или восстановить данные из файла.</div>`;
+  html += `<div class="card-sub" style="margin-bottom:8px">Создать резервную копию или восстановить данные.</div>`;
   html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.doBackup()">Выгрузить копию</button>`;
+  html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.confirmRestoreLatest()">Восстановить последнюю копию</button>`;
   html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
-  html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить</button>`;
+  html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
   html += `</div>`;
   document.getElementById('app').innerHTML = html;
 };
@@ -815,6 +816,30 @@ App.Pages.confirmRestore = async function() {
   }
 };
 
+App.Pages.confirmRestoreLatest = async function() {
+  App.UI.showPopup(`
+    <h2>Восстановить последнюю копию?</h2>
+    <p style="margin-bottom:12px">Текущая база данных будет заменена последним бэкапом из «Загрузок». Все несохранённые изменения будут потеряны.</p>
+    <div class="grid-2">
+      <button class="btn btn-danger" onclick="App.Pages.restoreLatest()">Да, заменить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
+    </div>
+  `);
+};
+
+App.Pages.restoreLatest = async function() {
+  App.UI.closePopup();
+  App.Loading.show();
+  try {
+    const r = await App.API.post('/api/restore/latest');
+    App.UI.notify('Данные восстановлены из ' + (r.name || 'последнего бэкапа'));
+    App.Pages.settings();
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка восстановления');
+    App.Pages.settings();
+  }
+};
+
 App.Pages.unbindBot = async function(studentId) {
   try {
     await App.API._delete(`/api/bot/links/by-student/${studentId}`);
@@ -847,15 +872,50 @@ App.Pages.shareReport = async function(dateStr) {
 
 App.Pages.startLesson = async function(subjectId, lessonNumber) {
   const today = new Date().toISOString().slice(0, 10);
+  App.Pages._newLessonDate = today;
   App.UI.showPopup(`
     <h2>Начать занятие</h2>
-    <label style="display:block;margin-bottom:4px;font-size:13px">Дата:</label>
-    <input type="date" id="new-lesson-date" value="${today}" max="${today}">
+    <div style="text-align:center;font-size:22px;font-weight:600;margin:8px 0" id="new-lesson-label">${App.UI.formatDate(today)}</div>
+    <input type="hidden" id="new-lesson-date" value="${today}">
+    <div class="grid-2">
+      <button class="btn btn-muted" onclick="App.Pages.shiftLessonDate(-1)">◀ −1 день</button>
+      <button class="btn btn-muted" onclick="App.Pages.shiftLessonDate(1)">+1 день ▶</button>
+    </div>
+    <div class="grid-2" style="margin-top:8px">
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.setLessonDate(0)">Сегодня</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.setLessonDate(1)">Вчера</button>
+    </div>
     <div class="grid-2" style="margin-top:8px">
       <button class="btn btn-success" onclick="App.Pages.confirmStartLesson(${subjectId}, ${lessonNumber})">Создать</button>
       <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
     </div>
   `);
+};
+
+App.Pages._shiftIso = function(iso, delta) {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + delta);
+  return d.toISOString().slice(0, 10);
+};
+
+App.Pages._renderLessonDate = function() {
+  const v = App.Pages._newLessonDate;
+  document.getElementById('new-lesson-date').value = v;
+  document.getElementById('new-lesson-label').textContent = App.UI.formatDate(v);
+};
+
+App.Pages.shiftLessonDate = function(delta) {
+  const today = new Date().toISOString().slice(0, 10);
+  const v = App.Pages._shiftIso(App.Pages._newLessonDate, delta);
+  if (v > today) { App.UI.notify('Будущие даты нельзя'); return; }
+  App.Pages._newLessonDate = v;
+  App.Pages._renderLessonDate();
+};
+
+App.Pages.setLessonDate = function(daysAgo) {
+  const today = new Date().toISOString().slice(0, 10);
+  App.Pages._newLessonDate = App.Pages._shiftIso(today, -daysAgo);
+  App.Pages._renderLessonDate();
 };
 
 App.Pages.confirmStartLesson = async function(subjectId, lessonNumber) {
