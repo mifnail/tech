@@ -257,12 +257,17 @@ def schedule_today():
     week_num = today.isocalendar()[1]
     week_type = 1 if week_num % 2 == 1 else 2
     db = get_db()
+    lessons = []
+    for r in db.list_lessons_by_date(today.isoformat()):
+        ld = dict(r)
+        ld['needs_attention'] = ld['status'] != 'cancelled' and db.attendance_count(ld['id']) == 0
+        lessons.append(ld)
     return jsonify({
         'date': today.isoformat(),
         'formatted_date': today.strftime('%d.%m.%Y'),
         'day_of_week': day,
         'schedule': [dict(r) for r in db.get_schedule_for_day(day, week_type)],
-        'lessons': [dict(r) for r in db.list_lessons_by_date(today.isoformat())]
+        'lessons': lessons
     })
 
 

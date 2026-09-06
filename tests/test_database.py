@@ -636,3 +636,21 @@ class TestReports:
         lid = db.add_lesson(sid, '2026-09-01', sid, 'held')
         students = db.get_group_students(lid)
         assert len(students) == 1
+
+    def test_attendance_count(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_subject('Математика', 32, gid)
+        s1 = db.add_student(gid, 'Иванов', 'Иван')
+        s2 = db.add_student(gid, 'Петров', 'Петр')
+        lid = db.add_lesson(sid, '2026-09-01', sid, 'held')
+        assert db.attendance_count(lid) == 0
+        db.mark_attendance(lid, s1, '5')
+        assert db.attendance_count(lid) == 1
+        db.mark_attendance(lid, s2, '4')
+        assert db.attendance_count(lid) == 2
+
+    def test_attendance_count_empty_lesson(self, db):
+        gid = db.add_group('ИС-11')
+        sid = db.add_subject('Математика', 32, gid)
+        lid = db.add_lesson(sid, '2026-09-01', sid, 'held')
+        assert db.attendance_count(lid) == 0

@@ -242,11 +242,11 @@ App.Pages = {
         html += `<div class="card">
           <div class="card-title">Занятие ${e.lesson_number} · ${App.UI.escHtml(e.subject_name)}</div>
           <div class="card-sub">${App.UI.escHtml(e.group_name)}</div>`;
-        for (const l of existing) {
+          for (const l of existing) {
           const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
           const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
           html += `<div style="display:flex;align-items:center;gap:4px;margin-top:4px">
-            <a href="#lesson/${l.id}" style="flex:1">${label} · ${App.UI.formatDate(l.date)}</a>
+            <a href="#lesson/${l.id}" style="flex:1">${label} · ${App.UI.formatDate(l.date)}${l.needs_attention ? ' <span class="badge badge-cancelled">⚠ не заполнено</span>' : ''}</a>
             <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
           </div>`;
         }
@@ -262,7 +262,7 @@ App.Pages = {
         const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
         html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
           <div class="card-title">${App.UI.escHtml(l.actual_subject_name)}</div>
-          <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${cls}">${label}</span></div>
+          <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${cls}">${label}</span>${l.needs_attention ? ' <span class="badge badge-cancelled">⚠ не заполнено</span>' : ''}</div>
         </div>`;
       }
     }
@@ -378,7 +378,7 @@ App.Pages = {
             const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
             const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
             html += `<div style="display:flex;align-items:center;gap:4px;margin-top:4px">
-              <a href="#lesson/${l.id}" style="flex:1">${label} · ${App.UI.formatDate(l.date)}</a>
+              <a href="#lesson/${l.id}" style="flex:1">${label} · ${App.UI.formatDate(l.date)}${l.needs_attention ? ' <span class="badge badge-cancelled">⚠ не заполнено</span>' : ''}</a>
               <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
             </div>`;
           }
@@ -397,6 +397,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
             html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
               <div class="card-title">${App.UI.escHtml(l.actual_subject_name)}</div>
               <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${cls}">${label}</span>
+                ${l.needs_attention ? '<span class="badge badge-cancelled">⚠ не заполнено</span>' : ''}
                 ${l.status === 'cancelled' ? '· Отменено' : ''}</div>
               <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
             </div>`;

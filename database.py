@@ -578,6 +578,11 @@ class Database:
             ORDER BY s.last_name, s.first_name
         """, (lesson_id,)).fetchall()
 
+    def attendance_count(self, lesson_id: int) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM grades WHERE lesson_id = ?", (lesson_id,)
+        ).fetchone()[0]
+
     def student_grades(self, student_id: int, subject_id: Optional[int] = None) -> Sequence[sqlite3.Row]:
         if subject_id is not None:
             return self.conn.execute("""

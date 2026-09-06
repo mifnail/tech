@@ -2,6 +2,7 @@ import pytest
 import json
 import os
 import sys
+from datetime import date
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import api as _api_module
@@ -278,6 +279,32 @@ class TestScheduleAPI:
         assert 'date' in rv.json
         assert 'schedule' in rv.json
         assert 'lessons' in rv.json
+
+    def test_today_needs_attention_empty_held(self, client):
+        _, sid = self._setup(client)
+        today_str = date.today().isoformat()
+        lid = get_db().add_lesson(sid, today_str, sid, 'held')
+        rv = client.get('/api/schedule/today')
+        lesson = [l for l in rv.json['lessons'] if l['id'] == lid][0]
+        assert lesson['needs_attention'] is True
+
+    def test_today_needs_attention_with_grade(self, client):
+        gid, sid = self._setup(client)
+        student_id = get_db().add_student(gid, 'Иванов', 'Иван')
+        today_str = date.today().isoformat()
+        lid = get_db().add_lesson(sid, today_str, sid, 'held')
+        get_db().mark_attendance(lid, student_id, '5')
+        rv = client.get('/api/schedule/today')
+        lesson = [l for l in rv.json['lessons'] if l['id'] == lid][0]
+        assert lesson['needs_attention'] is False
+
+    def test_today_needs_attention_cancelled(self, client):
+        _, sid = self._setup(client)
+        today_str = date.today().isoformat()
+        lid = get_db().add_lesson(sid, today_str, sid, 'cancelled')
+        rv = client.get('/api/schedule/today')
+        lesson = [l for l in rv.json['lessons'] if l['id'] == lid][0]
+        assert lesson['needs_attention'] is False
 
     def test_update(self, client):
         _, sid = self._setup(client)
