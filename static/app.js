@@ -442,17 +442,11 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
         <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.xlsx', '/api/export/grades/${subjectId}.xlsx')">Excel</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
       </div></div>`;
-      html += `<div class="card" style="margin-top:8px"><div class="card-title">Тест экспорта (временно)</div>`;
+      html += `<div class="card" style="margin-top:8px"><div class="card-title">Поделиться (тест)</div>`;
       html += `<div class="grid-2">
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'title')">A: cast+заголовок</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'none')">G: cast+без заглавия</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'jstring')">H: cast+JString</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'direct')">I: cast+без chooser</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'clip', 'none')">B: ClipData+без загл.</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'both', 'none')">C: оба+без загл.</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'jstring')">H: через список</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'direct')">I: напрямую</button>
         <button class="btn btn-muted btn-sm" onclick="App.Pages.testShareSave(${subjectId})">D: сохранить</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testDiag()">E: диагностика</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testLaunch()">F: запустить шторку</button>
       </div></div>`;
     }
 
