@@ -442,6 +442,13 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
         <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.xlsx', '/api/export/grades/${subjectId}.xlsx')">Excel</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
       </div></div>`;
+      html += `<div class="card" style="margin-top:8px"><div class="card-title">Тест экспорта (временно)</div>`;
+      html += `<div class="grid-2">
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'clip')">A: ClipData</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'extra')">B: putExtra</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShareSave(${subjectId})">C: сохранить</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testDiag()">D: диагностика</button>
+      </div></div>`;
     }
 
     if (avg.length) {
@@ -716,6 +723,28 @@ App.Pages.unbindBot = async function(studentId) {
     App.UI.notify('Чат отвязан');
   } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
   App.Router.handle();
+};
+
+App.Pages.testShare = async function(subjectId, mode) {
+  try {
+    const r = await App.API.post(`/api/export/grades/${subjectId}/share?mode=${mode}`);
+    App.UI.notify(r.shared === false ? ('Не вышло: ' + (r.error || '')) : 'Шторка открыта (' + mode + ')');
+  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
+};
+
+App.Pages.testShareSave = async function(subjectId) {
+  try {
+    const r = await App.API.post(`/api/export/grades/${subjectId}/to-downloads`);
+    App.UI.notify('Сохранено: ' + (r.path || ''));
+  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
+};
+
+App.Pages.testDiag = async function() {
+  try {
+    const r = await App.API.post('/api/export/diag');
+    const rows = (r.steps || []).map(s => `<div style="font-size:12px">${s.ok ? '✅' : '❌'} ${s.name}${s.ok ? '' : ': ' + (s.error || '')}</div>`).join('');
+    App.UI.showPopup(`<h2>Диагностика</h2>${rows || 'пусто'}`);
+  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
 };
 
 App.Pages.startLesson = async function(subjectId, lessonNumber) {

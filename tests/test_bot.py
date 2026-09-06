@@ -390,7 +390,7 @@ class TestNativeShare:
         monkeypatch.setattr(_api_module, '_save_to_downloads_full',
                             lambda data, fn, mt: ('/fake/' + fn, 'content://fake/1'))
         monkeypatch.setattr(_api_module, '_share_file',
-                            lambda uri, mt, label=None: seen.update(uri=uri, mt=mt))
+                            lambda uri, mt, label=None, mode='clip': seen.update(uri=uri, mt=mt))
         rv = client.post(f'/api/export/grades/{sid}/share')
         assert rv.status_code == 200, rv.json
         assert rv.json == {'ok': True, 'path': f'/fake/grades_{sid}.xlsx', 'shared': True}
@@ -399,7 +399,7 @@ class TestNativeShare:
     def test_share_report_ok(self, client, monkeypatch):
         monkeypatch.setattr(_api_module, '_save_to_downloads_full',
                             lambda data, fn, mt: ('/fake/' + fn, 'content://fake/2'))
-        monkeypatch.setattr(_api_module, '_share_file', lambda uri, mt, label=None: None)
+        monkeypatch.setattr(_api_module, '_share_file', lambda uri, mt, label=None, mode='clip': None)
         rv = client.post('/api/export/report/2026-09-01/share')
         assert rv.status_code == 200
         assert rv.json['shared'] is True
@@ -416,7 +416,7 @@ class TestNativeShare:
         monkeypatch.setattr(_api_module, '_save_to_downloads_full',
                             lambda data, fn, mt: ('/fake/' + fn, 'content://fake/3'))
 
-        def boom(uri, mt, label=None):
+        def boom(uri, mt, label=None, mode='clip'):
             raise RuntimeError('no activity')
 
         monkeypatch.setattr(_api_module, '_share_file', boom)
@@ -424,3 +424,38 @@ class TestNativeShare:
         assert rv.status_code == 200
         assert rv.json['shared'] is False
         assert rv.json['path'] == f'/fake/grades_{sid}.xlsx'
+
+
+class TestShareModes:
+    def _setup_subject(self, client):
+        gid = client.post('/api/groups', json={'name': 'Г'}).json['id']
+        return client.post('/api/subjects', json={
+            'name': 'П', 'total_hours': 1, 'group_id': gid}).json['id']
+
+    def test_mode_forwarded(self, client, monkeypatch):
+        sid = self._setup_subject(client)
+        seen = {}
+        monkeypatch.setattr(_api_module, '_save_to_downloads_full',
+                            lambda data, fn, mt: ('/fake/' + fn, 'content://fake/9'))
+
+        def fake_share(uri, mt, label='vedomost', mode='clip'):
+            seen['mode'] = mode
+
+        monkeypatch.setattr(_api_module, '_share_file', fake_share)
+        rv = client.post(f'/api/export/grades/{sid}/share?mode=extra')
+        assert rv.status_code == 200
+        assert seen.get('mode') == 'extra'
+
+    def test_bad_mode(self, client):
+        sid = self._setup_subject(client)
+        rv = client.post(f'/api/export/grades/{sid}/share?mode=bogus')
+        assert rv.status_code == 400
+
+    def test_diag_no_jnius(self, client):
+        # без jnius (ПК/CI): аккуратная структура с провалом первого шага
+        rv = client.post('/api/export/diag')
+        assert rv.status_code == 200
+        body = rv.json
+        assert body['ok'] is False
+        assert body['steps'][0]['name'] == 'jnius import'
+        assert body['steps'][0]['ok'] is False
