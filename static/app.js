@@ -439,14 +439,8 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
       <div class="card-sub" style="margin-top:8px">Группа: ${App.UI.escHtml(s.group_name)}</div>`;
       html += `<div class="grid-2" style="margin-top:8px">
-        <button class="btn btn-muted btn-sm" onclick="App.Download.as('grades-${subjectId}.xlsx', '/api/export/grades/${subjectId}.xlsx')">Excel</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.shareGrades(${subjectId})">Поделиться</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
-      </div></div>`;
-      html += `<div class="card" style="margin-top:8px"><div class="card-title">Поделиться (тест)</div>`;
-      html += `<div class="grid-2">
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'jstring')">H: через список</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'cast', 'direct')">I: напрямую</button>
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShareSave(${subjectId})">D: сохранить</button>
       </div></div>`;
     }
 
@@ -724,33 +718,10 @@ App.Pages.unbindBot = async function(studentId) {
   App.Router.handle();
 };
 
-App.Pages.testShare = async function(subjectId, mode, chooser) {
+App.Pages.shareGrades = async function(subjectId) {
   try {
-    const r = await App.API.post(`/api/export/grades/${subjectId}/share?mode=${mode}&chooser=${chooser || 'title'}`);
-    App.UI.notify(r.shared === false ? ('Не вышло: ' + (r.error || '')) : 'Шторка открыта (' + mode + '/' + (chooser || 'title') + ')');
-  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
-};
-
-App.Pages.testShareSave = async function(subjectId) {
-  try {
-    const r = await App.API.post(`/api/export/grades/${subjectId}/to-downloads`);
-    App.UI.notify('Сохранено: ' + (r.path || ''));
-  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
-};
-
-App.Pages.testDiag = async function() {
-  try {
-    const r = await App.API.post('/api/export/diag');
-    const rows = (r.steps || []).map(s => `<div style="font-size:12px">${s.ok ? '✅' : '❌'} ${s.name}${s.ok ? (s.info ? ' — ' + s.info : '') : ': ' + (s.error || '')}</div>`).join('');
-    App.UI.showPopup(`<h2>Диагностика</h2>${rows || 'пусто'}`);
-  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
-};
-
-App.Pages.testLaunch = async function() {
-  try {
-    const r = await App.API.post('/api/export/diag?launch=1');
-    const rows = (r.steps || []).map(s => `<div style="font-size:12px">${s.ok ? '✅' : '❌'} ${s.name}${s.ok ? (s.info ? ' — ' + s.info : '') : ': ' + (s.error || '')}</div>`).join('');
-    App.UI.showPopup(`<h2>Диагностика+запуск</h2>${rows || 'пусто'}`);
+    const r = await App.API.post(`/api/export/grades/${subjectId}/share?mode=cast&chooser=direct`);
+    App.UI.notify(r.shared === false ? ('Файл сохранён, шторка не открылась: ' + (r.error || '')) : 'Шторка открыта');
   } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
 };
 
