@@ -193,9 +193,17 @@ App.Grades = {
     const map = { '0': '#e8f5e9', 'present': '#e8f5e9', '5': '#ffebee', '4': '#e3f2fd', '3': '#fff8e1', '2': '#e0e0e0' };
     return map[grade] || '';
   },
-  async cycle(lessonId, studentId, currentGrade) {
+  async cycle(lessonId, studentId, currentGrade, ev) {
+    // Направление перебора от места тапа: правая половина — вперёд, левая — назад.
+    let dir = 1;
+    try {
+      const t = ev && ev.currentTarget ? ev.currentTarget.getBoundingClientRect() : null;
+      const x = ev && ev.clientX != null ? ev.clientX : null;
+      if (t && x != null && t.width > 0 && ((x - t.left) / t.width) < 0.5) dir = -1;
+    } catch (e) {}
+    const n = this.CYCLE.length;
     const idx = this.CYCLE.indexOf(currentGrade || '');
-    const next = this.CYCLE[(idx + 1) % this.CYCLE.length];
+    const next = this.CYCLE[(((idx + dir) % n) + n) % n];
     await App.API.post(`/api/lessons/${lessonId}/attendance`, { student_id: studentId, grade: next });
     App.Pages.lesson(lessonId);
   }
@@ -551,7 +559,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
       const bgStyle = grade === null ? '' : `background:${App.Grades.bgColor(grade)}`;
       const fullName = `${s.last_name} ${s.first_name || ''} ${s.middle_name || ''}`.trim();
       const displayName = `${s.last_name} ${s.first_name ? s.first_name[0] + '.' : ''}`;
-      html += `<div class="att-row-2col ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}')" style="${bgStyle}" title="${App.UI.escHtml(fullName)}">
+      html += `<div class="att-row-2col ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}', event)" style="${bgStyle}" title="${App.UI.escHtml(fullName)}">
         <div class="att-name">${App.UI.escHtml(displayName)}</div>
         <div class="att-badge grade-${App.Grades.colorClass(grade)}">${label}</div>
       </div>`;
