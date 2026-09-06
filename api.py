@@ -642,15 +642,28 @@ def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
     return path
 
 
-SHARE_MODES = ('clip', 'extra', 'both')
+SHARE_MODES = ('clip', 'extra', 'both', 'wild')
+
+
+def _count_handlers(mimetype: str) -> int:
+    """Сколько приложений готовы принять ACTION_SEND с таким MIME (0 — шторка будет пустой)."""
+    from jnius import autoclass
+    Intent = autoclass('android.content.Intent')
+    ctx = _android_context()
+    probe = Intent()
+    probe.setAction(Intent.ACTION_SEND)
+    probe.setType(mimetype)
+    pm = ctx.getPackageManager()
+    return int(pm.queryIntentActivities(probe, 0).size())
 
 
 def _share_file(uri_string: str, mimetype: str, label: str = 'vedomost',
                 mode: str = 'clip') -> None:
     """Открыть системную шторку «Поделиться» с файлом (только Android).
 
-    mode: 'clip' — только ClipData; 'extra' — только putExtra(EXTRA_STREAM);
-    'both' — putExtra best-effort + ClipData. Ошибки наружу (для стенда).
+    mode: 'clip' — ClipData+xlsx; 'extra' — только putExtra(EXTRA_STREAM);
+    'both' — putExtra best-effort + ClipData; 'wild' — ClipData + MIME */*
+    (если ни одно приложение не заявлено на xlsx-MIME). Ошибки наружу.
     """
     if mode not in SHARE_MODES:
         raise ValueError(f'bad share mode: {mode}')
@@ -661,14 +674,14 @@ def _share_file(uri_string: str, mimetype: str, label: str = 'vedomost',
     uri = Uri.parse(uri_string)
     intent = Intent()
     intent.setAction(Intent.ACTION_SEND)
-    intent.setType(mimetype)
+    intent.setType('*/*' if mode == 'wild' else mimetype)
     if mode in ('extra', 'both'):
         try:
             intent.putExtra(Intent.EXTRA_STREAM, uri)
         except Exception:
             if mode == 'extra':
                 raise
-    if mode in ('clip', 'both'):
+    if mode in ('clip', 'both', 'wild'):
         ClipData = autoclass('android.content.ClipData')
         clip = ClipData.newUri(ctx.getContentResolver(), label, uri)
         intent.setClipData(clip)
@@ -819,11 +832,37 @@ def diag_share():
         _mediastore_delete_name(box['resolver'], box['collection'], 'diag_test.txt')
         return 'cleaned'
 
+    def do_handlers():
+        nx = _count_handlers(XLSX_MIME)
+        nw = _count_handlers('*/*')
+        return f'xlsx:{nx} */*:{nw}'
+
+    def do_launch():
+        from jnius import autoclass
+        Intent = autoclass('android.content.Intent')
+        Uri = autoclass('android.net.Uri')
+        ClipData = autoclass('android.content.ClipData')
+        ctx = box['ctx']
+        uri = Uri.parse(box['uri'])
+        intent = Intent()
+        intent.setAction(Intent.ACTION_SEND)
+        intent.setType(XLSX_MIME)
+        clip = ClipData.newUri(ctx.getContentResolver(), 'diag_test.txt', uri)
+        intent.setClipData(clip)
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        chooser = Intent.createChooser(intent, 'Диагностика: шторка')
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(chooser)
+        return 'sheet fired'
+
     if (step('context', do_ctx) and step('sdk', do_sdk)
             and step('collection', do_collection)
             and step('insert+write', do_insert_write)
-            and step('clipdata', do_clip) and step('putextra', do_extra)):
+            and step('clipdata', do_clip) and step('putextra', do_extra)
+            and step('handlers', do_handlers)):
         step('cleanup', do_cleanup)
+        if request.args.get('launch') == '1':
+            step('launch', do_launch)
     return jsonify({'ok': all(s['ok'] for s in steps), 'steps': steps})
 
 

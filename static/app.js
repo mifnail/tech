@@ -448,6 +448,8 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
         <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'extra')">B: putExtra</button>
         <button class="btn btn-muted btn-sm" onclick="App.Pages.testShareSave(${subjectId})">C: сохранить</button>
         <button class="btn btn-muted btn-sm" onclick="App.Pages.testDiag()">D: диагностика</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testShare(${subjectId}, 'wild')">E: */* шаринг</button>
+        <button class="btn btn-muted btn-sm" onclick="App.Pages.testLaunch()">F: запустить шторку</button>
       </div></div>`;
     }
 
@@ -742,8 +744,16 @@ App.Pages.testShareSave = async function(subjectId) {
 App.Pages.testDiag = async function() {
   try {
     const r = await App.API.post('/api/export/diag');
-    const rows = (r.steps || []).map(s => `<div style="font-size:12px">${s.ok ? '✅' : '❌'} ${s.name}${s.ok ? '' : ': ' + (s.error || '')}</div>`).join('');
+    const rows = (r.steps || []).map(s => `<div style="font-size:12px">${s.ok ? '✅' : '❌'} ${s.name}${s.ok ? (s.info ? ' — ' + s.info : '') : ': ' + (s.error || '')}</div>`).join('');
     App.UI.showPopup(`<h2>Диагностика</h2>${rows || 'пусто'}`);
+  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
+};
+
+App.Pages.testLaunch = async function() {
+  try {
+    const r = await App.API.post('/api/export/diag?launch=1');
+    const rows = (r.steps || []).map(s => `<div style="font-size:12px">${s.ok ? '✅' : '❌'} ${s.name}${s.ok ? (s.info ? ' — ' + s.info : '') : ': ' + (s.error || '')}</div>`).join('');
+    App.UI.showPopup(`<h2>Диагностика+запуск</h2>${rows || 'пусто'}`);
   } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
 };
 

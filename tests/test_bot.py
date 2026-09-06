@@ -446,6 +446,20 @@ class TestShareModes:
         assert rv.status_code == 200
         assert seen.get('mode') == 'extra'
 
+    def test_mode_wild_forwarded(self, client, monkeypatch):
+        sid = self._setup_subject(client)
+        seen = {}
+        monkeypatch.setattr(_api_module, '_save_to_downloads_full',
+                            lambda data, fn, mt: ('/fake/' + fn, 'content://fake/9'))
+
+        def fake_share(uri, mt, label='vedomost', mode='clip'):
+            seen['mode'] = mode
+
+        monkeypatch.setattr(_api_module, '_share_file', fake_share)
+        rv = client.post(f'/api/export/grades/{sid}/share?mode=wild')
+        assert rv.status_code == 200
+        assert seen.get('mode') == 'wild'
+
     def test_bad_mode(self, client):
         sid = self._setup_subject(client)
         rv = client.post(f'/api/export/grades/{sid}/share?mode=bogus')
