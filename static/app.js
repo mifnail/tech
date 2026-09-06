@@ -333,7 +333,7 @@ App.Pages = {
       <button class="btn btn-muted" style="flex:1" onclick="App.Pages.showAddGroup()">+ Группа</button>
     </div>
     <h2>Экспорт</h2><div class="grid-2">
-      <button class="btn btn-muted btn-sm" onclick="App.Download.as('report-${today.date}.xlsx', '/api/export/report/${today.date}.xlsx')">Отчёт (Excel)</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.shareReport('${today.date}')">Поделиться отчётом</button>
     </div>`;
 
     document.getElementById('app').innerHTML = html;
@@ -780,7 +780,14 @@ App.Pages.unbindMaxBot = async function(studentId) {
 
 App.Pages.shareGrades = async function(subjectId) {
   try {
-    const r = await App.API.post(`/api/export/grades/${subjectId}/share?mode=cast&chooser=direct`);
+    const r = await App.API.post(`/api/export/grades/${subjectId}/share`);
+    App.UI.notify(r.shared === false ? ('Файл сохранён, шторка не открылась: ' + (r.error || '')) : 'Шторка открыта');
+  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
+};
+
+App.Pages.shareReport = async function(dateStr) {
+  try {
+    const r = await App.API.post(`/api/export/report/${dateStr}/share`);
     App.UI.notify(r.shared === false ? ('Файл сохранён, шторка не открылась: ' + (r.error || '')) : 'Шторка открыта');
   } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
 };

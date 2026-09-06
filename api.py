@@ -756,37 +756,8 @@ def _save_to_downloads(data: bytes, filename: str, mimetype: str) -> str:
     return path
 
 
-SHARE_MODES = ('cast', 'clip', 'both')
-CHOOSER_VARIANTS = ('title', 'none', 'jstring', 'direct')
-
-
-def _count_handlers(mimetype: str) -> int:
-    """Сколько приложений готовы принять ACTION_SEND с таким MIME."""
-    from jnius import autoclass
-    Intent = autoclass('android.content.Intent')
-    ctx = _android_context()
-    probe = Intent()
-    probe.setAction(Intent.ACTION_SEND)
-    probe.setType(mimetype)
-    pm = ctx.getPackageManager()
-    return int(pm.queryIntentActivities(probe, 0).size())
-
-
-def _share_file(uri_string: str, mimetype: str, label: str = 'vedomost',
-                mode: str = 'cast', chooser: str = 'title') -> None:
-    """Открыть шторку «Поделиться» (только Android).
-
-    mode: 'cast' — cast(Uri→Parcelable)+putExtra; 'clip' — ClipData;
-    'both' — оба. Источник: androidstorage4kivy/sharesheet.py (MIT).
-    chooser: 'title' — createChooser(intent, str);
-    'none' — createChooser(intent, None) [как в библиотеке];
-    'jstring' — createChooser(intent, JString);
-    'direct' — без chooser, startActivity(intent) напрямую.
-    """
-    if mode not in SHARE_MODES:
-        raise ValueError(f'bad share mode: {mode}')
-    if chooser not in CHOOSER_VARIANTS:
-        raise ValueError(f'bad chooser: {chooser}')
+def _share_file(uri_string: str, mimetype: str, label: str = 'vedomost') -> None:
+    """Открыть шторку «Поделиться» (только Android)."""
     from jnius import autoclass, cast
     Intent = autoclass('android.content.Intent')
     Uri = autoclass('android.net.Uri')
@@ -795,27 +766,11 @@ def _share_file(uri_string: str, mimetype: str, label: str = 'vedomost',
     intent = Intent()
     intent.setAction(Intent.ACTION_SEND)
     intent.setType(mimetype)
-    if mode in ('cast', 'both'):
-        parcelable = cast('android.os.Parcelable', uri)
-        intent.putExtra(Intent.EXTRA_STREAM, parcelable)
-    if mode in ('clip', 'both'):
-        ClipData = autoclass('android.content.ClipData')
-        clip = ClipData.newUri(ctx.getContentResolver(), label, uri)
-        intent.setClipData(clip)
+    parcelable = cast('android.os.Parcelable', uri)
+    intent.putExtra(Intent.EXTRA_STREAM, parcelable)
     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    if chooser == 'direct':
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        ctx.startActivity(intent)
-        return
-    if chooser == 'none':
-        target = Intent.createChooser(intent, None)
-    elif chooser == 'jstring':
-        JString = autoclass('java.lang.String')
-        target = Intent.createChooser(intent, JString('Поделиться ведомостью'))
-    else:
-        target = Intent.createChooser(intent, 'Поделиться ведомостью')
-    target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    ctx.startActivity(target)
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    ctx.startActivity(intent)
 
 
 @export_bp.route('/grades/<int:subject_id>/to-downloads', methods=['POST'])
@@ -844,13 +799,8 @@ def save_report_to_downloads(date: str):
     return jsonify({'ok': True, 'path': where})
 
 
-def _save_and_share(data: bytes, filename: str, mode: str = 'cast',
-                    chooser: str = 'title'):
+def _save_and_share(data: bytes, filename: str):
     """Сохранить в Загрузки и открыть шторку. Файл остаётся, даже если шаринг не вышел."""
-    if mode not in SHARE_MODES:
-        return jsonify({'error': f'bad share mode: {mode}'}), 400
-    if chooser not in CHOOSER_VARIANTS:
-        return jsonify({'error': f'bad chooser: {chooser}'}), 400
     try:
         where, uri = _save_to_downloads_full(data, filename, XLSX_MIME)
     except Exception as e:
@@ -858,7 +808,7 @@ def _save_and_share(data: bytes, filename: str, mode: str = 'cast',
     if uri is None:
         return jsonify({'error': 'share available only on Android'}), 400
     try:
-        _share_file(uri, XLSX_MIME, where.rsplit('/', 1)[-1], mode, chooser)
+        _share_file(uri, XLSX_MIME, where.rsplit('/', 1)[-1])
     except Exception as e:
         return jsonify({'ok': True, 'path': where, 'shared': False, 'error': str(e)})
     return jsonify({'ok': True, 'path': where, 'shared': True})
@@ -870,9 +820,7 @@ def share_grades(subject_id: int):
         data = export_grades_xlsx(subject_id, get_db())
     except RuntimeError as e:
         return _missing_deps_response(e)
-    return _save_and_share(data, f'grades_{subject_id}.xlsx',
-                           request.args.get('mode', 'cast'),
-                           request.args.get('chooser', 'title'))
+    return _save_and_share(data, f'grades_{subject_id}.xlsx')
 
 
 @export_bp.route('/report/<date>/share', methods=['POST'])
@@ -881,126 +829,7 @@ def share_report(date: str):
         data = export_report_xlsx(date, get_db())
     except RuntimeError as e:
         return _missing_deps_response(e)
-    return _save_and_share(data, f'report_{date}.xlsx',
-                           request.args.get('mode', 'cast'),
-                           request.args.get('chooser', 'title'))
-
-
-@export_bp.route('/diag', methods=['POST'])
-def diag_share():
-    """Стенд: проверить каждый шаг шаринга по очереди, без запуска шторки."""
-    steps = []
-
-    def step(name, fn):
-        try:
-            info = fn()
-            steps.append({'name': name, 'ok': True, 'info': str(info or '')[:120]})
-            return True
-        except Exception as e:
-            steps.append({'name': name, 'ok': False, 'error': str(e)[:300]})
-            return False
-
-    try:
-        from jnius import autoclass
-        steps.append({'name': 'jnius import', 'ok': True, 'info': ''})
-    except Exception as e:
-        steps.append({'name': 'jnius import', 'ok': False, 'error': str(e)[:300]})
-        return jsonify({'ok': False, 'steps': steps})
-
-    box = {}
-
-    def do_ctx():
-        box['ctx'] = _android_context()
-        return 'context ok'
-
-    def do_sdk():
-        BuildVersion = autoclass('android.os.Build$VERSION')
-        box['sdk'] = int(BuildVersion.SDK_INT)
-        return f"SDK {box['sdk']}"
-
-    def do_collection():
-        try:
-            Downloads = autoclass('android.provider.MediaStore$Downloads')
-            box['collection'] = Downloads.getContentUri('external')
-        except Exception:
-            Files = autoclass('android.provider.MediaStore$Files')
-            box['collection'] = Files.getContentUri('external')
-        return 'collection ok'
-
-    def do_insert_write():
-        ContentValues = autoclass('android.content.ContentValues')
-        resolver = box['ctx'].getContentResolver()
-        box['resolver'] = resolver
-        values = ContentValues()
-        values.put('title', 'diag_test.txt')
-        values.put('_display_name', 'diag_test.txt')
-        values.put('mime_type', 'text/plain')
-        values.put('relative_path', 'Download/')
-        uri = resolver.insert(box['collection'], values)
-        out = resolver.openOutputStream(uri)
-        try:
-            out.write(b'diag')
-        finally:
-            out.close()
-        box['uri'] = uri.toString()
-        return box['uri']
-
-    def do_clip():
-        ClipData = autoclass('android.content.ClipData')
-        Uri = autoclass('android.net.Uri')
-        ClipData.newUri(box['ctx'].getContentResolver(), 'diag', Uri.parse(box['uri']))
-        return 'clip ok'
-
-    def do_extra():
-        Intent = autoclass('android.content.Intent')
-        Uri = autoclass('android.net.Uri')
-        t = Intent()
-        t.setAction(Intent.ACTION_SEND)
-        t.setType('text/plain')
-        t.putExtra(Intent.EXTRA_STREAM, Uri.parse(box['uri']))
-        return 'putExtra ok'
-
-    def do_cast():
-        from jnius import cast
-        Uri = autoclass('android.net.Uri')
-        uri = Uri.parse(box['uri'])
-        parcelable = cast('android.os.Parcelable', uri)
-        return f'cast ok: {parcelable}'
-
-    def do_handlers():
-        nx = _count_handlers(XLSX_MIME)
-        nw = _count_handlers('*/*')
-        return f'xlsx:{nx} */*:{nw}'
-
-    def do_launch():
-        from jnius import autoclass, cast
-        Intent = autoclass('android.content.Intent')
-        Uri = autoclass('android.net.Uri')
-        ClipData = autoclass('android.content.ClipData')
-        ctx = box['ctx']
-        uri = Uri.parse(box['uri'])
-        parcelable = cast('android.os.Parcelable', uri)
-        intent = Intent()
-        intent.setAction(Intent.ACTION_SEND)
-        intent.setType(XLSX_MIME)
-        intent.putExtra(Intent.EXTRA_STREAM, parcelable)
-        clip = ClipData.newUri(ctx.getContentResolver(), 'diag_test.txt', uri)
-        intent.setClipData(clip)
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        chooser = Intent.createChooser(intent, None)
-        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        ctx.startActivity(chooser)
-        return 'sheet fired'
-
-    if (step('context', do_ctx) and step('sdk', do_sdk)
-            and step('collection', do_collection)
-            and step('insert+write', do_insert_write)
-            and step('cast', do_cast)):
-        step('handlers', do_handlers)
-        step('cleanup', do_cleanup)
-        if request.args.get('launch') == '1':
-            step('launch', do_launch)
-    return jsonify({'ok': all(s['ok'] for s in steps), 'steps': steps})
+    return _save_and_share(data, f'report_{date}.xlsx')
 
 
 app.register_blueprint(export_bp)
