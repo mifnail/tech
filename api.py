@@ -1,11 +1,21 @@
 from __future__ import annotations
 import functools
 import io
+import threading
 from datetime import date
 from typing import Any
 import os
 
 import sqlite3
+
+# Server-side debounce for grade-push via MAX bot.
+# Each tap on a grade cell resets a 10 s timer; only the settled grade
+# is re-read from DB and sent to the student.
+GRADE_PUSH_DELAY = 10.0  # seconds
+
+# Registry of active timers keyed by (lesson_id, student_id).
+# When a timer fires it is automatically removed.
+_pending: dict[tuple[int, int], threading.Timer] = {}
 
 from flask import Flask, Blueprint, request, jsonify, send_from_directory, send_file
 
@@ -379,36 +389,93 @@ def mark_attendance(lesson_id: int):
     else:
         db.mark_attendance(lesson_id, data['student_id'], data['grade'])
 
-    # MAX notification hook (best-effort, never breaks response)
+    # ---- Schedule debounced grade push via MAX bot ----
     try:
         pairs = []
         if isinstance(data, list):
             pairs = [(r.get('student_id'), r.get('grade')) for r in data]
         else:
-            pairs = [(data.get('student_id'), data.get('grade'))]
-        pairs = [(sid, g) for sid, g in pairs if g]
+            pairs = [(data['student_id'], data['grade'])]
 
-        if pairs:
-            lesson = db.get_lesson(lesson_id)
-            if lesson:
-                import threading
-                from tgbot import _fmt_date as _tg_fmt_date
-                date_str = lesson['date']
-                subject_name = lesson.get('actual_subject_name', '')
-                token = db.get_setting('max_bot_token')
-                enabled = db.get_setting('max_bot_enabled')
-                if token and enabled == '1':
-                    import maxbot
-                    for sid, grade in pairs:
-                        threading.Thread(
-                            target=maxbot.notify_grade,
-                            args=(token, sid, grade, date_str, subject_name),
-                            daemon=True
-                        ).start()
+        token = db.get_setting('max_bot_token')
+        enabled = db.get_setting('max_bot_enabled')
+        if not token or enabled != '1':
+            # Bot not active — cancel any pending timers for these keys
+            for sid, _grade in pairs:
+                key = (lesson_id, sid)
+                old = _pending.pop(key, None)
+                if old is not None:
+                    old.cancel()
+            return jsonify({'ok': True})
+
+        for sid, grade in pairs:
+            key = (lesson_id, sid)
+            # Cancel any existing timer for this key (debounce reset)
+            old = _pending.pop(key, None)
+            if old is not None:
+                old.cancel()
+            # If grade is falsy (deleted / empty), just skip — no schedule
+            if not grade:
+                continue
+            t = threading.Timer(
+                GRADE_PUSH_DELAY,
+                _fire_grade_push,
+                args=(token, lesson_id, sid),
+            )
+            t.daemon = True
+            _pending[key] = t
+            t.start()
     except Exception:
         pass
 
     return jsonify({'ok': True})
+
+
+def _fire_grade_push(token: str, lesson_id: int, student_id: int) -> None:
+    """Timer callback: re-read settled grade from DB and send notification.
+
+    Timer reset on every tap; only the settled grade is re-read from DB
+    and sent — so the student always gets the *latest* value.
+    """
+    key = (lesson_id, student_id)
+    _pending.pop(key, None)
+    try:
+        from database import Database as _DB
+        db = _DB()
+        try:
+            rows = db.get_attendance(lesson_id)
+            row = None
+            for r in rows:
+                if r['student_id'] == student_id:
+                    row = r
+                    break
+            grade = row['grade'] if row and dict(row).get('grade') else ''
+            if not grade:
+                return
+
+            lesson = db.get_lesson(lesson_id)
+            if not lesson:
+                return
+
+            raw_date = lesson['date'] or ''
+            # DD.MM format from ISO date string
+            date_str = f'{raw_date[8:10]}.{raw_date[5:7]}' if len(raw_date) >= 10 else ''
+            subject = ''
+            if 'actual_subject_name' in lesson.keys():
+                subject = lesson['actual_subject_name'] or ''
+
+            import maxbot as _maxbot
+            _maxbot.notify_grade(token, student_id, grade, date_str, subject)
+        except Exception:
+            pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 
 
 @lessons_bp.route('/date/<date_str>', methods=['GET'])
@@ -841,9 +908,129 @@ app.register_blueprint(export_bp)
 
 
 # ---- Backup / Restore ----
+import glob as _glob
 import tempfile
 import time as _time
 from database import DB_PATH as _DB_PATH
+
+
+class BackupNotFound(Exception):
+    """Raised when no backup file is found in Downloads."""
+
+
+def _validate_sqlite_bytes(data: bytes) -> None:
+    """Validate raw bytes look like a SQLite DB with required tables.
+
+    Raises ValueError with a human message on invalid input.
+    """
+    if len(data) < 16:
+        raise ValueError('file too small to be SQLite')
+    if data[:16] != b'SQLite format 3\x00':
+        raise ValueError('not a SQLite file')
+    required = {'groups', 'students', 'subjects', 'lessons', 'grades'}
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+    try:
+        tmp.write(data)
+        tmp.close()
+        conn = sqlite3.connect(tmp.name)
+        try:
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            found = {r[0] for r in rows}
+            missing = required - found
+            if missing:
+                raise ValueError(f'missing tables: {", ".join(sorted(missing))}')
+        finally:
+            conn.close()
+    finally:
+        os.unlink(tmp.name)
+
+
+def _restore_from_bytes(data: bytes) -> None:
+    """Validate, auto-backup, checkpoint WAL, and atomically replace the DB.
+
+    Raises ValueError with a human message on bad input.
+    """
+    _validate_sqlite_bytes(data)
+    # Best-effort auto-backup of current DB
+    try:
+        with open(_DB_PATH, 'rb') as f:
+            old_data = f.read()
+        bak_name = f'teachhelper_backup_{_time.strftime("%Y%m%d_%H%M%S")}.db'
+        _save_to_downloads_full(old_data, bak_name, 'application/x-sqlite3')
+    except Exception:
+        pass
+    # Checkpoint WAL and close all connections
+    try:
+        db = Database()
+        try:
+            db.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        finally:
+            db.close()
+    except Exception:
+        pass
+    # Atomic replace
+    tmp_path = _DB_PATH + '.tmp_restore'
+    with open(tmp_path, 'wb') as f:
+        f.write(data)
+    os.replace(tmp_path, _DB_PATH)
+    for sidecar in (_DB_PATH + '-wal', _DB_PATH + '-shm'):
+        try:
+            os.unlink(sidecar)
+        except OSError:
+            pass
+
+
+def _find_latest_backup_bytes() -> tuple[bytes, str]:
+    """Find the most recent teachhelper_*.db in Downloads.
+
+    On Android: queries MediaStore via ContentResolver.
+    On desktop: globs ~/Downloads.
+    Returns (bytes, display_name).
+    Raises BackupNotFound if nothing found.
+    """
+    try:
+        from jnius import autoclass  # noqa — Android only
+    except ImportError:
+        # Desktop: glob ~/Downloads
+        home = os.path.expanduser('~')
+        pattern = os.path.join(home, 'Downloads', 'teachhelper_*.db')
+        files = sorted(_glob.glob(pattern), key=os.path.getmtime, reverse=True)
+        if not files:
+            raise BackupNotFound('no backup files found in ~/Downloads')
+        path = files[0]
+        with open(path, 'rb') as f:
+            return f.read(), os.path.basename(path)
+    # Android: query MediaStore Downloads
+    Downloads = autoclass('android.provider.MediaStore$Downloads')
+    collection = Downloads.getContentUri('external')
+    resolver = _android_resolver()
+    cursor = resolver.query(
+        collection,
+        ['_id', '_display_name', 'date_added'],
+        '_display_name LIKE ?',
+        ['teachhelper_%.db'],
+        'date_added DESC',
+    )
+    try:
+        if cursor is None or not cursor.moveToFirst():
+            raise BackupNotFound('no backup files found in Downloads')
+        idx_id = cursor.getColumnIndex('_id')
+        idx_name = cursor.getColumnIndex('_display_name')
+        ContentUris = autoclass('android.content.ContentUris')
+        uri = ContentUris.withAppendedId(collection, cursor.getLong(idx_id))
+        display_name = cursor.getString(idx_name)
+        inp = resolver.openInputStream(uri)
+        try:
+            data = inp.read()
+        finally:
+            inp.close()
+        return data, display_name
+    finally:
+        if cursor is not None:
+            cursor.close()
+
 
 backup_bp = Blueprint('backup', __name__, url_prefix='/api')
 
@@ -872,63 +1059,30 @@ def restore_db():
         data = uploaded.read()
     except Exception as e:
         return jsonify({'error': f'read upload failed: {e}'}), 500
-    if len(data) < 16:
-        return jsonify({'error': 'file too small to be SQLite'}), 400
-    if data[:16] != b'SQLite format 3\x00':
-        return jsonify({'error': 'not a SQLite file'}), 400
-    # Validate required tables on a temp copy
-    required = {'groups', 'students', 'subjects', 'lessons', 'grades'}
     try:
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
-        try:
-            tmp.write(data)
-            tmp.close()
-            conn = sqlite3.connect(tmp.name)
-            try:
-                rows = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-                found = {r[0] for r in rows}
-                missing = required - found
-                if missing:
-                    return jsonify({'error': f'missing tables: {", ".join(sorted(missing))}'}), 400
-            finally:
-                conn.close()
-        finally:
-            os.unlink(tmp.name)
+        _restore_from_bytes(data)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
-        return jsonify({'error': f'validation failed: {e}'}), 400
-    # Best-effort auto-backup of current DB
-    try:
-        with open(_DB_PATH, 'rb') as f:
-            old_data = f.read()
-        bak_name = f'teachhelper_backup_{_time.strftime("%Y%m%d_%H%M%S")}.db'
-        _save_to_downloads_full(old_data, bak_name, 'application/x-sqlite3')
-    except Exception:
-        pass
-    # Checkpoint WAL and close all connections
-    try:
-        db = Database()
-        try:
-            db.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        finally:
-            db.close()
-    except Exception:
-        pass
-    # Atomic replace
-    try:
-        tmp_path = _DB_PATH + '.tmp_restore'
-        with open(tmp_path, 'wb') as f:
-            f.write(data)
-        os.replace(tmp_path, _DB_PATH)
-        for sidecar in (_DB_PATH + '-wal', _DB_PATH + '-shm'):
-            try:
-                os.unlink(sidecar)
-            except OSError:
-                pass
-    except Exception as e:
-        return jsonify({'error': f'replace failed: {e}'}), 500
+        return jsonify({'error': f'restore failed: {e}'}), 500
     return jsonify({'ok': True})
+
+
+@backup_bp.route('/restore/latest', methods=['POST'])
+def restore_latest():
+    try:
+        data, name = _find_latest_backup_bytes()
+    except BackupNotFound as e:
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        return jsonify({'error': f'find backup failed: {e}'}), 500
+    try:
+        _restore_from_bytes(data)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'restore failed: {e}'}), 500
+    return jsonify({'ok': True, 'name': name})
 
 
 app.register_blueprint(backup_bp)
