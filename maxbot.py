@@ -8,7 +8,9 @@ Polling идёт в daemon-потоке рядом с Flask — входящие
 from __future__ import annotations
 
 import json
+import random
 import ssl
+import string
 import threading
 import time
 import urllib.error
@@ -118,6 +120,91 @@ def send_message(token: str, chat_id: int, text: str, urlopen=None):
                  urlopen=urlopen)
 
 
+def _multipart_encode(field: str, data: bytes, filename: str) -> tuple[bytes, str]:
+    """Закодировать файл в multipart/form-data. Возвращает (body, content_type)."""
+    boundary = '----FormBoundary' + ''.join(
+        random.choices(string.ascii_letters + string.digits, k=16))
+    parts = []
+    parts.append(f'--{boundary}\r\n'.encode())
+    parts.append(
+        f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'.encode())
+    parts.append(b'Content-Type: application/octet-stream\r\n\r\n')
+    parts.append(data)
+    parts.append(f'\r\n--{boundary}--\r\n'.encode())
+    body = b''.join(parts)
+    return body, f'multipart/form-data; boundary={boundary}'
+
+
+def upload_file(token: str, data: bytes, filename: str, urlopen=None) -> str:
+    """Загрузить файл в MAX: шаг 1 — получить URL, шаг 2 — загрузить. Возвращает токен файла."""
+    # Шаг 1: POST /uploads?type=file (без тела)
+    req1 = urllib.request.Request(f'{MAX_API}/uploads?type=file', method='POST')
+    req1.add_header('Authorization', token)
+    try:
+        if urlopen is not None:
+            resp1 = urlopen(req1, timeout=35)
+        else:
+            resp1 = urllib.request.urlopen(req1, timeout=35, context=_ctx())
+        with resp1:
+            body1 = _read_body(resp1)
+    except urllib.error.HTTPError as e:
+        raise MaxError(f'upload step1 HTTP {e.code}')
+    except urllib.error.URLError as e:
+        raise MaxError(f'upload step1: {e.reason}')
+    upload_url = body1.get('url')
+    if not upload_url:
+        raise MaxError('upload step1: no url')
+    # Шаг 2: POST multipart/form-data на URL загрузки
+    body_bytes, content_type = _multipart_encode('data', data, filename)
+    req2 = urllib.request.Request(upload_url, data=body_bytes, method='POST')
+    req2.add_header('Authorization', token)
+    req2.add_header('Content-Type', content_type)
+    try:
+        if urlopen is not None:
+            resp2 = urlopen(req2, timeout=60)
+        else:
+            resp2 = urllib.request.urlopen(req2, timeout=60, context=_ctx())
+        with resp2:
+            body2 = _read_body(resp2)
+    except urllib.error.HTTPError as e:
+        raise MaxError(f'upload step2 HTTP {e.code}')
+    except urllib.error.URLError as e:
+        raise MaxError(f'upload step2: {e.reason}')
+    file_token = body2.get('token')
+    if not file_token:
+        raise MaxError('upload step2: no token')
+    return file_token
+
+
+def send_file(token: str, chat_id: int, file_token: str, caption: str = '', urlopen=None):
+    """Отправить файл в чат MAX."""
+    attachments = [{'type': 'file', 'payload': {'token': file_token}}]
+    return _post(f'/messages?chat_id={chat_id}', token,
+                 {'text': caption, 'attachments': attachments},
+                 urlopen=urlopen)
+
+
+def send_grades_with_buttons(token: str, chat_id: int, text: str, urlopen=None):
+    """Отправить текст с инлайн-клавиатурой (кнопки-команды)."""
+    keyboard = [[
+        {'type': 'callback', 'text': 'Оценки', 'payload': '/grades'},
+        {'type': 'callback', 'text': 'Сегодня', 'payload': '/today'},
+    ], [
+        {'type': 'callback', 'text': 'Отвязать', 'payload': '/unbind'},
+    ]]
+    attachments = [{'type': 'inline_keyboard', 'payload': {'buttons': keyboard}}]
+    return _post(f'/messages?chat_id={chat_id}', token,
+                 {'text': text, 'attachments': attachments},
+                 urlopen=urlopen)
+
+
+def answer_callback(token: str, callback_id: str, notification: str = '', urlopen=None):
+    """Подтвердить callback уведомлением."""
+    return _post(f'/answers?callback_id={callback_id}', token,
+                 {'notification': notification},
+                 urlopen=urlopen)
+
+
 def get_updates(token: str, marker=None, timeout: int = POLL_TIMEOUT, urlopen=None):
     """Получить обновления. Возвращает (updates, marker)."""
     path = f'/messages/updates?limit=100&timeout={timeout}'
@@ -182,6 +269,10 @@ def process_text(text: str, chat_id: int, db) -> str:
     if low in ('/unbind', 'отвязать'):
         db.unbind_max(chat_id)
         return 'Привязка снята. Для новой отправь фамилию.'
+    if low in ('/vedomost', 'ведомость'):
+        if sid is None:
+            return 'Сначала привяжись: отправь свою фамилию.'
+        return 'VEDOMOST:'
     if t.startswith('/'):
         return 'Не знаю такую команду.\n\n' + HELP_BOUND
     return 'Ты уже привязан(а).\n\n' + HELP_BOUND
@@ -193,6 +284,45 @@ def _get_marker(db) -> int | None:
         return int(v) if v else None
     except (TypeError, ValueError):
         return None
+
+
+def _handle_vedomost(token: str, chat_id: int, db_factory, urlopen=None):
+    """Отправить xlsx-файлы ведомости по предметам (после /vedomost)."""
+    from report_export import export_grades_xlsx
+    db = db_factory()
+    try:
+        sid = db.get_max_link(chat_id)
+        if sid is None:
+            send_message(token, chat_id, 'Сначала привяжись.', urlopen=urlopen)
+            return
+        st = db.get_student(sid)
+        if not st:
+            send_message(token, chat_id, 'Привязка устарела.', urlopen=urlopen)
+            return
+        group_id = st['group_id']
+        subjects = [dict(r) for r in db.list_subjects(group_id)]
+        sent_any = False
+        for subj in subjects:
+            grades = db.student_grades(sid, subj['id'])
+            if not grades:
+                continue
+            xlsx_bytes = export_grades_xlsx(subj['id'], db)
+            ft = upload_file(token, xlsx_bytes,
+                             f"{subj['name']}.xlsx", urlopen=urlopen)
+            send_file(token, chat_id, ft,
+                      caption=subj['name'], urlopen=urlopen)
+            sent_any = True
+            time.sleep(0.6)
+        if not sent_any:
+            send_message(token, chat_id, 'Оценок пока нет.', urlopen=urlopen)
+    except Exception:
+        try:
+            send_message(token, chat_id,
+                         'Ошибка при формировании ведомости.', urlopen=urlopen)
+        except MaxError:
+            pass
+    finally:
+        db.close()
 
 
 def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
@@ -209,8 +339,8 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
             time.sleep(ERROR_PAUSE)
             continue
         for u in updates or []:
-            # message_created: update.message.body.text, update.message.recipient.chat_id
             msg_type = u.get('type')
+            # ---- message_created ----
             if msg_type == 'message_created':
                 msg = u.get('message') or {}
                 body = msg.get('body') or {}
@@ -232,9 +362,55 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                 finally:
                     db.close()
                 try:
-                    send_message(token, cid, reply, urlopen=urlopen)
+                    low = (text or '').strip().lower()
+                    if reply.startswith('VEDOMOST:'):
+                        _handle_vedomost(token, cid, db_factory, urlopen)
+                    elif low in ('/grades', 'оценки', 'мои оценки'):
+                        send_grades_with_buttons(
+                            token, cid, reply, urlopen=urlopen)
+                    else:
+                        send_message(token, cid, reply, urlopen=urlopen)
                 except MaxError:
                     pass
+            # ---- message_callback ----
+            elif msg_type == 'message_callback':
+                cb = u.get('callback') or {}
+                callback_id = cb.get('callback_id')
+                payload = cb.get('payload')
+                cb_msg = cb.get('message') or {}
+                cb_recipient = cb_msg.get('recipient') or {}
+                cb_user = cb.get('user') or {}
+                cid = cb_recipient.get('chat_id')
+                if cid is None:
+                    cid = cb_user.get('user_id')
+                if payload is None or cid is None:
+                    continue
+                try:
+                    cid = int(cid)
+                except (TypeError, ValueError):
+                    continue
+                db = db_factory()
+                try:
+                    reply = process_text(payload, cid, db)
+                    db.set_setting('max_last_marker', str(new_marker))
+                except Exception:
+                    reply = 'Ошибка, попробуй позже.'
+                finally:
+                    db.close()
+                try:
+                    if reply.startswith('VEDOMOST:'):
+                        _handle_vedomost(token, cid, db_factory, urlopen)
+                    else:
+                        send_message(token, cid, reply, urlopen=urlopen)
+                except MaxError:
+                    pass
+                if callback_id:
+                    try:
+                        answer_callback(
+                            token, callback_id, 'Готово', urlopen=urlopen)
+                    except MaxError:
+                        pass
+            # ---- bot_started ----
             elif msg_type == 'bot_started':
                 cid = u.get('chat_id')
                 if cid is None:

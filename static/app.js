@@ -714,6 +714,12 @@ App.Pages.settings = async function() {
   </div>`;
   if (mx.has_token) html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.dropMaxBot()">Отключить</button>`;
   html += `</div>`;
+  html += `<div class="card"><div class="card-title">Бэкап</div>`;
+  html += `<div class="card-sub" style="margin-bottom:8px">Создать резервную копию или восстановить данные из файла.</div>`;
+  html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.doBackup()">Выгрузить копию</button>`;
+  html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
+  html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить</button>`;
+  html += `</div>`;
   document.getElementById('app').innerHTML = html;
 };
 
@@ -761,6 +767,52 @@ App.Pages.dropMaxBot = async function() {
   try { await App.API._delete('/api/settings/maxbot'); App.UI.notify('Отключено'); }
   catch (e) { App.UI.notify(e.error || 'Ошибка'); }
   App.Pages.settings();
+};
+
+App.Pages.doBackup = async function() {
+  try {
+    const r = await App.API.post('/api/backup');
+    App.UI.notify('Бэкап создан: ' + (r.path || 'OK'));
+  } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+};
+
+App.Pages.doRestore = async function() {
+  const fileInput = document.getElementById('restore-file');
+  if (!fileInput || !fileInput.files.length) {
+    App.UI.notify('Выберите файл .db');
+    return;
+  }
+  App.UI.showPopup(`
+    <h2>Восстановить данные?</h2>
+    <p style="margin-bottom:12px">Текущая база данных будет заменена. Все несохранённые изменения будут потеряны.</p>
+    <div class="grid-2">
+      <button class="btn btn-danger" onclick="App.Pages.confirmRestore()">Да, заменить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
+    </div>
+  `);
+};
+
+App.Pages.confirmRestore = async function() {
+  const fileInput = document.getElementById('restore-file');
+  const file = fileInput.files[0];
+  App.UI.closePopup();
+  App.Loading.show();
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/restore', { method: 'POST', body: fd });
+    const r = await res.json();
+    if (!res.ok || !r.ok) {
+      App.UI.notify(r.error || 'Ошибка восстановления');
+      App.Pages.settings();
+      return;
+    }
+    App.UI.notify('Данные восстановлены');
+    App.Pages.settings();
+  } catch (e) {
+    App.UI.notify('Ошибка сети');
+    App.Pages.settings();
+  }
 };
 
 App.Pages.unbindBot = async function(studentId) {

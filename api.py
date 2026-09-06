@@ -838,3 +838,97 @@ def share_report(date: str):
 
 
 app.register_blueprint(export_bp)
+
+
+# ---- Backup / Restore ----
+import tempfile
+import time as _time
+from database import DB_PATH as _DB_PATH
+
+backup_bp = Blueprint('backup', __name__, url_prefix='/api')
+
+
+@backup_bp.route('/backup', methods=['POST'])
+def backup_db():
+    try:
+        with open(_DB_PATH, 'rb') as f:
+            data = f.read()
+    except Exception as e:
+        return jsonify({'error': f'read db failed: {e}'}), 500
+    filename = f'teachhelper_{date.today().isoformat()}.db'
+    try:
+        path, _ = _save_to_downloads_full(data, filename, 'application/x-sqlite3')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True, 'path': path})
+
+
+@backup_bp.route('/restore', methods=['POST'])
+def restore_db():
+    uploaded = request.files.get('file')
+    if uploaded is None:
+        return jsonify({'error': 'no file'}), 400
+    try:
+        data = uploaded.read()
+    except Exception as e:
+        return jsonify({'error': f'read upload failed: {e}'}), 500
+    if len(data) < 16:
+        return jsonify({'error': 'file too small to be SQLite'}), 400
+    if data[:16] != b'SQLite format 3\x00':
+        return jsonify({'error': 'not a SQLite file'}), 400
+    # Validate required tables on a temp copy
+    required = {'groups', 'students', 'subjects', 'lessons', 'grades'}
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+        try:
+            tmp.write(data)
+            tmp.close()
+            conn = sqlite3.connect(tmp.name)
+            try:
+                rows = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+                found = {r[0] for r in rows}
+                missing = required - found
+                if missing:
+                    return jsonify({'error': f'missing tables: {", ".join(sorted(missing))}'}), 400
+            finally:
+                conn.close()
+        finally:
+            os.unlink(tmp.name)
+    except Exception as e:
+        return jsonify({'error': f'validation failed: {e}'}), 400
+    # Best-effort auto-backup of current DB
+    try:
+        with open(_DB_PATH, 'rb') as f:
+            old_data = f.read()
+        bak_name = f'teachhelper_backup_{_time.strftime("%Y%m%d_%H%M%S")}.db'
+        _save_to_downloads_full(old_data, bak_name, 'application/x-sqlite3')
+    except Exception:
+        pass
+    # Checkpoint WAL and close all connections
+    try:
+        db = Database()
+        try:
+            db.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        finally:
+            db.close()
+    except Exception:
+        pass
+    # Atomic replace
+    try:
+        tmp_path = _DB_PATH + '.tmp_restore'
+        with open(tmp_path, 'wb') as f:
+            f.write(data)
+        os.replace(tmp_path, _DB_PATH)
+        for sidecar in (_DB_PATH + '-wal', _DB_PATH + '-shm'):
+            try:
+                os.unlink(sidecar)
+            except OSError:
+                pass
+    except Exception as e:
+        return jsonify({'error': f'replace failed: {e}'}), 500
+    return jsonify({'ok': True})
+
+
+app.register_blueprint(backup_bp)
