@@ -207,6 +207,10 @@ CURATOR_HELP = ('Команды куратора:\n'
                 '/vedomost — ведомость группы\n'
                 '/help — справка\n'
                 '/unbind — отвязать')
+TEACHER_HELP = ('Команды преподавателя:\n'
+                '/vedomost — ведомости всех групп\n'
+                '/help — справка\n'
+                '/unbind — отвязать')
 
 
 def _fmt_avg(v: float) -> str:
@@ -347,6 +351,33 @@ def process_text(text: str, chat_id: int, db) -> str:
             return 'Преподаватель привязан.'
         else:
             return 'Неверный код — смотри Настройки'
+    # Bare code fallback (without prefix) — teacher
+    t_stripped = t.strip().lower()
+    expected = db.get_setting('max_teacher_code')
+    if expected and t_stripped == expected.lower():
+        db.set_setting('max_teacher_chat', str(chat_id))
+        return 'Преподаватель привязан.'
+    # Bare code fallback — curator (case-insensitive)
+    try:
+        row = db.conn.execute("SELECT group_id FROM curators WHERE lower(code)=lower(?)", (t_stripped,)).fetchone()
+        if row is not None:
+            gid = row['group_id']
+            db.bind_curator(gid, chat_id)
+            grp = db.conn.execute("SELECT name FROM groups WHERE id=?", (gid,)).fetchone()
+            name = grp['name'] if grp else str(gid)
+            return f'Привязан как куратор группы {name}.'
+    except Exception:
+        pass
+    # teacher-bound early routing (after existing /teacher and /curator prefix blocks, BEFORE curator-bound check)
+    if str(db.get_setting('max_teacher_chat')) == str(chat_id):
+        if low in ('/vedomost', 'ведомость'):
+            return 'VEDOMOST_TEACHER:'
+        if low in ('/help', 'help', 'помощь'):
+            return TEACHER_HELP
+        if low in ('/unbind', 'отвязать'):
+            db.set_setting('max_teacher_chat', None)
+            return 'Отвязка выполнена.'
+        return TEACHER_HELP
     # curator-bound chats BEFORE student flow
     cur_gid = db.curator_group_for_chat(chat_id)
     if cur_gid is not None:
@@ -490,6 +521,42 @@ def _handle_curator_vedomost(token: str, chat_id: int, db_factory, urlopen=None)
         db.close()
 
 
+def _handle_teacher_vedomost(token: str, chat_id: int, db_factory, urlopen=None):
+    """Отправить xlsx-файлы ведомости по всем предметам (для преподавателя)."""
+    from report_export import export_grades_xlsx
+    db = db_factory()
+    try:
+        teacher_chat = db.get_setting('max_teacher_chat')
+        if str(teacher_chat) != str(chat_id):
+            send_message(token, chat_id, 'Не привязан как преподаватель.', urlopen=urlopen)
+            return
+        subjects = [dict(r) for r in db.list_subjects()]
+        sent_any = False
+        for subj in subjects:
+            try:
+                cnt = db.conn.execute(
+                    "SELECT COUNT(*) FROM grades JOIN lessons ON grades.lesson_id=lessons.id WHERE lessons.actual_subject_id=? AND lessons.status NOT IN ('cancelled','replaced')",
+                    (subj['id'],)).fetchone()[0]
+            except Exception:
+                cnt = 0
+            if cnt == 0:
+                continue
+            xlsx_bytes = export_grades_xlsx(subj['id'], db)
+            ft = upload_file(token, xlsx_bytes, f"{subj['name']}.xlsx", urlopen=urlopen)
+            send_file(token, chat_id, ft, caption=subj['name'], urlopen=urlopen)
+            sent_any = True
+            time.sleep(0.6)
+        if not sent_any:
+            send_message(token, chat_id, 'Оценок пока нет.', urlopen=urlopen)
+    except Exception:
+        try:
+            send_message(token, chat_id, 'Ошибка при формировании ведомости.', urlopen=urlopen)
+        except MaxError:
+            pass
+    finally:
+        db.close()
+
+
 def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
     """Цикл long-polling. db_factory() -> свежий Database (потокобезопасно)."""
     try:
@@ -557,7 +624,9 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                         except Exception:
                             pass
                     try:
-                        if reply.startswith('VEDOMOST_CURATOR:'):
+                        if reply.startswith('VEDOMOST_TEACHER:'):
+                            _handle_teacher_vedomost(token, cid, db_factory, urlopen)
+                        elif reply.startswith('VEDOMOST_CURATOR:'):
                             _handle_curator_vedomost(token, cid, db_factory, urlopen)
                         elif reply.startswith('VEDOMOST:'):
                             _handle_vedomost(token, cid, db_factory, urlopen)
@@ -600,7 +669,9 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                         except Exception:
                             pass
                     try:
-                        if reply.startswith('VEDOMOST_CURATOR:'):
+                        if reply.startswith('VEDOMOST_TEACHER:'):
+                            _handle_teacher_vedomost(token, cid, db_factory, urlopen)
+                        elif reply.startswith('VEDOMOST_CURATOR:'):
                             _handle_curator_vedomost(token, cid, db_factory, urlopen)
                         elif reply.startswith('VEDOMOST:'):
                             _handle_vedomost(token, cid, db_factory, urlopen)

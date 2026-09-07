@@ -861,3 +861,44 @@ class TestGradeDebounce:
         assert len(timers) == count_before
         # Old timer should have been cancelled and removed from _pending
         assert (lid, st) not in _api_module._pending
+
+
+# ======================== BARE CODE FALLBACK ========================
+
+class TestBareCodeFallback:
+    def test_bare_teacher_code_binds(self, db):
+        db.set_setting('max_teacher_code', 'ab12cd34')
+        r = process_text('ab12cd34', 999, db)
+        assert r == 'Преподаватель привязан.'
+        assert db.get_setting('max_teacher_chat') == '999'
+        # case-insensitive + strip
+        db.set_setting('max_teacher_chat', None)
+        r2 = process_text('  AB12CD34  ', 1000, db)
+        assert r2 == 'Преподаватель привязан.'
+        assert db.get_setting('max_teacher_chat') == '1000'
+
+    def test_bare_curator_code_binds(self, db):
+        gid = db.add_group('ИС-11')
+        code = db.ensure_curator_code(gid)
+        r = process_text(code, 555, db)
+        assert f'ИС-11' in r or 'Привязан как куратор' in r
+        assert db.curator_group_for_chat(555) == gid
+        # case-insensitive bare curator
+        gid2 = db.add_group('ИС-12')
+        code2 = db.ensure_curator_code(gid2)
+        r2 = process_text(code2.upper(), 556, db)
+        assert 'Привязан как куратор' in r2
+        assert db.curator_group_for_chat(556) == gid2
+
+    def test_bare_wrong_code_not(self, db):
+        db.set_setting('max_teacher_code', 'ab12cd34')
+        gid = db.add_group('ИС-11')
+        db.ensure_curator_code(gid)
+        db.add_student(gid, 'Иванов', 'Иван')
+        r = process_text('wrong123', 111, db)
+        assert r != 'Преподаватель привязан.'
+        assert 'куратор' not in r.lower() or 'Привязан как куратор' not in r
+        assert db.get_setting('max_teacher_chat') is None or db.get_setting('max_teacher_chat') != '111'
+        assert db.curator_group_for_chat(111) is None
+        # ensure not falsely treated as surname bind
+        assert 'Не нашёл' in r or 'фамилию' in r.lower() or 'привяжись' in r.lower()
