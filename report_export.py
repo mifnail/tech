@@ -158,6 +158,36 @@ def export_grades_xlsx(subject_id: int, db: Optional[Database] = None) -> bytes:
     return _build_xlsx(f'Ведомость: {subj_name}', headers, rows)
 
 
+def export_student_grades_xlsx(subject_id: int, student_id: int, db: Optional[Database] = None) -> bytes:
+    """Personal gradebook as Excel — single student row, same columns/format/title as group export."""
+    db = _ensure_db(db)
+    summary = db.subject_summary(subject_id)
+    subj_name = dict(summary)['name'] if summary else f'Предмет #{subject_id}'
+    students, lessons, grades = db.subject_gradebook(subject_id)
+    # Find target student; fallback to direct fetch if not in group list (e.g., after group change)
+    target = None
+    for s in students:
+        if s['id'] == student_id:
+            target = s
+            break
+    if target is None:
+        row = db.get_student(student_id)
+        if row is not None:
+            target = dict(row)
+        else:
+            raise ValueError(f"Student {student_id} not found")
+    hdr = []
+    for i, l in enumerate(lessons):
+        d = l.get('date') or ''
+        d2 = f"{d[8:10]}.{d[5:7]}.{d[:4]}" if len(d) >= 10 else d
+        hdr.append(f"{i + 1} {d2}".strip() if d2 else str(i + 1))
+    headers = ['Студент'] + hdr
+    row = [f"{target['last_name']} {target['first_name']}"]
+    for l in lessons:
+        row.append(grades.get(str(target['id']), {}).get(str(l['id']), ''))
+    return _build_xlsx(f'Ведомость: {subj_name}', headers, [row])
+
+
 def export_report_xlsx(date: str, db: Optional[Database] = None) -> bytes:
     """Daily report as Excel, returns bytes."""
     db = _ensure_db(db)

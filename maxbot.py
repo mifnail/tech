@@ -200,6 +200,7 @@ HELP_NEW = ('Команды:\n'
 HELP_BOUND = ('Команды:\n'
               '/grades — мои оценки\n'
               '/today — занятия сегодня\n'
+              '/vedomost — ведомость файлом\n'
               '/unbind — отвязать чат\n'
               '/help — эта справка')
 
@@ -310,8 +311,6 @@ def process_text(text: str, chat_id: int, db) -> str:
 
     t = (text or '').strip()
     low = t.lower()
-    if low in ('/vedomost', 'ведомость'):
-        return 'Команда «Ведомость» временно отключена.'
     # teacher command early - works regardless of binding
     if low.startswith('/teacher') or low.startswith('teacher') or low.startswith('учитель') or low.startswith('/учитель'):
         # extract code part
@@ -370,7 +369,9 @@ def process_text(text: str, chat_id: int, db) -> str:
         db.unbind_max(chat_id)
         return 'Привязка снята. Для новой отправь фамилию.'
     if low in ('/vedomost', 'ведомость'):
-        return 'Команда «Ведомость» временно отключена.'
+        if sid is None:
+            return 'Сначала привяжись: отправь свою фамилию.'
+        return 'VEDOMOST:'
     if t.startswith('/'):
         return 'Не знаю такую команду.\n\n' + HELP_BOUND
     return 'Ты уже привязан(а).\n\n' + HELP_BOUND
@@ -386,7 +387,7 @@ def _get_marker(db) -> int | None:
 
 def _handle_vedomost(token: str, chat_id: int, db_factory, urlopen=None):
     """Отправить xlsx-файлы ведомости по предметам (после /vedomost)."""
-    from report_export import export_grades_xlsx
+    from report_export import export_student_grades_xlsx
     db = db_factory()
     try:
         sid = db.get_max_link(chat_id)
@@ -404,7 +405,7 @@ def _handle_vedomost(token: str, chat_id: int, db_factory, urlopen=None):
             grades = db.student_grades(sid, subj['id'])
             if not grades:
                 continue
-            xlsx_bytes = export_grades_xlsx(subj['id'], db)
+            xlsx_bytes = export_student_grades_xlsx(subj['id'], sid, db)
             ft = upload_file(token, xlsx_bytes,
                              f"{subj['name']}.xlsx", urlopen=urlopen)
             send_file(token, chat_id, ft,

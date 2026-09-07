@@ -575,27 +575,35 @@ class TestRunPollingCallback:
 
 # ======================== VEDOMOST DISABLED ========================
 
-class TestVedomostDisabled:
-    def test_process_text_vedomost_disabled_bound(self, db):
+class TestVedomostFlow:
+    def test_process_text_vedomost_sentinel(self, db):
         _, _, st = _seed(db)
         db.bind_max(111, st)
         r = process_text('/vedomost', 111, db)
-        assert r == 'Команда «Ведомость» временно отключена.'
+        assert r == 'VEDOMOST:'
         r2 = process_text('ведомость', 111, db)
-        assert r2 == 'Команда «Ведомость» временно отключена.'
+        assert r2 == 'VEDOMOST:'
 
-    def test_process_text_vedomost_disabled_unbound(self, db):
+    def test_process_text_vedomost_unbound(self, db):
         _seed(db)
         r = process_text('/vedomost', 111, db)
-        assert r == 'Команда «Ведомость» временно отключена.'
-        r2 = process_text('ведомость', 222, db)
-        assert 'временно отключена' in r2
+        assert 'привяжись' in r.lower()
 
-    def test_run_polling_vedomost_no_file_ops(self, db, monkeypatch):
-        _, _, st = _seed(db)
+    def test_vedomost_sends_personal_xlsx(self, db, monkeypatch):
+        gid, sid, st = _seed(db)
+        # add second student with grades to ensure leak would be detected
+        st2 = db.add_student(gid, 'Петров', 'Пётр')
+        lid = db.add_lesson(sid, '2026-09-01', sid, 'held', 1)
+        db.mark_attendance(lid, st, '5')
+        db.mark_attendance(lid, st2, '4')
         db.bind_max(111, st)
-        monkeypatch.setattr(maxbot, 'upload_file', lambda *a, **kw: (_ for _ in ()).throw(AssertionError('upload_file should not be called')))
-        monkeypatch.setattr(maxbot, 'send_file', lambda *a, **kw: (_ for _ in ()).throw(AssertionError('send_file should not be called')))
+        captured = {}
+        def fake_upload(token, data, filename, urlopen=None):
+            captured['bytes'] = data
+            captured['filename'] = filename
+            return 'tok123'
+        monkeypatch.setattr(maxbot, 'upload_file', fake_upload)
+        monkeypatch.setattr(maxbot, 'send_file', lambda token, chat_id, ft, caption='', urlopen=None: captured.update({'sent': True, 'caption': caption}) or {'ok': True})
         orig_close = db.close
         db.close = lambda: None
         stop = threading.Event()
@@ -606,6 +614,7 @@ class TestVedomostDisabled:
         }}], 'marker': 1}
         responses = iter([
             ('json', updates_resp),
+            ('json', {'ok': True}),
             ('json', {'ok': True}),
         ])
         def fake(req, timeout=None, **kw):
@@ -625,6 +634,7 @@ class TestVedomostDisabled:
             if kind == 'json':
                 return FakeResp(json.dumps(payload).encode())
             raise AssertionError
+        # patch _handle_vedomost to use fake upload directly via monkeypatch already
         try:
             t = threading.Thread(target=maxbot.run_polling,
                                  args=('tok', lambda: db, stop, fake))
@@ -633,11 +643,25 @@ class TestVedomostDisabled:
             assert not t.is_alive()
         finally:
             db.close = orig_close
-        msg_calls = [r for r in rec if 'chat_id=111' in r[1] and r[0] == 'POST']
-        assert len(msg_calls) == 1
-        body = msg_calls[0][2]
-        assert 'временно отключена' in body['text']
-        assert 'inline_keyboard' in str(body)
+        assert 'bytes' in captured, 'upload_file not called'
+        # verify personal file: single data row, own grades present, other surname absent
+        import io
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(captured['bytes']))
+        ws = wb.active
+        # Find data rows: header row 3, data starts row 4
+        rows = list(ws.iter_rows(values_only=True))
+        # rows[0] is title row, rows[2] is header, rows[3] is data
+        # Collect all cell values as strings
+        all_vals = ' '.join(str(c) for row in rows for c in row if c)
+        assert 'Иванов' in all_vals
+        assert 'Петров' not in all_vals
+        # Check own grade present
+        assert '5' in all_vals
+        assert '4' not in all_vals or all_vals.count('4') == 0  # other student's grade should not appear
+        # Ensure single data row (only one student)
+        data_rows = [r for r in rows[3:] if any(c for c in r)]
+        assert len(data_rows) == 1
 
 
 # ======================== GRADE DEBOUNCE ========================
