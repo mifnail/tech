@@ -1,12 +1,18 @@
 from __future__ import annotations
 import functools
+import glob as _glob
 import io
+import tempfile
 import threading
-from datetime import date
+import time as _time
+import uuid
+from datetime import date, datetime
 from typing import Any
 import os
 
 import sqlite3
+
+from report_export import export_grades_xlsx, export_report_xlsx
 
 # Server-side debounce for grade-push via MAX bot.
 # Each tap on a grade cell resets a 10 s timer; only the settled grade
@@ -53,6 +59,101 @@ def optional_int(value: Any, default: Any = None) -> Any:
 
 def dict_row(row) -> dict:
     return dict(row) if row else None
+
+
+def row_get(row, key, default=''):
+    """Helper for sqlite3.Row — defensive .keys() check."""
+    if row is None:
+        return default
+    try:
+        if key in row.keys():
+            v = row[key]
+            return v if v is not None else default
+        return default
+    except Exception:
+        try:
+            v = row[key]
+            return v if v is not None else default
+        except Exception:
+            return default
+
+
+def _lesson_notify_context(db, lesson_id):
+    """Centralize Row .keys() defensive dance; return (ddmm, subject_name, group_id)."""
+    try:
+        lesson = db.get_lesson(lesson_id)
+        if not lesson:
+            return ('', '', None)
+        subject_name = row_get(lesson, 'actual_subject_name', '')
+        if not subject_name:
+            subject_name = row_get(lesson, 'planned_subject', '')
+        date_iso = row_get(lesson, 'date', '')
+        ddmm = f"{date_iso[8:10]}.{date_iso[5:7]}" if date_iso and len(date_iso) >= 10 else ''
+        group_id = None
+        try:
+            if 'group_id' in lesson.keys():
+                group_id = lesson['group_id']
+        except Exception:
+            pass
+        if group_id is None:
+            try:
+                sid = row_get(lesson, 'subject_id', None)
+                if sid is not None and sid != '':
+                    r = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (sid,)).fetchone()
+                    if r:
+                        group_id = r['group_id']
+            except Exception:
+                pass
+        return (ddmm, subject_name or '', group_id)
+    except Exception:
+        return ('', '', None)
+
+
+def _is_bot_active(db, token_key='max_bot_token', enabled_key='max_bot_enabled'):
+    """Token truthy and enabled=='1'."""
+    try:
+        return bool(db.get_setting(token_key)) and db.get_setting(enabled_key) == '1'
+    except Exception:
+        return False
+
+
+def _notify_group_chats(db, group_id, token, enabled, msg_text):
+    """Best-effort daemon thread with 0.6s gaps; lazy imports inside."""
+    try:
+        if group_id is None:
+            return
+        if not token or enabled != '1':
+            return
+        chat_ids = []
+        try:
+            for st in db.list_students(group_id):
+                try:
+                    cid = db.get_max_student_chat(st['id'])
+                    if cid is not None:
+                        chat_ids.append(cid)
+                except Exception:
+                    continue
+        except Exception:
+            return
+        if not chat_ids:
+            return
+
+        def _run():
+            try:
+                import time as _time
+                import maxbot as _maxbot
+                for cid in chat_ids:
+                    try:
+                        _maxbot.send_message(token, cid, msg_text)
+                    except Exception:
+                        pass
+                    _time.sleep(0.6)
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        pass
 
 
 # ---- SPA shell ----
@@ -353,7 +454,6 @@ def get_lesson(lesson_id: int):
     lesson_dict = dict(lesson)
     # Add formatted_date for frontend convenience
     if lesson_dict.get('date'):
-        from datetime import datetime
         try:
             dt = datetime.strptime(lesson_dict['date'], '%Y-%m-%d')
             lesson_dict['formatted_date'] = dt.strftime('%d.%m.%Y')
@@ -366,56 +466,20 @@ def get_lesson(lesson_id: int):
 @require_fields('new_subject_id')
 def substitute_lesson(lesson_id: int):
     db = get_db()
-    lesson = db.get_lesson(lesson_id)
-    date_iso = lesson['date'] if lesson else ''
-    ddmm = f"{date_iso[8:10]}.{date_iso[5:7]}" if date_iso and len(date_iso) >= 10 else ''
-    old_name = lesson['actual_subject_name'] if lesson and 'actual_subject_name' in lesson.keys() else (lesson['actual_subject_name'] if lesson else '')
-    if not old_name and lesson:
-        old_name = dict(lesson).get('actual_subject_name', '')
+    ddmm, old_name, group_id = _lesson_notify_context(db, lesson_id)
     new_subject_id = request.json['new_subject_id']
-    new_name = ''
     try:
-        row = db.conn.execute("SELECT name FROM subjects WHERE id=?", (new_subject_id,)).fetchone()
-        if row:
-            new_name = row['name']
+        new_row = db.conn.execute("SELECT name FROM subjects WHERE id=?", (new_subject_id,)).fetchone()
+        new_name = row_get(new_row, 'name', '')
     except Exception:
-        pass
-    group_id = None
-    if lesson:
-        try:
-            if 'group_id' in lesson.keys():
-                group_id = lesson['group_id']
-        except Exception:
-            group_id = None
-        if group_id is None:
-            try:
-                r = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (lesson['subject_id'],)).fetchone()
-                if r:
-                    group_id = r['group_id']
-            except Exception:
-                pass
+        new_name = ''
     msg_text = f"Замена {ddmm}: {old_name} → {new_name}" if ddmm else f"Замена: {old_name} → {new_name}"
     new_id = db.substitute_lesson(lesson_id, new_subject_id)
     try:
         token = db.get_setting('max_bot_token')
         enabled = db.get_setting('max_bot_enabled')
-        if token and enabled == '1' and group_id is not None:
-            chat_ids = []
-            for st in db.list_students(group_id):
-                cid = db.get_max_student_chat(st['id'])
-                if cid is not None:
-                    chat_ids.append(cid)
-            if chat_ids:
-                def _run():
-                    import time as _time
-                    import maxbot as _maxbot
-                    for cid in chat_ids:
-                        try:
-                            _maxbot.send_message(token, cid, msg_text)
-                        except Exception:
-                            pass
-                        _time.sleep(0.6)
-                threading.Thread(target=_run, daemon=True).start()
+        if _is_bot_active(db, 'max_bot_token', 'max_bot_enabled'):
+            _notify_group_chats(db, group_id, token, enabled, msg_text)
     except Exception:
         pass
     return jsonify({'ok': True, 'new_lesson_id': new_id})
@@ -424,55 +488,16 @@ def substitute_lesson(lesson_id: int):
 @lessons_bp.route('/<int:lesson_id>/cancel', methods=['PATCH'])
 def cancel_lesson(lesson_id: int):
     db = get_db()
-    lesson = db.get_lesson(lesson_id)
-    subject_name = ''
-    date_iso = ''
-    if lesson:
-        try:
-            subject_name = lesson['actual_subject_name'] or ''
-        except Exception:
-            subject_name = dict(lesson).get('actual_subject_name', '')
-        date_iso = lesson['date'] or ''
-    ddmm = f"{date_iso[8:10]}.{date_iso[5:7]}" if date_iso and len(date_iso) >= 10 else ''
-    group_id = None
-    if lesson:
-        try:
-            if 'group_id' in lesson.keys():
-                group_id = lesson['group_id']
-        except Exception:
-            group_id = None
-        if group_id is None:
-            try:
-                r = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (lesson['subject_id'],)).fetchone()
-                if r:
-                    group_id = r['group_id']
-            except Exception:
-                pass
+    ddmm, subject_name, group_id = _lesson_notify_context(db, lesson_id)
     msg_text = f"Отменено занятие: {subject_name} {ddmm}".strip() if subject_name else f"Отменено занятие: {ddmm}".strip()
-    # ensure exact format: if no ddmm, fallback
     if not ddmm:
         msg_text = f"Отменено занятие: {subject_name}".strip()
     db.cancel_lesson(lesson_id)
     try:
         token = db.get_setting('max_bot_token')
         enabled = db.get_setting('max_bot_enabled')
-        if token and enabled == '1' and group_id is not None:
-            chat_ids = []
-            for st in db.list_students(group_id):
-                cid = db.get_max_student_chat(st['id'])
-                if cid is not None:
-                    chat_ids.append(cid)
-            if chat_ids:
-                def _run():
-                    import time as _time
-                    import maxbot as _maxbot
-                    for cid in chat_ids:
-                        try:
-                            _maxbot.send_message(token, cid, msg_text)
-                        except Exception:
-                            pass
-                        _time.sleep(0.6)
-                threading.Thread(target=_run, daemon=True).start()
+        if _is_bot_active(db, 'max_bot_token', 'max_bot_enabled'):
+            _notify_group_chats(db, group_id, token, enabled, msg_text)
     except Exception:
         pass
     return jsonify({'ok': True})
@@ -527,7 +552,7 @@ def mark_attendance(lesson_id: int):
 
         token = db.get_setting('max_bot_token')
         enabled = db.get_setting('max_bot_enabled')
-        if not token or enabled != '1':
+        if not _is_bot_active(db, 'max_bot_token', 'max_bot_enabled'):
             # Bot not active — cancel any pending timers for these keys
             for sid, _grade in pairs:
                 key = (lesson_id, sid)
@@ -645,13 +670,11 @@ app.register_blueprint(reports_bp)
 
 
 # ---- Export ----
-from report_export import export_grades_xlsx, export_report_xlsx
-
 export_bp = Blueprint('export', __name__, url_prefix='/api/export')
 
 
 def _missing_deps_response(e: Exception):
-    return jsonify({'error': f'export unavailable: {e}. Rebuild APK with openpyxl+reportlab or use CSV.'}), 500
+    return jsonify({'error': f'export unavailable: {e}. Rebuild APK with openpyxl.'}), 500
 
 
 @export_bp.route('/grades/<int:subject_id>.<fmt>')
@@ -1051,9 +1074,6 @@ app.register_blueprint(export_bp)
 
 
 # ---- Backup / Restore ----
-import glob as _glob
-import tempfile
-import time as _time
 from database import DB_PATH as _DB_PATH
 
 

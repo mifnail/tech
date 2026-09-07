@@ -255,14 +255,6 @@ def schedule_text(db, student_id: int) -> str:
     if not st:
         return 'Расписание пусто.'
     group_id = st['group_id']
-    # get group name for filtering when rows carry group_name
-    grp_name = None
-    try:
-        row = db.conn.execute("SELECT name FROM groups WHERE id=?", (group_id,)).fetchone()
-        if row:
-            grp_name = row['name']
-    except Exception:
-        grp_name = None
     from datetime import date as _date, timedelta as _td
     today = _date.today()
     lines = []
@@ -276,27 +268,7 @@ def schedule_text(db, student_id: int) -> str:
             rows = db.get_schedule_for_day(isow, week_type)
         except Exception:
             rows = []
-        filtered = []
-        for r in rows:
-            rd = dict(r)
-            # filter by student's group
-            # rows carry group_name and subject_name
-            if 'group_name' in rd and grp_name is not None:
-                if rd.get('group_name') == grp_name:
-                    filtered.append(rd)
-                else:
-                    continue
-            elif 'group_id' in rd:
-                if rd.get('group_id') == group_id:
-                    filtered.append(rd)
-            else:
-                # fallback via subject's group
-                try:
-                    subj_row = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (rd.get('subject_id'),)).fetchone()
-                    if subj_row and subj_row['group_id'] == group_id:
-                        filtered.append(rd)
-                except Exception:
-                    pass
+        filtered = [dict(r) for r in rows if r['group_id'] == group_id]
         if filtered:
             # filtered already ordered by lesson_number
             names = ', '.join(f.get('subject_name', '?') for f in filtered)
@@ -322,13 +294,7 @@ def avg_text(db, student_id: int) -> str:
             continue
         if g < 2 or g > 5:
             continue
-        subj = r.get('subject_name')
-        if not subj:
-            # fallback try keys
-            try:
-                subj = r['subject_name']
-            except Exception:
-                subj = '?'
+        subj = r.get('subject_name') or '?'
         per_subj.setdefault(subj, []).append(g)
     if not per_subj:
         return 'Оценок пока нет.'
@@ -688,7 +654,6 @@ def run_reminders(token: str, db_factory, stop_event=None):
             db = db_factory()
             try:
                 last_sent = db.get_setting('max_last_reminder')
-                now_hour = date.today().hour  # approximation
                 from datetime import datetime as _dt
                 now_hour = _dt.now().hour
                 if due_reminder(now_hour, last_sent, today_str):

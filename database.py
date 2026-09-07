@@ -419,7 +419,7 @@ class Database:
     def get_schedule_for_day(self, day_of_week: int, current_week_type: Optional[int] = None) -> Sequence[sqlite3.Row]:
         if current_week_type is not None:
             return self.conn.execute("""
-                SELECT sch.*, sub.name AS subject_name, g.name AS group_name
+                SELECT sch.*, sub.name AS subject_name, g.name AS group_name, sub.group_id AS group_id
                 FROM schedule sch
                 JOIN subjects sub ON sch.subject_id = sub.id
                 JOIN groups g ON sub.group_id = g.id
@@ -427,7 +427,7 @@ class Database:
                 ORDER BY sch.lesson_number
             """, (day_of_week, current_week_type)).fetchall()
         return self.conn.execute("""
-            SELECT sch.*, sub.name AS subject_name, g.name AS group_name
+            SELECT sch.*, sub.name AS subject_name, g.name AS group_name, sub.group_id AS group_id
             FROM schedule sch
             JOIN subjects sub ON sch.subject_id = sub.id
             JOIN groups g ON sub.group_id = g.id
