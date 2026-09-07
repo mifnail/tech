@@ -48,6 +48,10 @@ class Database:
             self.conn.execute("PRAGMA journal_mode=WAL")
         except Exception:
             pass
+        try:
+            self.conn.execute("PRAGMA busy_timeout = 5000")
+        except Exception:
+            pass
         self.init_schema()
         self._migrate()
 

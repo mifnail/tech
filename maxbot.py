@@ -492,148 +492,180 @@ def _handle_curator_vedomost(token: str, chat_id: int, db_factory, urlopen=None)
 
 def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
     """Цикл long-polling. db_factory() -> свежий Database (потокобезопасно)."""
-    db0 = db_factory()
     try:
-        marker = _get_marker(db0)
-    finally:
-        db0.close()
+        db0 = db_factory()
+        try:
+            marker = _get_marker(db0)
+        finally:
+            try:
+                db0.close()
+            except Exception:
+                pass
+    except Exception:
+        marker = None
     while stop_event is None or not stop_event.is_set():
         try:
-            updates, new_marker = get_updates(token, marker, urlopen=urlopen)
-        except MaxError:
-            time.sleep(ERROR_PAUSE)
-            continue
-        for u in updates or []:
-            msg_type = u.get('update_type') or u.get('type')
-            # ---- message_created ----
-            if msg_type == 'message_created':
-                msg = u.get('message') or {}
-                body = msg.get('body') or {}
-                text = body.get('text')
-                recipient = msg.get('recipient') or {}
-                cid = recipient.get('chat_id')
-                if text is None or cid is None:
-                    continue
-                try:
-                    cid = int(cid)
-                except (TypeError, ValueError):
-                    continue
-                db = db_factory()
-                teacher_notify = None
-                try:
-                    sid_before = db.get_max_link(cid)
-                    reply = process_text(text, cid, db)
-                    sid_after = db.get_max_link(cid)
-                    if sid_before is None and sid_after is not None:
+            try:
+                updates, new_marker = get_updates(token, marker, urlopen=urlopen)
+            except MaxError:
+                time.sleep(ERROR_PAUSE)
+                continue
+            for u in updates or []:
+                msg_type = u.get('update_type') or u.get('type')
+                # ---- message_created ----
+                if msg_type == 'message_created':
+                    msg = u.get('message') or {}
+                    body = msg.get('body') or {}
+                    text = body.get('text')
+                    recipient = msg.get('recipient') or {}
+                    cid = recipient.get('chat_id')
+                    if text is None or cid is None:
+                        continue
+                    try:
+                        cid = int(cid)
+                    except (TypeError, ValueError):
+                        continue
+                    db = db_factory()
+                    teacher_notify = None
+                    try:
+                        sid_before = db.get_max_link(cid)
+                        reply = process_text(text, cid, db)
+                        sid_after = db.get_max_link(cid)
+                        if sid_before is None and sid_after is not None:
+                            try:
+                                teacher = db.get_setting('max_teacher_chat')
+                                if teacher:
+                                    st = db.get_student(sid_after)
+                                    if st:
+                                        txt = f"Привязался: {st['last_name']} {st['first_name']}"
+                                        try:
+                                            gid = st['group_id']
+                                            grp = db.conn.execute("SELECT name FROM groups WHERE id=?", (gid,)).fetchone()
+                                            if grp and grp['name']:
+                                                txt += f" ({grp['name']})"
+                                        except Exception:
+                                            pass
+                                        teacher_notify = (teacher, txt)
+                            except Exception:
+                                pass
+                        db.set_setting('max_last_marker', str(new_marker))
+                    except Exception:
+                        reply = 'Ошибка, попробуй позже.'
+                    finally:
                         try:
-                            teacher = db.get_setting('max_teacher_chat')
-                            if teacher:
-                                st = db.get_student(sid_after)
-                                if st:
-                                    txt = f"Привязался: {st['last_name']} {st['first_name']}"
-                                    try:
-                                        gid = st['group_id']
-                                        grp = db.conn.execute("SELECT name FROM groups WHERE id=?", (gid,)).fetchone()
-                                        if grp and grp['name']:
-                                            txt += f" ({grp['name']})"
-                                    except Exception:
-                                        pass
-                                    teacher_notify = (teacher, txt)
+                            db.close()
                         except Exception:
                             pass
-                    db.set_setting('max_last_marker', str(new_marker))
-                except Exception:
-                    reply = 'Ошибка, попробуй позже.'
-                finally:
-                    db.close()
-                try:
-                    if reply.startswith('VEDOMOST_CURATOR:'):
-                        _handle_curator_vedomost(token, cid, db_factory, urlopen)
-                    elif reply.startswith('VEDOMOST:'):
-                        _handle_vedomost(token, cid, db_factory, urlopen)
-                    else:
-                        send_with_buttons(token, cid, reply, urlopen=urlopen)
-                except MaxError:
-                    pass
-                if teacher_notify:
                     try:
-                        t_chat, t_text = teacher_notify
-                        send_message(token, int(t_chat), t_text, urlopen=urlopen)
+                        if reply.startswith('VEDOMOST_CURATOR:'):
+                            _handle_curator_vedomost(token, cid, db_factory, urlopen)
+                        elif reply.startswith('VEDOMOST:'):
+                            _handle_vedomost(token, cid, db_factory, urlopen)
+                        else:
+                            send_with_buttons(token, cid, reply, urlopen=urlopen)
                     except Exception:
                         pass
-            # ---- message_callback ----
-            elif msg_type == 'message_callback':
-                cb = u.get('callback') or {}
-                callback_id = cb.get('callback_id')
-                payload = cb.get('payload')
-                cb_msg = cb.get('message') or {}
-                cb_recipient = cb_msg.get('recipient') or {}
-                cb_user = cb.get('user') or {}
-                cid = cb_recipient.get('chat_id')
-                if cid is None:
-                    cid = cb_user.get('user_id')
-                if payload is None or cid is None:
-                    continue
-                try:
-                    cid = int(cid)
-                except (TypeError, ValueError):
-                    continue
-                db = db_factory()
-                try:
-                    reply = process_text(payload, cid, db)
-                    db.set_setting('max_last_marker', str(new_marker))
-                except Exception:
-                    reply = 'Ошибка, попробуй позже.'
-                finally:
-                    db.close()
-                try:
-                    if reply.startswith('VEDOMOST_CURATOR:'):
-                        _handle_curator_vedomost(token, cid, db_factory, urlopen)
-                    elif reply.startswith('VEDOMOST:'):
-                        _handle_vedomost(token, cid, db_factory, urlopen)
-                    else:
-                        send_with_buttons(token, cid, reply, urlopen=urlopen)
-                except MaxError:
-                    pass
-                if callback_id:
+                    if teacher_notify:
+                        try:
+                            t_chat, t_text = teacher_notify
+                            send_message(token, int(t_chat), t_text, urlopen=urlopen)
+                        except Exception:
+                            pass
+                # ---- message_callback ----
+                elif msg_type == 'message_callback':
+                    cb = u.get('callback') or {}
+                    callback_id = cb.get('callback_id')
+                    payload = cb.get('payload')
+                    cb_msg = cb.get('message') or {}
+                    cb_recipient = cb_msg.get('recipient') or {}
+                    cb_user = cb.get('user') or {}
+                    cid = cb_recipient.get('chat_id')
+                    if cid is None:
+                        cid = cb_user.get('user_id')
+                    if payload is None or cid is None:
+                        continue
                     try:
-                        answer_callback(
-                            token, callback_id, 'Готово', urlopen=urlopen)
-                    except MaxError:
+                        cid = int(cid)
+                    except (TypeError, ValueError):
+                        continue
+                    db = db_factory()
+                    try:
+                        reply = process_text(payload, cid, db)
+                        db.set_setting('max_last_marker', str(new_marker))
+                    except Exception:
+                        reply = 'Ошибка, попробуй позже.'
+                    finally:
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                    try:
+                        if reply.startswith('VEDOMOST_CURATOR:'):
+                            _handle_curator_vedomost(token, cid, db_factory, urlopen)
+                        elif reply.startswith('VEDOMOST:'):
+                            _handle_vedomost(token, cid, db_factory, urlopen)
+                        else:
+                            send_with_buttons(token, cid, reply, urlopen=urlopen)
+                    except Exception:
                         pass
-            # ---- bot_started ----
-            elif msg_type == 'bot_started':
-                cid = u.get('chat_id')
-                if cid is None:
-                    continue
-                try:
-                    cid = int(cid)
-                except (TypeError, ValueError):
-                    continue
-                db = db_factory()
-                try:
-                    reply = process_text('/start', cid, db)
-                    db.set_setting('max_last_marker', str(new_marker))
-                except Exception:
-                    reply = 'Ошибка, попробуй позже.'
-                finally:
-                    db.close()
-                try:
-                    send_with_buttons(token, cid, reply, urlopen=urlopen)
-                except MaxError:
-                    pass
-            if new_marker is not None:
-                marker = new_marker
+                    if callback_id:
+                        try:
+                            answer_callback(
+                                token, callback_id, 'Готово', urlopen=urlopen)
+                        except Exception:
+                            pass
+                # ---- bot_started ----
+                elif msg_type == 'bot_started':
+                    cid = u.get('chat_id')
+                    if cid is None:
+                        continue
+                    try:
+                        cid = int(cid)
+                    except (TypeError, ValueError):
+                        continue
+                    db = db_factory()
+                    try:
+                        reply = process_text('/start', cid, db)
+                        db.set_setting('max_last_marker', str(new_marker))
+                    except Exception:
+                        reply = 'Ошибка, попробуй позже.'
+                    finally:
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                    try:
+                        send_with_buttons(token, cid, reply, urlopen=urlopen)
+                    except Exception:
+                        pass
+                if new_marker is not None:
+                    marker = new_marker
+        except Exception:
+            try:
+                time.sleep(ERROR_PAUSE)
+            except Exception:
+                pass
+            continue
+        except Exception:
+            try:
+                time.sleep(ERROR_PAUSE)
+            except Exception:
+                pass
+            continue
 
 
 def start_polling(token: str):
     """Запустить polling в daemon-потоке. Импорты только внутри — модуль без тяжёлых deps."""
     from database import Database
+    from botcore import supervise
 
-    t = threading.Thread(target=run_polling, args=(token, Database),
-                         daemon=True, name='max-poll')
-    t.start()
-    return t
+    def _factory():
+        t = threading.Thread(target=run_polling, args=(token, Database), daemon=True, name='max-poll')
+        t.start()
+        return t
+
+    worker, supervisor = supervise('max-poll', _factory, interval=60)
+    return worker
 
 
 # ---- Reminders ----

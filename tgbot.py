@@ -186,54 +186,74 @@ def _get_offset(db) -> int:
 
 def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
     """Цикл long-polling. db_factory() -> свежий Database (потокобезопасно)."""
-    db0 = db_factory()
     try:
-        offset = _get_offset(db0)
-    finally:
-        db0.close()
+        db0 = db_factory()
+        try:
+            offset = _get_offset(db0)
+        finally:
+            try:
+                db0.close()
+            except Exception:
+                pass
+    except Exception:
+        offset = 0
     while stop_event is None or not stop_event.is_set():
         try:
-            updates = get_updates(token, offset, urlopen=urlopen)
-        except BotRateLimited as e:
-            time.sleep(e.wait)
-            continue
-        except BotError:
-            time.sleep(ERROR_PAUSE)
-            continue
-        for u in updates or []:
             try:
-                offset = max(offset, int(u.get('update_id', 0)) + 1)
-            except (TypeError, ValueError):
+                updates = get_updates(token, offset, urlopen=urlopen)
+            except BotRateLimited as e:
+                time.sleep(e.wait)
                 continue
-            msg = u.get('message') or {}
-            chat = msg.get('chat') or {}
-            text = msg.get('text')
-            cid = chat.get('id')
-            if text is None or cid is None:
-                continue
-            try:
-                cid = int(cid)
-            except (TypeError, ValueError):
-                continue
-            db = db_factory()
-            try:
-                reply = process_text(text, cid, db)
-                db.set_setting('bot_last_update', str(offset))
-            except Exception:
-                reply = 'Ошибка, попробуй позже.'
-            finally:
-                db.close()
-            try:
-                send_message(token, cid, reply, urlopen=urlopen)
             except BotError:
+                time.sleep(ERROR_PAUSE)
+                continue
+            for u in updates or []:
+                try:
+                    offset = max(offset, int(u.get('update_id', 0)) + 1)
+                except (TypeError, ValueError):
+                    continue
+                msg = u.get('message') or {}
+                chat = msg.get('chat') or {}
+                text = msg.get('text')
+                cid = chat.get('id')
+                if text is None or cid is None:
+                    continue
+                try:
+                    cid = int(cid)
+                except (TypeError, ValueError):
+                    continue
+                db = db_factory()
+                try:
+                    reply = process_text(text, cid, db)
+                    db.set_setting('bot_last_update', str(offset))
+                except Exception:
+                    reply = 'Ошибка, попробуй позже.'
+                finally:
+                    try:
+                        db.close()
+                    except Exception:
+                        pass
+                try:
+                    send_message(token, cid, reply, urlopen=urlopen)
+                except Exception:
+                    pass
+        except Exception:
+            try:
+                time.sleep(ERROR_PAUSE)
+            except Exception:
                 pass
+            continue
 
 
 def start_polling(token: str):
     """Запустить polling в daemon-потоке. Импорты только внутри — модуль без тяжёлых deps."""
     from database import Database
+    from botcore import supervise
 
-    t = threading.Thread(target=run_polling, args=(token, Database),
-                         daemon=True, name='tg-poll')
-    t.start()
-    return t
+    def _factory():
+        t = threading.Thread(target=run_polling, args=(token, Database), daemon=True, name='tg-poll')
+        t.start()
+        return t
+
+    worker, supervisor = supervise('tg-poll', _factory, interval=60)
+    return worker

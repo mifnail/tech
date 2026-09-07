@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -100,3 +101,58 @@ def _fmt_date(iso: str) -> str:
     if iso and len(iso) >= 10:
         return f'{iso[8:10]}.{iso[5:7]}'
     return iso or ''
+
+
+def supervise(name, target_factory, interval=60):
+    """Start worker via target_factory() and supervise restarts if dead. Returns (worker, supervisor)."""
+    worker = None
+    try:
+        worker = target_factory()
+        if isinstance(worker, threading.Thread):
+            try:
+                worker.name = name
+                worker.daemon = True
+            except Exception:
+                pass
+            if not worker.is_alive():
+                try:
+                    worker.start()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    def _sup_loop():
+        nonlocal worker
+        while True:
+            try:
+                time.sleep(interval)
+            except Exception:
+                pass
+            try:
+                if worker is None or not worker.is_alive():
+                    try:
+                        new_worker = target_factory()
+                    except Exception:
+                        continue
+                    if isinstance(new_worker, threading.Thread):
+                        try:
+                            new_worker.name = name
+                            new_worker.daemon = True
+                        except Exception:
+                            pass
+                        if not new_worker.is_alive():
+                            try:
+                                new_worker.start()
+                            except Exception:
+                                pass
+                    worker = new_worker
+            except Exception:
+                pass
+
+    supervisor = threading.Thread(target=_sup_loop, daemon=True, name=f"{name}-supervisor")
+    try:
+        supervisor.start()
+    except Exception:
+        pass
+    return (worker, supervisor)
