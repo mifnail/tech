@@ -275,10 +275,11 @@ App.Pages = {
 
   async home() {
     App.Loading.show();
-    const [subjects, groups, today] = await Promise.all([
+    const [subjects, groups, today, ver] = await Promise.all([
       App.API.get('/api/subjects'),
       App.API.get('/api/groups'),
-      App.API.get('/api/schedule/today')
+      App.API.get('/api/schedule/today'),
+      App.API.get('/api/version')
     ]);
 
     let html = App.Nav.render();
@@ -335,6 +336,8 @@ App.Pages = {
     <h2>Экспорт</h2><div class="grid-2">
       <button class="btn btn-muted btn-sm" onclick="App.Pages.shareReport('${today.date}')">Поделиться отчётом</button>
     </div>`;
+    html += `<button class="btn btn-success" style="width:100%;margin-top:8px" onclick="App.Pages.showCreateLessonAny()">+ Создать занятие</button>`;
+    html += `<div class="card-sub" style="text-align:center;margin-top:8px">сборка ${(ver && ver.ver) || '?'}</div>`;
 
     document.getElementById('app').innerHTML = html;
   },
@@ -907,18 +910,66 @@ App.Pages.createLessonOn = async function(subjectId, lessonNumber, daysAgo) {
   await App.Pages._createLessonAt(subjectId, lessonNumber, iso);
 };
 
-App.Pages.createLessonManual = async function(subjectId, lessonNumber) {
+App.Pages._parseManualDate = function() {
   const dd = (document.getElementById('in-day').value || '').trim();
   const mm = (document.getElementById('in-mon').value || '').trim();
-  let yy = (document.getElementById('in-year').value || '').trim();
-  const d = parseInt(dd, 10), m = parseInt(mm, 10);
-  let y = parseInt(yy, 10);
+  const yy = (document.getElementById('in-year').value || '').trim();
+  const d = parseInt(dd, 10), m = parseInt(mm, 10), y = parseInt(yy, 10);
   if (!(d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 2000 && y <= 2100)) {
     App.UI.notify('Дата как ДД ММ ГГГГ, например: 04 09 2026');
-    return;
+    return null;
   }
   const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-  if (iso > App.Pages._todayIso()) { App.UI.notify('Будущие даты нельзя'); return; }
+  if (iso > App.Pages._todayIso()) { App.UI.notify('Будущие даты нельзя'); return null; }
+  return iso;
+};
+
+App.Pages.showCreateLessonAny = async function() {
+  const subjects = await App.API.get('/api/subjects');
+  const opts = subjects.map(s => `<option value="${s.id}">${App.UI.escHtml(s.name)} · ${App.UI.escHtml(s.group_name || '')}</option>`).join('');
+  App.UI.showPopup(`
+    <h2>Создать занятие</h2>
+    <select id="new-lesson-subject">${opts}</select>
+    <div class="grid-2" style="margin-top:8px">
+      <button class="btn btn-success btn-sm" onclick="App.Pages.createLessonPicked(0)">Сегодня</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonPicked(1)">Вчера</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonPicked(2)">Позавчера</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonPicked(7)">−7 дней</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input id="in-day" inputmode="numeric" placeholder="ДД" style="flex:1;min-width:0">
+      <input id="in-mon" inputmode="numeric" placeholder="ММ" style="flex:1;min-width:0">
+      <input id="in-year" inputmode="numeric" placeholder="ГГГГ" style="flex:2;min-width:0">
+      <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.createLessonManualPicked()">ОК</button>
+    </div>
+    <div style="margin-top:8px"><button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button></div>
+  `);
+};
+
+App.Pages._pickedSubject = function() {
+  const el = document.getElementById('new-lesson-subject');
+  const sid = el ? parseInt(el.value, 10) : 0;
+  if (!sid) App.UI.notify('Выбери предмет');
+  return sid || null;
+};
+
+App.Pages.createLessonPicked = async function(daysAgo) {
+  const sid = App.Pages._pickedSubject();
+  if (!sid) return;
+  await App.Pages.createLessonOn(sid, null, daysAgo);
+};
+
+App.Pages.createLessonManualPicked = async function() {
+  const sid = App.Pages._pickedSubject();
+  if (!sid) return;
+  const iso = App.Pages._parseManualDate();
+  if (!iso) return;
+  await App.Pages._createLessonAt(sid, null, iso);
+};
+
+App.Pages.createLessonManual = async function(subjectId, lessonNumber) {
+  const iso = App.Pages._parseManualDate();
+  if (!iso) return;
   await App.Pages._createLessonAt(subjectId, lessonNumber, iso);
 };
 

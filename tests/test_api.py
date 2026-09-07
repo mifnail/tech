@@ -34,6 +34,12 @@ class TestSPA:
         rv = client.get('/')
         assert rv.status_code == 200
         assert b'<!DOCTYPE html>' in rv.data
+        assert b'app.js?v=' in rv.data
+
+    def test_version(self, client):
+        rv = client.get('/api/version')
+        assert rv.status_code == 200
+        assert rv.json['ver']
 
 # ======================== GROUPS ========================
 

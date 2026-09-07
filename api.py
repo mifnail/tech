@@ -86,6 +86,11 @@ def serve_static(path: str):
     return resp
 
 
+@app.route('/api/version', methods=['GET'])
+def app_version():
+    return jsonify({'ver': STATIC_VER})
+
+
 # ---- Groups ----
 groups_bp = Blueprint('groups', __name__, url_prefix='/api/groups')
 
