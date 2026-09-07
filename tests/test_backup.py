@@ -223,3 +223,131 @@ class TestRestore:
                     os.unlink(f)
                 except OSError:
                     pass
+
+
+class TestRestoreLatest:
+    def test_restore_latest_ok(self, client, monkeypatch):
+        """POST /api/restore/latest replaces DB with found backup."""
+        valid_data = _make_valid_db_bytes()
+        restore_target = tempfile.mktemp(suffix='.db')
+        try:
+            monkeypatch.setattr(_api_module, '_DB_PATH', restore_target)
+            with open(restore_target, 'wb') as f:
+                f.write(b'old data')
+
+            written = {}
+            real_replace = os.replace
+            def fake_replace(src, dst):
+                with open(src, 'rb') as f:
+                    written['data'] = f.read()
+                real_replace(src, dst)
+            monkeypatch.setattr(os, 'replace', fake_replace)
+            monkeypatch.setattr(_api_module, '_save_to_downloads_full',
+                                lambda data, fn, mt: ('/bak', None))
+
+            def fake_find():
+                return valid_data, 'teachhelper_2026-01-01.db'
+            monkeypatch.setattr(_api_module, '_find_latest_backup_bytes', fake_find)
+
+            rv = client.post('/api/restore/latest')
+            assert rv.status_code == 200
+            assert rv.json['ok'] is True
+            assert rv.json['name'] == 'teachhelper_2026-01-01.db'
+            assert written['data'] == valid_data
+        finally:
+            for f in (restore_target, restore_target + '-wal', restore_target + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+
+    def test_restore_latest_not_found(self, client, monkeypatch):
+        """POST /api/restore/latest returns 404 when no backup exists."""
+        def fake_find():
+            raise _api_module.BackupNotFound('no backup files found')
+        monkeypatch.setattr(_api_module, '_find_latest_backup_bytes', fake_find)
+
+        rv = client.post('/api/restore/latest')
+        assert rv.status_code == 404
+        assert 'no backup' in rv.json['error']
+
+    def test_restore_latest_corrupt(self, client, monkeypatch):
+        """POST /api/restore/latest returns 400 for corrupt backup, original intact."""
+        restore_target = tempfile.mktemp(suffix='.db')
+        try:
+            monkeypatch.setattr(_api_module, '_DB_PATH', restore_target)
+            with open(restore_target, 'wb') as f:
+                f.write(b'original data')
+
+            def fake_find():
+                return b'not sqlite at all', 'teachhelper_bad.db'
+            monkeypatch.setattr(_api_module, '_find_latest_backup_bytes', fake_find)
+
+            rv = client.post('/api/restore/latest')
+            assert rv.status_code == 400
+            assert 'not a SQLite' in rv.json['error']
+            with open(restore_target, 'rb') as f:
+                assert f.read() == b'original data'
+        finally:
+            try:
+                os.unlink(restore_target)
+            except OSError:
+                pass
+
+
+class TestDrainPfd:
+    def test_drain_normal(self):
+        # write known bytes to temp file, drain via detachFd
+        data = b'hello world \x00\xff end'
+        fd, path = tempfile.mkstemp()
+        try:
+            os.write(fd, data)
+            os.close(fd)
+            fd2 = os.open(path, os.O_RDONLY)
+            class Stub:
+                def detachFd(self):
+                    return fd2
+                def close(self):
+                    raise AssertionError('close should not be called on success path')
+            out = _api_module._drain_pfd(Stub())
+            assert out == data
+            # fd should be closed after drain
+            try:
+                os.read(fd2, 1)
+                assert False, 'fd should be closed after _drain_pfd'
+            except OSError:
+                pass
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def test_drain_empty(self):
+        fd, path = tempfile.mkstemp()
+        try:
+            os.close(fd)
+            fd2 = os.open(path, os.O_RDONLY)
+            class Stub:
+                def detachFd(self):
+                    return fd2
+                def close(self):
+                    raise AssertionError('close should not be called on success')
+            out = _api_module._drain_pfd(Stub())
+            assert out == b''
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def test_detach_raises_calls_close_and_propagates(self):
+        closed = {'v': False}
+        class Stub:
+            def detachFd(self):
+                raise RuntimeError('detach fail')
+            def close(self):
+                closed['v'] = True
+        with pytest.raises(RuntimeError, match='detach fail'):
+            _api_module._drain_pfd(Stub())
+        assert closed['v'] is True

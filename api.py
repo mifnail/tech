@@ -1145,6 +1145,30 @@ def _restore_from_bytes(data: bytes) -> None:
             pass
 
 
+def _drain_pfd(pfd) -> bytes:
+    try:
+        fd = pfd.detachFd()
+    except Exception:
+        try:
+            pfd.close()
+        except Exception:
+            pass
+        raise
+    chunks: list[bytes] = []
+    try:
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+    return b''.join(chunks)
+
+
 def _find_latest_backup_bytes() -> tuple[bytes, str]:
     """Find the most recent teachhelper_*.db in Downloads.
 
@@ -1184,11 +1208,8 @@ def _find_latest_backup_bytes() -> tuple[bytes, str]:
         ContentUris = autoclass('android.content.ContentUris')
         uri = ContentUris.withAppendedId(collection, cursor.getLong(idx_id))
         display_name = cursor.getString(idx_name)
-        inp = resolver.openInputStream(uri)
-        try:
-            data = inp.read()
-        finally:
-            inp.close()
+        pfd = resolver.openFileDescriptor(uri, 'r')
+        data = _drain_pfd(pfd)
         return data, display_name
     finally:
         if cursor is not None:
