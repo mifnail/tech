@@ -225,6 +225,19 @@ class TestTgClient:
         tgbot.send_message('t', 1, 'x' * 5000, urlopen=fake)
         assert rec[0][0] == 'POST'
 
+    def test_send_message_keyboard(self):
+        bodies = []
+
+        def fake(req, timeout=None, **kw):
+            bodies.append(json.loads(req.data.decode()))
+            return FakeResp(json.dumps({'ok': True, 'result': {}}).encode())
+
+        tgbot.send_message('t', 1, 'hi', urlopen=fake)
+        kb = bodies[0]['reply_markup']
+        texts = [b['text'] for row in kb['keyboard'] for b in row]
+        assert texts == ['Оценки', 'Сегодня', 'Помощь', 'Отвязать']
+        assert kb['resize_keyboard'] is True
+
     def test_401(self):
         fake = _fake_urlopen_factory([('http401', None)], [])
         with pytest.raises(tgbot.BotError):

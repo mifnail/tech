@@ -74,9 +74,17 @@ def get_me(token: str, urlopen=None, retries: int = 3):
     return retry_on_connection(lambda: _call(token, 'getMe', urlopen=urlopen), retries=retries, sleep=2)
 
 
+KEYBOARD = {
+    'keyboard': [[{'text': 'Оценки'}, {'text': 'Сегодня'}],
+                 [{'text': 'Помощь'}, {'text': 'Отвязать'}]],
+    'resize_keyboard': True,
+}
+
+
 def send_message(token: str, chat_id: int, text: str, urlopen=None):
     return _call(token, 'sendMessage',
-                 {'chat_id': chat_id, 'text': (text or '')[:MAX_TEXT]}, urlopen=urlopen)
+                 {'chat_id': chat_id, 'text': (text or '')[:MAX_TEXT],
+                  'reply_markup': KEYBOARD}, urlopen=urlopen)
 
 
 def get_updates(token: str, offset: int = 0, timeout: int = POLL_TIMEOUT, urlopen=None):
