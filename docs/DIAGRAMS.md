@@ -16,15 +16,18 @@ flowchart TB
         API["api.py<br>REST API"]
         DB[("lessons.db<br>SQLite WAL")]
         EXP["report_export.py<br>xlsx"]
+        BK["бэкап/restore<br>lessons.db"]
     end
     subgraph BG["Фоновые потоки"]
         TG["tgbot.py<br>polling"]
-        MX["maxbot.py<br>polling + напоминания"]
+        MX["maxbot.py<br>polling+дайджесты+кураторы"]
+        BC["botcore.py<br>общий транспорт"]
     end
     subgraph EXT["Внешний мир"]
         TGA["Telegram API"]
         MXA["MAX API<br>platform-api2"]
         ST["Студенты"]
+        CU["Куратор"]
     end
     subgraph CI["GitHub Actions"]
         TST["pytest"]
@@ -34,18 +37,23 @@ flowchart TB
     SPA <--> API
     API <--> DB
     API --> EXP
+    API --> BK
+    BK --> MS
     EXP --> MS
     MS --> SH
     TG <--> TGA
     MX <--> MXA
+    TG --- BC
+    MX --- BC
     TGA --> ST
     MXA --> ST
+    MXA --> CU
     TST --> BLD
     BLD --> SGN
     SGN --> SPA
 ```
 
-[Открыть картинкой](https://mermaid.ink/img/eyJjb2RlIjogImZsb3djaGFydCBUQlxuICAgIHN1YmdyYXBoIFRFTFtcItCi0LXQu9C10YTQvtC9XCJdXG4gICAgICAgIFNQQVtcIlNQQTogYXBwLmpzICsgc3R5bGUuY3NzPGJyPldlYlZpZXdcIl1cbiAgICAgICAgTVNbXCJNZWRpYVN0b3JlPGJyPtCX0LDQs9GA0YPQt9C60LhcIl1cbiAgICAgICAgU0hbXCLQqNGC0L7RgNC60LAg0J_QvtC00LXQu9C40YLRjNGB0Y9cIl1cbiAgICBlbmRcbiAgICBzdWJncmFwaCBTUlZbXCLQodC10YDQstC10YA6IEZsYXNrXCJdXG4gICAgICAgIEFQSVtcImFwaS5weTxicj5SRVNUIEFQSVwiXVxuICAgICAgICBEQlsoXCJsZXNzb25zLmRiPGJyPlNRTGl0ZSBXQUxcIildXG4gICAgICAgIEVYUFtcInJlcG9ydF9leHBvcnQucHk8YnI-eGxzeFwiXVxuICAgIGVuZFxuICAgIHN1YmdyYXBoIEJHW1wi0KTQvtC90L7QstGL0LUg0L_QvtGC0L7QutC4XCJdXG4gICAgICAgIFRHW1widGdib3QucHk8YnI-cG9sbGluZ1wiXVxuICAgICAgICBNWFtcIm1heGJvdC5weTxicj5wb2xsaW5nICsg0L3QsNC_0L7QvNC40L3QsNC90LjRj1wiXVxuICAgIGVuZFxuICAgIHN1YmdyYXBoIEVYVFtcItCS0L3QtdGI0L3QuNC5INC80LjRgFwiXVxuICAgICAgICBUR0FbXCJUZWxlZ3JhbSBBUElcIl1cbiAgICAgICAgTVhBW1wiTUFYIEFQSTxicj5wbGF0Zm9ybS1hcGkyXCJdXG4gICAgICAgIFNUW1wi0KHRgtGD0LTQtdC90YLRi1wiXVxuICAgIGVuZFxuICAgIHN1YmdyYXBoIENJW1wiR2l0SHViIEFjdGlvbnNcIl1cbiAgICAgICAgVFNUW1wicHl0ZXN0XCJdXG4gICAgICAgIEJMRFtcIkJ1aWxkb3plclwiXVxuICAgICAgICBTR05bXCJhcGtzaWduZXJcIl1cbiAgICBlbmRcbiAgICBTUEEgPC0tPiBBUElcbiAgICBBUEkgPC0tPiBEQlxuICAgIEFQSSAtLT4gRVhQXG4gICAgRVhQIC0tPiBNU1xuICAgIE1TIC0tPiBTSFxuICAgIFRHIDwtLT4gVEdBXG4gICAgTVggPC0tPiBNWEFcbiAgICBUR0EgLS0-IFNUXG4gICAgTVhBIC0tPiBTVFxuICAgIFRTVCAtLT4gQkxEXG4gICAgQkxEIC0tPiBTR05cbiAgICBTR04gLS0-IFNQQSJ9)
+[Открыть картинкой](https://mermaid.ink/img/eyJjb2RlIjogImZsb3djaGFydCBUQlxuICAgIHN1YmdyYXBoIFRFTFtcItCi0LXQu9C10YTQvtC9XCJdXG4gICAgICAgIFNQQVtcIlNQQTogYXBwLmpzICsgc3R5bGUuY3NzPGJyPldlYlZpZXdcIl1cbiAgICAgICAgTVNbXCJNZWRpYVN0b3JlPGJyPtCX0LDQs9GA0YPQt9C60LhcIl1cbiAgICAgICAgU0hbXCLQqNGC0L7RgNC60LAg0J_QvtC00LXQu9C40YLRjNGB0Y9cIl1cbiAgICBlbmRcbiAgICBzdWJncmFwaCBTUlZbXCLQodC10YDQstC10YA6IEZsYXNrXCJdXG4gICAgICAgIEFQSVtcImFwaS5weTxicj5SRVNUIEFQSVwiXVxuICAgICAgICBEQlsoXCJsZXNzb25zLmRiPGJyPlNRTGl0ZSBXQUxcIildXG4gICAgICAgIEVYUFtcInJlcG9ydF9leHBvcnQucHk8YnI-eGxzeFwiXVxuICAgICAgICBCS1tcItCx0Y3QutCw0L8vcmVzdG9yZTxicj5sZXNzb25zLmRiXCJdXG4gICAgZW5kXG4gICAgc3ViZ3JhcGggQkdbXCLQpNC-0L3QvtCy0YvQtSDQv9C-0YLQvtC60LhcIl1cbiAgICAgICAgVEdbXCJ0Z2JvdC5weTxicj5wb2xsaW5nXCJdXG4gICAgICAgIE1YW1wibWF4Ym90LnB5PGJyPnBvbGxpbmcr0LTQsNC50LTQttC10YHRgtGLK9C60YPRgNCw0YLQvtGA0YtcIl1cbiAgICAgICAgQkNbXCJib3Rjb3JlLnB5PGJyPtC-0LHRidC40Lkg0YLRgNCw0L3RgdC_0L7RgNGCXCJdXG4gICAgZW5kXG4gICAgc3ViZ3JhcGggRVhUW1wi0JLQvdC10YjQvdC40Lkg0LzQuNGAXCJdXG4gICAgICAgIFRHQVtcIlRlbGVncmFtIEFQSVwiXVxuICAgICAgICBNWEFbXCJNQVggQVBJPGJyPnBsYXRmb3JtLWFwaTJcIl1cbiAgICAgICAgU1RbXCLQodGC0YPQtNC10L3RgtGLXCJdXG4gICAgICAgIENVW1wi0JrRg9GA0LDRgtC-0YBcIl1cbiAgICBlbmRcbiAgICBzdWJncmFwaCBDSVtcIkdpdEh1YiBBY3Rpb25zXCJdXG4gICAgICAgIFRTVFtcInB5dGVzdFwiXVxuICAgICAgICBCTERbXCJCdWlsZG96ZXJcIl1cbiAgICAgICAgU0dOW1wiYXBrc2lnbmVyXCJdXG4gICAgZW5kXG4gICAgU1BBIDwtLT4gQVBJXG4gICAgQVBJIDwtLT4gREJcbiAgICBBUEkgLS0-IEVYUFxuICAgIEFQSSAtLT4gQktcbiAgICBCSyAtLT4gTVNcbiAgICBFWFAgLS0-IE1TXG4gICAgTVMgLS0-IFNIXG4gICAgVEcgPC0tPiBUR0FcbiAgICBNWCA8LS0-IE1YQVxuICAgIFRHIC0tLSBCQ1xuICAgIE1YIC0tLSBCQ1xuICAgIFRHQSAtLT4gU1RcbiAgICBNWEEgLS0-IFNUXG4gICAgTVhBIC0tPiBDVVxuICAgIFRTVCAtLT4gQkxEXG4gICAgQkxEIC0tPiBTR05cbiAgICBTR04gLS0-IFNQQSJ9)
 
 **Теория: клиент-сервер.** Интерфейс и данные разделены: SPA общается с бэкендом только через REST API, прямого доступа к базе у фронта нет. SQLite в режиме WAL переживает параллельные чтения. Боты — фоновые daemon-потоки с long-polling: входящие порты и хостинг не нужны. Один и тот же код работает на десктопе и в APK (WebView-обёртка), а сборка и подпись происходят только в CI.
 
