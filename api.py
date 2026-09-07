@@ -17,7 +17,7 @@ GRADE_PUSH_DELAY = 10.0  # seconds
 # When a timer fires it is automatically removed.
 _pending: dict[tuple[int, int], threading.Timer] = {}
 
-from flask import Flask, Blueprint, request, jsonify, send_from_directory, send_file
+from flask import Flask, Blueprint, Response, request, jsonify, send_from_directory, send_file
 
 from database import Database
 
@@ -56,14 +56,34 @@ def dict_row(row) -> dict:
 
 
 # ---- SPA shell ----
+def _static_ver() -> str:
+    """Версия статики по mtime bundle: новый APK = новый URL = WebView не отдаст кэш."""
+    try:
+        base = os.path.join(os.path.dirname(__file__), 'static')
+        m = max(os.path.getmtime(os.path.join(base, f)) for f in ('app.js', 'style.css'))
+        return str(int(m))
+    except Exception:
+        return '1'
+
+
+STATIC_VER = _static_ver()
+
+
 @app.route('/')
 def index():
-    return send_from_directory('templates', 'index.html')
+    with open(os.path.join(os.path.dirname(__file__), 'templates', 'index.html'),
+              encoding='utf-8') as f:
+        html = f.read()
+    html = html.replace('/static/app.js', f'/static/app.js?v={STATIC_VER}')
+    html = html.replace('/static/style.css', f'/static/style.css?v={STATIC_VER}')
+    return Response(html, mimetype='text/html')
 
 
 @app.route('/static/<path:path>')
 def serve_static(path: str):
-    return send_from_directory('static', path)
+    resp = send_from_directory('static', path)
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 # ---- Groups ----
