@@ -453,8 +453,28 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                 except (TypeError, ValueError):
                     continue
                 db = db_factory()
+                teacher_notify = None
                 try:
+                    sid_before = db.get_max_link(cid)
                     reply = process_text(text, cid, db)
+                    sid_after = db.get_max_link(cid)
+                    if sid_before is None and sid_after is not None:
+                        try:
+                            teacher = db.get_setting('max_teacher_chat')
+                            if teacher:
+                                st = db.get_student(sid_after)
+                                if st:
+                                    txt = f"Привязался: {st['last_name']} {st['first_name']}"
+                                    try:
+                                        gid = st['group_id']
+                                        grp = db.conn.execute("SELECT name FROM groups WHERE id=?", (gid,)).fetchone()
+                                        if grp and grp['name']:
+                                            txt += f" ({grp['name']})"
+                                    except Exception:
+                                        pass
+                                    teacher_notify = (teacher, txt)
+                        except Exception:
+                            pass
                     db.set_setting('max_last_marker', str(new_marker))
                 except Exception:
                     reply = 'Ошибка, попробуй позже.'
@@ -467,6 +487,12 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                         send_with_buttons(token, cid, reply, urlopen=urlopen)
                 except MaxError:
                     pass
+                if teacher_notify:
+                    try:
+                        t_chat, t_text = teacher_notify
+                        send_message(token, int(t_chat), t_text, urlopen=urlopen)
+                    except Exception:
+                        pass
             # ---- message_callback ----
             elif msg_type == 'message_callback':
                 cb = u.get('callback') or {}
