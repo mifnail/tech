@@ -871,22 +871,22 @@ App.Pages.shareReport = async function(dateStr) {
 };
 
 App.Pages.startLesson = async function(subjectId, lessonNumber) {
-  const today = new Date().toISOString().slice(0, 10);
-  App.Pages._newLessonDate = today;
   App.UI.showPopup(`
     <h2>Начать занятие</h2>
-    <div style="text-align:center;font-size:22px;font-weight:600;margin:8px 0" id="new-lesson-label">${App.UI.formatDate(today)}</div>
-    <input type="hidden" id="new-lesson-date" value="${today}">
     <div class="grid-2">
-      <button class="btn btn-muted" onclick="App.Pages.shiftLessonDate(-1)">◀ −1 день</button>
-      <button class="btn btn-muted" onclick="App.Pages.shiftLessonDate(1)">+1 день ▶</button>
+      <button class="btn btn-success btn-sm" onclick="App.Pages.createLessonOn(${subjectId}, ${lessonNumber}, 0)">Сегодня</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonOn(${subjectId}, ${lessonNumber}, 1)">Вчера</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonOn(${subjectId}, ${lessonNumber}, 2)">Позавчера</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonOn(${subjectId}, ${lessonNumber}, 7)">−7 дней</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input id="in-day" inputmode="numeric" placeholder="ДД" style="flex:1;min-width:0">
+      <input id="in-mon" inputmode="numeric" placeholder="ММ" style="flex:1;min-width:0">
+      <input id="in-year" inputmode="numeric" placeholder="ГГГГ" style="flex:2;min-width:0">
+      <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.createLessonManual(${subjectId}, ${lessonNumber})">ОК</button>
     </div>
     <div class="grid-2" style="margin-top:8px">
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.setLessonDate(0)">Сегодня</button>
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.setLessonDate(1)">Вчера</button>
-    </div>
-    <div class="grid-2" style="margin-top:8px">
-      <button class="btn btn-success" onclick="App.Pages.confirmStartLesson(${subjectId}, ${lessonNumber})">Создать</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.lessonDateDiag()">Диагностика</button>
       <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
     </div>
   `);
@@ -898,35 +898,52 @@ App.Pages._shiftIso = function(iso, delta) {
   return d.toISOString().slice(0, 10);
 };
 
-App.Pages._renderLessonDate = function() {
-  const v = App.Pages._newLessonDate;
-  document.getElementById('new-lesson-date').value = v;
-  document.getElementById('new-lesson-label').textContent = App.UI.formatDate(v);
+App.Pages._todayIso = function() {
+  return new Date().toISOString().slice(0, 10);
 };
 
-App.Pages.shiftLessonDate = function(delta) {
-  const today = new Date().toISOString().slice(0, 10);
-  const v = App.Pages._shiftIso(App.Pages._newLessonDate, delta);
-  if (v > today) { App.UI.notify('Будущие даты нельзя'); return; }
-  App.Pages._newLessonDate = v;
-  App.Pages._renderLessonDate();
+App.Pages.createLessonOn = async function(subjectId, lessonNumber, daysAgo) {
+  const iso = App.Pages._shiftIso(App.Pages._todayIso(), -daysAgo);
+  await App.Pages._createLessonAt(subjectId, lessonNumber, iso);
 };
 
-App.Pages.setLessonDate = function(daysAgo) {
-  const today = new Date().toISOString().slice(0, 10);
-  App.Pages._newLessonDate = App.Pages._shiftIso(today, -daysAgo);
-  App.Pages._renderLessonDate();
+App.Pages.createLessonManual = async function(subjectId, lessonNumber) {
+  const dd = (document.getElementById('in-day').value || '').trim();
+  const mm = (document.getElementById('in-mon').value || '').trim();
+  let yy = (document.getElementById('in-year').value || '').trim();
+  const d = parseInt(dd, 10), m = parseInt(mm, 10);
+  let y = parseInt(yy, 10);
+  if (!(d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 2000 && y <= 2100)) {
+    App.UI.notify('Дата как ДД ММ ГГГГ, например: 04 09 2026');
+    return;
+  }
+  const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  if (iso > App.Pages._todayIso()) { App.UI.notify('Будущие даты нельзя'); return; }
+  await App.Pages._createLessonAt(subjectId, lessonNumber, iso);
 };
 
-App.Pages.confirmStartLesson = async function(subjectId, lessonNumber) {
-  const d = document.getElementById('new-lesson-date').value;
-  App.UI.closePopup();
-  const body = {
-    subject_id: subjectId, actual_subject_id: subjectId, status: 'held', lesson_number: lessonNumber
-  };
-  if (d) body.date = d;
-  const result = await App.API.post('/api/lessons', body);
-  location = `#lesson/${result.id}`;
+App.Pages.lessonDateDiag = async function() {
+  const now = new Date();
+  App.UI.showPopup(`<h2>Диагностика даты</h2>
+    <div style="font-size:12px">Устройство ISO: ${now.toISOString().slice(0, 10)}</div>
+    <div style="font-size:12px">Вчера было бы: ${App.Pages._shiftIso(App.Pages._todayIso(), -1)}</div>
+    <div style="font-size:12px">Создай занятие пресетом и сверь дату в результате ниже.</div>`);
+};
+
+App.Pages._createLessonAt = async function(subjectId, lessonNumber, iso) {
+  try {
+    const result = await App.API.post('/api/lessons', {
+      subject_id: subjectId, actual_subject_id: subjectId, status: 'held', lesson_number: lessonNumber, date: iso
+    });
+    const lesson = await App.API.get(`/api/lessons/${result.id}`);
+    const stored = (lesson && lesson.date) || '?';
+    App.UI.showPopup(`<h2>Занятие создано</h2>
+      <div style="font-size:13px;margin-bottom:8px">id ${result.id}, дата в базе: ${App.UI.escHtml(App.UI.formatDate(stored))}</div>
+      <div class="grid-2">
+        <button class="btn btn-success" onclick="location='#lesson/${result.id}'">Открыть</button>
+        <button class="btn btn-muted" onclick="App.UI.closePopup()">Закрыть</button>
+      </div>`);
+  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
 };
 
 App.Pages.showLessonSubstitution = async function(lessonId) {
