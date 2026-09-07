@@ -232,7 +232,8 @@ App.Router = {
 App.Pages = {
   _showToday: false,
 
-  _renderTodaySchedule(schedule, lessons) {
+  _renderTodaySchedule(schedule, lessons, opts) {
+    opts = opts || {};
     let html = '';
     if (schedule.length) {
       html += `<h2>Расписание</h2>`;
@@ -267,19 +268,24 @@ App.Pages = {
       }
     }
     if (!schedule.length && !lessons.length) {
-      html += `<div class="card"><div class="card-sub">Сегодня занятий нет</div></div>`;
+      const emptyText = opts.emptyText || 'Сегодня занятий нет';
+      html += `<div class="card"><div class="card-sub">${emptyText}</div></div>`;
     }
-    html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.showCreateLessonAny()">+ Создать занятие</button>`;
+    if (opts.showGlobalCreate === false) {
+      // hide global create button when opts explicitly false
+    } else {
+      const label = opts.globalLabel || '+ Создать занятие';
+      html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.showCreateLessonAny()">${label}</button>`;
+    }
     return html;
   },
 
   async home() {
     App.Loading.show();
-    const [subjects, groups, today, ver] = await Promise.all([
+    const [subjects, groups, today] = await Promise.all([
       App.API.get('/api/subjects'),
       App.API.get('/api/groups'),
       App.API.get('/api/schedule/today'),
-      App.API.get('/api/version')
     ]);
 
     let html = App.Nav.render();
@@ -336,8 +342,6 @@ App.Pages = {
     <h2>Экспорт</h2><div class="grid-2">
       <button class="btn btn-muted btn-sm" onclick="App.Pages.shareReport('${today.date}')">Поделиться отчётом</button>
     </div>`;
-    html += `<div class="card-sub" style="text-align:center;margin-top:8px">сборка ${(ver && ver.ver) || '?'}</div>`;
-
     document.getElementById('app').innerHTML = html;
   },
 
@@ -369,50 +373,11 @@ App.Pages = {
       html += `<button class="btn btn-muted btn-sm" style="margin-bottom:8px" onclick="location='#today'">📅 Все предметы</button>`;
     }
 
-      if (schedule.length) {
-        html += `<h2>Расписание</h2>`;
-        for (const e of schedule) {
-          const existing = lessons.filter(l => l.subject_id === e.subject_id);
-          html += `<div class="card">
-            <div class="card-title">Занятие ${e.lesson_number} · ${App.UI.escHtml(e.subject_name)}</div>
-            <div class="card-sub">${App.UI.escHtml(e.group_name)}</div>`;
-          for (const l of existing) {
-            const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
-            const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
-            html += `<div style="display:flex;align-items:center;gap:4px;margin-top:4px">
-              <a href="#lesson/${l.id}" style="flex:1">${label} · ${App.UI.formatDate(l.date)}</a>
-              <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
-            </div>`;
-          }
-html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.startLesson(${e.subject_id}, ${e.lesson_number})">Начать занятие</button>`;
-          html += `</div>`;
-        }
-      }
-
-      if (lessons.length && !subjectId) {
-        const otherLessons = lessons.filter(l => !schedule.some(s => s.subject_id === l.subject_id));
-        if (otherLessons.length) {
-          html += `<h2>Другие занятия</h2>`;
-          for (const l of otherLessons) {
-            const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
-            const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
-            html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
-              <div class="card-title">${App.UI.escHtml(l.actual_subject_name)}</div>
-              <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${cls}">${label}</span>
-                ${l.status === 'cancelled' ? '· Отменено' : ''}</div>
-              <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
-            </div>`;
-          }
-        }
-      }
-
-    if (!schedule.length && !lessons.length) {
-      html += `<div class="card"><div class="card-sub">${currentSubject ? 'Сегодня занятий по этому предмету нет' : 'Сегодня занятий нет'}</div></div>`;
-    }
-
-    if (!subjectId) {
-      html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.showCreateLessonAny()">Создать занятие вручную</button>`;
-    }
+    html += App.Pages._renderTodaySchedule(schedule, lessons, {
+      emptyText: currentSubject ? 'Сегодня занятий по этому предмету нет' : 'Сегодня занятий нет',
+      globalLabel: subjectId ? '+ Создать занятие' : 'Создать занятие вручную',
+      showGlobalCreate: subjectId ? false : true
+    });
 
     if (currentSubject) {
       const pct = currentSubject.total_hours > 0 ? Math.round(currentSubject.held_lessons / currentSubject.total_hours * 100) : 0;
@@ -973,19 +938,6 @@ App.Pages.createLessonCalPicked = async function() {
   const sid = App.Pages._newLessonSubject;
   if (!sid) { App.UI.notify('Выбери предмет'); return; }
   await App.Pages._createLessonAt(sid, App.Pages._newLessonNumber || null, App.Pages._cal.sel);
-};
-
-App.Pages._pickedSubject = function() {
-  const el = document.getElementById('new-lesson-subject');
-  const sid = el ? parseInt(el.value, 10) : 0;
-  if (!sid) App.UI.notify('Выбери предмет');
-  return sid || null;
-};
-
-App.Pages.createLessonPicked = async function(daysAgo) {
-  const sid = App.Pages._pickedSubject();
-  if (!sid) return;
-  await App.Pages.createLessonOn(sid, App.Pages._newLessonNumber || null, daysAgo);
 };
 
 App.Pages._createLessonAt = async function(subjectId, lessonNumber, iso) {
