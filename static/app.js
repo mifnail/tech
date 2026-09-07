@@ -595,10 +595,16 @@ App.Pages = {
       const mlinks = await App.API.get('/api/maxbot/links');
       for (const l of mlinks) maxBound[l.student_id] = true;
     } catch (e) {}
+    let curator = {code: '', bound: false};
+    try {
+      const c = await App.API.get(`/api/groups/${groupId}/curator`);
+      curator = c;
+    } catch (e) {}
     const group = groups.find(g => g.id == groupId);
 
     let html = App.Nav.render();
     html += `<h1>${group ? group.name : 'Студенты'}</h1>`;
+    html += `<div class="card"><div class="card-sub">Куратор: код ${App.UI.escHtml(curator.code) || '—'} · ${curator.bound ? 'привязан' : 'не привязан'}</div>${curator.bound ? `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.unbindGroupCurator(${groupId})">Отвязать</button>` : ''}</div>`;
     html += `<button class="btn btn-primary btn-sm" onclick="App.Pages.showAddStudents(${groupId})">+ Добавить студентов</button>`;
     html += `<div class="card">`;
     for (const s of students) {
@@ -826,6 +832,14 @@ App.Pages.unbindMaxBot = async function(studentId) {
   try {
     await App.API._delete(`/api/maxbot/links/by-student/${studentId}`);
     App.UI.notify('MAX чат отвязан');
+  } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+  App.Router.handle();
+};
+
+App.Pages.unbindGroupCurator = async function(groupId) {
+  try {
+    await App.API._delete(`/api/groups/${groupId}/curator`);
+    App.UI.notify('Куратор отвязан');
   } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
   App.Router.handle();
 };

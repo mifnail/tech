@@ -23,6 +23,9 @@ GRADE_PUSH_DELAY = 10.0  # seconds
 # When a timer fires it is automatically removed.
 _pending: dict[tuple[int, int], threading.Timer] = {}
 
+CURATOR_PUSH_DELAY = 180.0
+_pending_curator: dict[tuple[int, int], threading.Timer] = {}
+
 from flask import Flask, Blueprint, Response, request, jsonify, send_from_directory, send_file
 
 from database import Database
@@ -226,6 +229,27 @@ def update_group(group_id: int):
         get_db().update_group(group_id, data['name'])
     except sqlite3.IntegrityError as e:
         return jsonify({'error': 'duplicate or invalid group', 'detail': str(e)}), 400
+    return jsonify({'ok': True})
+
+
+@groups_bp.route('/<int:group_id>/curator', methods=['GET'])
+def get_group_curator(group_id: int):
+    db = get_db()
+    # Optional: verify group exists? Return 404 if not? For now ensure code
+    # If group doesn't exist, ensure will still create row but FK will fail? Better check.
+    # Check group exists
+    exists = db.conn.execute("SELECT 1 FROM groups WHERE id=?", (group_id,)).fetchone()
+    if not exists:
+        return jsonify({'error': 'group not found'}), 404
+    code = db.ensure_curator_code(group_id)
+    bound = db.get_curator_chat(group_id) is not None
+    return jsonify({'code': code, 'bound': bound})
+
+
+@groups_bp.route('/<int:group_id>/curator', methods=['DELETE'])
+def delete_group_curator(group_id: int):
+    db = get_db()
+    db.unbind_curator(group_id)
     return jsonify({'ok': True})
 
 
@@ -559,6 +583,9 @@ def mark_attendance(lesson_id: int):
                 old = _pending.pop(key, None)
                 if old is not None:
                     old.cancel()
+                old2 = _pending_curator.pop(key, None)
+                if old2 is not None:
+                    old2.cancel()
             return jsonify({'ok': True})
 
         for sid, grade in pairs:
@@ -578,10 +605,65 @@ def mark_attendance(lesson_id: int):
             t.daemon = True
             _pending[key] = t
             t.start()
+
+        # ---- Curator push (group-wide) ----
+        group_id = None
+        try:
+            les = db.get_lesson(lesson_id)
+            if les is not None:
+                sid_sub = row_get(les, 'subject_id', None)
+                if sid_sub is not None:
+                    prow = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (sid_sub,)).fetchone()
+                    if prow:
+                        group_id = prow['group_id']
+        except Exception:
+            pass
+        cur_chat = None
+        try:
+            if group_id is not None:
+                cur_chat = db.get_curator_chat(group_id)
+        except Exception:
+            cur_chat = None
+        if cur_chat is None:
+            for sid, _grade in pairs:
+                key = (lesson_id, sid)
+                old = _pending_curator.pop(key, None)
+                if old is not None:
+                    old.cancel()
+        else:
+            for sid, grade in pairs:
+                key = (lesson_id, sid)
+                old = _pending_curator.pop(key, None)
+                if old is not None:
+                    old.cancel()
+                if not grade:
+                    continue
+                t2 = threading.Timer(
+                    CURATOR_PUSH_DELAY,
+                    _fire_curator_push,
+                    args=(token, lesson_id, sid, group_id),
+                )
+                t2.daemon = True
+                _pending_curator[key] = t2
+                t2.start()
     except Exception:
         pass
 
     return jsonify({'ok': True})
+
+
+def _read_settled_grade(db, lesson_id: int, student_id: int) -> str:
+    try:
+        rows = db.get_attendance(lesson_id)
+        row = None
+        for r in rows:
+            if r['student_id'] == student_id:
+                row = r
+                break
+        grade = row['grade'] if row and dict(row).get('grade') else ''
+        return grade or ''
+    except Exception:
+        return ''
 
 
 def _fire_grade_push(token: str, lesson_id: int, student_id: int) -> None:
@@ -596,13 +678,7 @@ def _fire_grade_push(token: str, lesson_id: int, student_id: int) -> None:
         from database import Database as _DB
         db = _DB()
         try:
-            rows = db.get_attendance(lesson_id)
-            row = None
-            for r in rows:
-                if r['student_id'] == student_id:
-                    row = r
-                    break
-            grade = row['grade'] if row and dict(row).get('grade') else ''
+            grade = _read_settled_grade(db, lesson_id, student_id)
             if not grade:
                 return
 
@@ -613,9 +689,7 @@ def _fire_grade_push(token: str, lesson_id: int, student_id: int) -> None:
             raw_date = lesson['date'] or ''
             # DD.MM format from ISO date string
             date_str = f'{raw_date[8:10]}.{raw_date[5:7]}' if len(raw_date) >= 10 else ''
-            subject = ''
-            if 'actual_subject_name' in lesson.keys():
-                subject = lesson['actual_subject_name'] or ''
+            subject = row_get(lesson, 'actual_subject_name', '')
 
             import maxbot as _maxbot
             _maxbot.notify_grade(token, student_id, grade, date_str, subject)
@@ -629,6 +703,47 @@ def _fire_grade_push(token: str, lesson_id: int, student_id: int) -> None:
     except Exception:
         pass
 
+
+def _fire_curator_push(token: str, lesson_id: int, student_id: int, group_id: int) -> None:
+    key = (lesson_id, student_id)
+    _pending_curator.pop(key, None)
+    try:
+        from database import Database as _DB
+        db = _DB()
+        try:
+            grade = _read_settled_grade(db, lesson_id, student_id)
+            if not grade:
+                return
+            try:
+                cur_chat = db.get_curator_chat(group_id)
+            except Exception:
+                cur_chat = None
+            if not cur_chat:
+                return
+            st = db.get_student(student_id)
+            if not st:
+                return
+            fio = f"{st['last_name']} {st['first_name'][0]}." if st['first_name'] else f"{st['last_name']}"
+            lesson = db.get_lesson(lesson_id)
+            if not lesson:
+                return
+            raw_date = lesson['date'] or ''
+            date_str = f'{raw_date[8:10]}.{raw_date[5:7]}' if len(raw_date) >= 10 else ''
+            subject = row_get(lesson, 'actual_subject_name', '')
+            if not subject:
+                subject = row_get(lesson, 'planned_subject', '')
+            text = f"{fio}: {subject} — {grade} ({date_str})"
+            import maxbot as _maxbot
+            _maxbot.send_message(token, int(cur_chat), text)
+        except Exception:
+            pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 @lessons_bp.route('/date/<date_str>', methods=['GET'])

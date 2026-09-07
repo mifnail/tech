@@ -122,6 +122,13 @@ class Database:
                 created TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS curators (
+                group_id INTEGER PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+                chat_id INTEGER,
+                code TEXT NOT NULL UNIQUE,
+                created TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_students_group ON students(group_id);
             CREATE INDEX IF NOT EXISTS idx_subjects_group ON subjects(group_id);
             CREATE INDEX IF NOT EXISTS idx_schedule_subject ON schedule(subject_id);
@@ -252,6 +259,43 @@ class Database:
             FROM max_links ml JOIN students s ON s.id = ml.student_id
             ORDER BY s.last_name, s.first_name
         """).fetchall()
+
+    # ---- Curators per group ----
+    def ensure_curator_code(self, group_id: int) -> str:
+        row = self.conn.execute("SELECT code FROM curators WHERE group_id=?", (group_id,)).fetchone()
+        if row:
+            return row['code']
+        import uuid
+        code = uuid.uuid4().hex[:8]
+        # ensure uniqueness
+        while self.conn.execute("SELECT 1 FROM curators WHERE code=?", (code,)).fetchone():
+            code = uuid.uuid4().hex[:8]
+        self.conn.execute("INSERT INTO curators (group_id, code) VALUES (?, ?)", (group_id, code))
+        self.conn.commit()
+        return code
+
+    def bind_curator(self, group_id: int, chat_id: int) -> None:
+        self.ensure_curator_code(group_id)
+        self.conn.execute("UPDATE curators SET chat_id=? WHERE group_id=?", (chat_id, group_id))
+        self.conn.commit()
+
+    def unbind_curator(self, group_id: int) -> None:
+        self.conn.execute("UPDATE curators SET chat_id=NULL WHERE group_id=?", (group_id,))
+        self.conn.commit()
+
+    def find_curator_by_code(self, code: str) -> Optional[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM curators WHERE code=?", (code,)).fetchone()
+
+    def get_curator_chat(self, group_id: int) -> Optional[int]:
+        row = self.conn.execute("SELECT chat_id FROM curators WHERE group_id=?", (group_id,)).fetchone()
+        return row['chat_id'] if row and row['chat_id'] is not None else None
+
+    def curator_group_for_chat(self, chat_id: int) -> Optional[int]:
+        row = self.conn.execute("SELECT group_id FROM curators WHERE chat_id=?", (chat_id,)).fetchone()
+        return row['group_id'] if row else None
+
+    def get_curator(self, group_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM curators WHERE group_id=?", (group_id,)).fetchone()
 
     def get_free_subject_id(self, group_id: int) -> int:
         row = self.conn.execute("SELECT id FROM subjects WHERE name = 'СВОБОДНО' AND group_id = ?", (group_id,)).fetchone()

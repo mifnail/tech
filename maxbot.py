@@ -203,6 +203,10 @@ HELP_BOUND = ('Команды:\n'
               '/vedomost — ведомость файлом\n'
               '/unbind — отвязать чат\n'
               '/help — эта справка')
+CURATOR_HELP = ('Команды куратора:\n'
+                '/vedomost — ведомость группы\n'
+                '/help — справка\n'
+                '/unbind — отвязать')
 
 
 def _fmt_avg(v: float) -> str:
@@ -311,6 +315,21 @@ def process_text(text: str, chat_id: int, db) -> str:
 
     t = (text or '').strip()
     low = t.lower()
+    # curator bind first (like /teacher)
+    if low.startswith('/curator') or low.startswith('curator') or low.startswith('куратор') or low.startswith('/куратор'):
+        parts = t.split(None, 1)
+        if len(parts) < 2 or not parts[1].strip():
+            return 'Укажи код: /curator КОД'
+        code = parts[1].strip()
+        row = db.find_curator_by_code(code)
+        if row:
+            gid = row['group_id']
+            db.bind_curator(gid, chat_id)
+            grp = db.conn.execute("SELECT name FROM groups WHERE id=?", (gid,)).fetchone()
+            name = grp['name'] if grp else str(gid)
+            return f'Привязан как куратор группы {name}.'
+        else:
+            return 'Неверный код — смотри страницу группы'
     # teacher command early - works regardless of binding
     if low.startswith('/teacher') or low.startswith('teacher') or low.startswith('учитель') or low.startswith('/учитель'):
         # extract code part
@@ -328,6 +347,17 @@ def process_text(text: str, chat_id: int, db) -> str:
             return 'Преподаватель привязан.'
         else:
             return 'Неверный код — смотри Настройки'
+    # curator-bound chats BEFORE student flow
+    cur_gid = db.curator_group_for_chat(chat_id)
+    if cur_gid is not None:
+        if low in ('/vedomost', 'ведомость'):
+            return 'VEDOMOST_CURATOR:'
+        if low in ('/help', 'help', 'помощь'):
+            return CURATOR_HELP
+        if low in ('/unbind', 'отвязать'):
+            db.unbind_curator(cur_gid)
+            return 'Отвязка выполнена.'
+        return CURATOR_HELP
     sid = db.get_max_link(chat_id)
     if low in ('/start', 'start', 'начать'):
         if sid:
@@ -424,6 +454,42 @@ def _handle_vedomost(token: str, chat_id: int, db_factory, urlopen=None):
         db.close()
 
 
+def _handle_curator_vedomost(token: str, chat_id: int, db_factory, urlopen=None):
+    """Отправить GROUP xlsx для куратора — полный файл группы."""
+    from report_export import export_grades_xlsx
+    db = db_factory()
+    try:
+        gid = db.curator_group_for_chat(chat_id)
+        if gid is None:
+            send_message(token, chat_id, 'Не привязан как куратор.', urlopen=urlopen)
+            return
+        subjects = [dict(r) for r in db.list_subjects(gid)]
+        sent_any = False
+        for subj in subjects:
+            try:
+                cnt = db.conn.execute(
+                    "SELECT COUNT(*) FROM grades JOIN lessons ON grades.lesson_id=lessons.id WHERE lessons.actual_subject_id=? AND lessons.status NOT IN ('cancelled','replaced')",
+                    (subj['id'],)).fetchone()[0]
+            except Exception:
+                cnt = 0
+            if cnt == 0:
+                continue
+            xlsx_bytes = export_grades_xlsx(subj['id'], db)
+            ft = upload_file(token, xlsx_bytes, f"{subj['name']}.xlsx", urlopen=urlopen)
+            send_file(token, chat_id, ft, caption=subj['name'], urlopen=urlopen)
+            sent_any = True
+            time.sleep(0.6)
+        if not sent_any:
+            send_message(token, chat_id, 'Оценок пока нет.', urlopen=urlopen)
+    except Exception:
+        try:
+            send_message(token, chat_id, 'Ошибка при формировании ведомости.', urlopen=urlopen)
+        except MaxError:
+            pass
+    finally:
+        db.close()
+
+
 def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
     """Цикл long-polling. db_factory() -> свежий Database (потокобезопасно)."""
     db0 = db_factory()
@@ -481,7 +547,9 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                 finally:
                     db.close()
                 try:
-                    if reply.startswith('VEDOMOST:'):
+                    if reply.startswith('VEDOMOST_CURATOR:'):
+                        _handle_curator_vedomost(token, cid, db_factory, urlopen)
+                    elif reply.startswith('VEDOMOST:'):
                         _handle_vedomost(token, cid, db_factory, urlopen)
                     else:
                         send_with_buttons(token, cid, reply, urlopen=urlopen)
@@ -519,7 +587,9 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                 finally:
                     db.close()
                 try:
-                    if reply.startswith('VEDOMOST:'):
+                    if reply.startswith('VEDOMOST_CURATOR:'):
+                        _handle_curator_vedomost(token, cid, db_factory, urlopen)
+                    elif reply.startswith('VEDOMOST:'):
                         _handle_vedomost(token, cid, db_factory, urlopen)
                     else:
                         send_with_buttons(token, cid, reply, urlopen=urlopen)
