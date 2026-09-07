@@ -573,208 +573,40 @@ class TestRunPollingCallback:
         assert ans_calls[0][2]['notification'] == 'Готово'
 
 
-# ======================== VEDOMOST FLOW ========================
+# ======================== VEDOMOST DISABLED ========================
 
-class TestVedomostFlow:
-    def test_vedomost_sends_xlsx(self, db, monkeypatch):
-        """Test /vedomost sends xlsx files for subjects with grades."""
-        gid, sid, st = _seed(db)
-        lid = db.add_lesson(sid, '2026-09-01', sid, 'held', 1)
-        db.mark_attendance(lid, st, '5')
-        db.bind_max(111, st)
-        # Fake export_grades_xlsx to avoid openpyxl dependency
-        monkeypatch.setattr('report_export.export_grades_xlsx',
-                            lambda subj_id, db_=None: b'fake-xlsx-bytes')
-        orig_close = db.close
-        db.close = lambda: None
-        stop = threading.Event()
-        rec = []
-        updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
-            'body': {'text': '/vedomost'},
-            'recipient': {'chat_id': 111},
-        }}], 'marker': 1}
-        # get_updates → upload1 → upload2 → send_file → get_updates (empty)
-        responses = iter([
-            ('json', updates_resp),
-            ('json', {'url': 'https://fu.oneme.ru/upload.do?x=1'}),
-            ('json', {'token': 'file_tok_123'}),
-            ('json', {'ok': True}),  # send_file
-        ])
-        def fake(req, timeout=None, **kw):
-            try:
-                kind, payload = next(responses)
-            except StopIteration:
-                stop.set()
-                return FakeResp(json.dumps({'updates': [], 'marker': 99}).encode())
-            raw_body = getattr(req, 'data', None)
-            body_data = None
-            if raw_body:
-                try:
-                    body_data = json.loads(raw_body)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    body_data = raw_body
-            rec.append((req.get_method(), req.full_url, body_data))
-            if kind == 'json':
-                return FakeResp(json.dumps(payload).encode())
-            raise AssertionError
-        try:
-            t = threading.Thread(target=maxbot.run_polling,
-                                 args=('tok', lambda: db, stop, fake))
-            t.start()
-            t.join(timeout=5)
-            assert not t.is_alive()
-        finally:
-            db.close = orig_close
-        # upload step 1
-        upload_calls = [r for r in rec if 'uploads' in r[1]]
-        assert len(upload_calls) == 1
-        # upload step 2 (external URL)
-        ext_calls = [r for r in rec if 'fu.oneme.ru' in r[1]]
-        assert len(ext_calls) == 1
-        # send_file to chat 111
-        file_calls = [r for r in rec
-                      if 'chat_id=111' in r[1] and r[0] == 'POST'
-                      and 'uploads' not in r[1] and 'updates' not in r[1]]
-        assert len(file_calls) == 1
-        body = file_calls[0][2]
-        assert body['attachments'][0]['type'] == 'file'
-        assert body['attachments'][0]['payload']['token'] == 'file_tok_123'
-        assert body['text'] == 'Математика'
-
-    def test_vedomost_no_grades(self, db):
-        """Test /vedomost when student has no grades."""
-        _, _, st = _seed(db)
-        db.bind_max(111, st)
-        orig_close = db.close
-        db.close = lambda: None
-        stop = threading.Event()
-        rec = []
-        updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
-            'body': {'text': '/vedomost'},
-            'recipient': {'chat_id': 111},
-        }}], 'marker': 1}
-        responses = iter([
-            ('json', updates_resp),
-            ('json', {'ok': True}),  # send_message "Оценок пока нет."
-        ])
-        def fake(req, timeout=None, **kw):
-            try:
-                kind, payload = next(responses)
-            except StopIteration:
-                stop.set()
-                return FakeResp(json.dumps({'updates': [], 'marker': 99}).encode())
-            raw_body = getattr(req, 'data', None)
-            body_data = None
-            if raw_body:
-                try:
-                    body_data = json.loads(raw_body)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    body_data = raw_body
-            rec.append((req.get_method(), req.full_url, body_data))
-            if kind == 'json':
-                return FakeResp(json.dumps(payload).encode())
-            raise AssertionError
-        try:
-            t = threading.Thread(target=maxbot.run_polling,
-                                 args=('tok', lambda: db, stop, fake))
-            t.start()
-            t.join(timeout=5)
-            assert not t.is_alive()
-        finally:
-            db.close = orig_close
-        # send_message with "Оценок пока нет."
-        msg_calls = [r for r in rec
-                     if 'chat_id=111' in r[1] and r[0] == 'POST'
-                     and 'uploads' not in r[1] and 'updates' not in r[1]]
-        assert len(msg_calls) == 1
-        body = msg_calls[0][2]
-        assert 'Оценок пока нет' in body['text']
-
-    def test_vedomost_unbound(self, db):
-        """Test /vedomost when student is not bound."""
-        _seed(db)
-        orig_close = db.close
-        db.close = lambda: None
-        stop = threading.Event()
-        rec = []
-        updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
-            'body': {'text': '/vedomost'},
-            'recipient': {'chat_id': 111},
-        }}], 'marker': 1}
-        responses = iter([
-            ('json', updates_resp),
-            ('json', {'ok': True}),  # send_message "Сначала привяжись"
-        ])
-        def fake(req, timeout=None, **kw):
-            try:
-                kind, payload = next(responses)
-            except StopIteration:
-                stop.set()
-                return FakeResp(json.dumps({'updates': [], 'marker': 99}).encode())
-            raw_body = getattr(req, 'data', None)
-            body_data = None
-            if raw_body:
-                try:
-                    body_data = json.loads(raw_body)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    body_data = raw_body
-            rec.append((req.get_method(), req.full_url, body_data))
-            if kind == 'json':
-                return FakeResp(json.dumps(payload).encode())
-            raise AssertionError
-        try:
-            t = threading.Thread(target=maxbot.run_polling,
-                                 args=('tok', lambda: db, stop, fake))
-            t.start()
-            t.join(timeout=5)
-            assert not t.is_alive()
-        finally:
-            db.close = orig_close
-        msg_calls = [r for r in rec
-                     if 'chat_id=111' in r[1] and r[0] == 'POST'
-                     and 'updates' not in r[1]]
-        assert len(msg_calls) == 1
-        body = msg_calls[0][2]
-        assert 'привяжись' in body['text']
-
-    def test_process_text_vedomost_sentinel(self, db):
-        """Test process_text returns VEDOMOST: sentinel for bound user."""
+class TestVedomostDisabled:
+    def test_process_text_vedomost_disabled_bound(self, db):
         _, _, st = _seed(db)
         db.bind_max(111, st)
         r = process_text('/vedomost', 111, db)
-        assert r == 'VEDOMOST:'
+        assert r == 'Команда «Ведомость» временно отключена.'
+        r2 = process_text('ведомость', 111, db)
+        assert r2 == 'Команда «Ведомость» временно отключена.'
 
-    def test_process_text_vedomost_unbound(self, db):
-        """Test /vedomost for unbound user returns bind prompt."""
+    def test_process_text_vedomost_disabled_unbound(self, db):
         _seed(db)
         r = process_text('/vedomost', 111, db)
-        assert 'привяжись' in r.lower()
+        assert r == 'Команда «Ведомость» временно отключена.'
+        r2 = process_text('ведомость', 222, db)
+        assert 'временно отключена' in r2
 
-    def test_vedomost_callback(self, db, monkeypatch):
-        """/vedomost via callback also sends files."""
-        gid, sid, st = _seed(db)
-        lid = db.add_lesson(sid, '2026-09-01', sid, 'held', 1)
-        db.mark_attendance(lid, st, '5')
+    def test_run_polling_vedomost_no_file_ops(self, db, monkeypatch):
+        _, _, st = _seed(db)
         db.bind_max(111, st)
-        monkeypatch.setattr('report_export.export_grades_xlsx',
-                            lambda subj_id, db_=None: b'fake-xlsx-bytes')
+        monkeypatch.setattr(maxbot, 'upload_file', lambda *a, **kw: (_ for _ in ()).throw(AssertionError('upload_file should not be called')))
+        monkeypatch.setattr(maxbot, 'send_file', lambda *a, **kw: (_ for _ in ()).throw(AssertionError('send_file should not be called')))
         orig_close = db.close
         db.close = lambda: None
         stop = threading.Event()
         rec = []
-        cb_update = {'update_type': 'message_callback', 'callback': {
-            'callback_id': 'cb_v1',
-            'payload': '/vedomost',
-            'message': {'recipient': {'chat_id': 111}},
-            'user': {'user_id': 111},
-        }}
-        updates_resp = {'updates': [cb_update], 'marker': 1}
+        updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
+            'body': {'text': '/vedomost'},
+            'recipient': {'chat_id': 111},
+        }}], 'marker': 1}
         responses = iter([
             ('json', updates_resp),
-            ('json', {'url': 'https://fu.oneme.ru/upload.do?x=1'}),
-            ('json', {'token': 'ftok_v1'}),
-            ('json', {'ok': True}),  # send_file
-            ('json', {'ok': True}),  # answer_callback
+            ('json', {'ok': True}),
         ])
         def fake(req, timeout=None, **kw):
             try:
@@ -801,10 +633,11 @@ class TestVedomostFlow:
             assert not t.is_alive()
         finally:
             db.close = orig_close
-        ext_calls = [r for r in rec if 'fu.oneme.ru' in r[1]]
-        assert len(ext_calls) == 1
-        ans_calls = [r for r in rec if 'callback_id=cb_v1' in r[1]]
-        assert len(ans_calls) == 1
+        msg_calls = [r for r in rec if 'chat_id=111' in r[1] and r[0] == 'POST']
+        assert len(msg_calls) == 1
+        body = msg_calls[0][2]
+        assert 'временно отключена' in body['text']
+        assert 'inline_keyboard' in str(body)
 
 
 # ======================== GRADE DEBOUNCE ========================

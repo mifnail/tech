@@ -310,6 +310,8 @@ def process_text(text: str, chat_id: int, db) -> str:
 
     t = (text or '').strip()
     low = t.lower()
+    if low in ('/vedomost', 'ведомость'):
+        return 'Команда «Ведомость» временно отключена.'
     # teacher command early - works regardless of binding
     if low.startswith('/teacher') or low.startswith('teacher') or low.startswith('учитель') or low.startswith('/учитель'):
         # extract code part
@@ -368,9 +370,7 @@ def process_text(text: str, chat_id: int, db) -> str:
         db.unbind_max(chat_id)
         return 'Привязка снята. Для новой отправь фамилию.'
     if low in ('/vedomost', 'ведомость'):
-        if sid is None:
-            return 'Сначала привяжись: отправь свою фамилию.'
-        return 'VEDOMOST:'
+        return 'Команда «Ведомость» временно отключена.'
     if t.startswith('/'):
         return 'Не знаю такую команду.\n\n' + HELP_BOUND
     return 'Ты уже привязан(а).\n\n' + HELP_BOUND
