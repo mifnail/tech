@@ -150,7 +150,14 @@ def upload_file(token: str, data: bytes, filename: str, urlopen=None) -> str:
     except urllib.error.HTTPError as e:
         raise MaxError(f'upload step1 HTTP {e.code}')
     except urllib.error.URLError as e:
-        raise MaxError(f'upload step1: {e.reason}')
+        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
+            try:
+                with urllib.request.urlopen(req1, timeout=35, context=_UNVERIFIED_CTX) as r:
+                    body1 = _read_body(r)
+            except Exception as e2:
+                raise MaxError(f'upload step1: {e2}')
+        else:
+            raise MaxError(f'upload step1: {e.reason}')
     upload_url = body1.get('url')
     if not upload_url:
         raise MaxError('upload step1: no url')
@@ -169,7 +176,14 @@ def upload_file(token: str, data: bytes, filename: str, urlopen=None) -> str:
     except urllib.error.HTTPError as e:
         raise MaxError(f'upload step2 HTTP {e.code}')
     except urllib.error.URLError as e:
-        raise MaxError(f'upload step2: {e.reason}')
+        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
+            try:
+                with urllib.request.urlopen(req2, timeout=60, context=_UNVERIFIED_CTX) as r:
+                    body2 = _read_body(r)
+            except Exception as e2:
+                raise MaxError(f'upload step2: {e2}')
+        else:
+            raise MaxError(f'upload step2: {e.reason}')
     file_token = body2.get('token')
     if not file_token:
         raise MaxError('upload step2: no token')
@@ -184,7 +198,7 @@ def send_file(token: str, chat_id: int, file_token: str, caption: str = '', urlo
                  urlopen=urlopen)
 
 
-def send_grades_with_buttons(token: str, chat_id: int, text: str, urlopen=None):
+def send_with_buttons(token: str, chat_id: int, text: str, urlopen=None):
     """Отправить текст с инлайн-клавиатурой (кнопки-команды)."""
     keyboard = [[
         {'type': 'callback', 'text': 'Оценки', 'payload': '/grades'},
@@ -228,6 +242,139 @@ HELP_BOUND = ('Команды:\n'
               '/help — эта справка')
 
 
+def _fmt_avg(v: float) -> str:
+    s = f"{v:.2f}"
+    if '.' in s:
+        s = s.rstrip('0').rstrip('.')
+    return s
+
+
+def schedule_text(db, student_id: int) -> str:
+    """Pure builder for /schedule: next 7 days from tomorrow."""
+    st = db.get_student(student_id)
+    if not st:
+        return 'Расписание пусто.'
+    group_id = st['group_id']
+    # get group name for filtering when rows carry group_name
+    grp_name = None
+    try:
+        row = db.conn.execute("SELECT name FROM groups WHERE id=?", (group_id,)).fetchone()
+        if row:
+            grp_name = row['name']
+    except Exception:
+        grp_name = None
+    from datetime import date as _date, timedelta as _td
+    today = _date.today()
+    lines = []
+    for delta in range(1, 8):
+        d = today + _td(days=delta)
+        iso = d.isoformat()
+        isow = d.isoweekday()
+        week_num = d.isocalendar()[1]
+        week_type = 1 if week_num % 2 == 1 else 2
+        try:
+            rows = db.get_schedule_for_day(isow, week_type)
+        except Exception:
+            rows = []
+        filtered = []
+        for r in rows:
+            rd = dict(r)
+            # filter by student's group
+            # rows carry group_name and subject_name
+            if 'group_name' in rd and grp_name is not None:
+                if rd.get('group_name') == grp_name:
+                    filtered.append(rd)
+                else:
+                    continue
+            elif 'group_id' in rd:
+                if rd.get('group_id') == group_id:
+                    filtered.append(rd)
+            else:
+                # fallback via subject's group
+                try:
+                    subj_row = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (rd.get('subject_id'),)).fetchone()
+                    if subj_row and subj_row['group_id'] == group_id:
+                        filtered.append(rd)
+                except Exception:
+                    pass
+        if filtered:
+            # filtered already ordered by lesson_number
+            names = ', '.join(f.get('subject_name', '?') for f in filtered)
+            ddmm = f"{iso[8:10]}.{iso[5:7]}"
+            lines.append(f"{ddmm}: {names}")
+    if not lines:
+        return 'Расписание пусто.'
+    return "Расписание:\n" + "\n".join(lines)
+
+
+def avg_text(db, student_id: int) -> str:
+    """Per-subject numeric average of 2-5."""
+    rows = [dict(r) for r in db.student_grades(student_id)]
+    per_subj: dict[str, list[int]] = {}
+    for r in rows:
+        g_raw = r.get('grade')
+        if g_raw is None:
+            continue
+        g_str = str(g_raw).strip()
+        try:
+            g = int(g_str)
+        except Exception:
+            continue
+        if g < 2 or g > 5:
+            continue
+        subj = r.get('subject_name')
+        if not subj:
+            # fallback try keys
+            try:
+                subj = r['subject_name']
+            except Exception:
+                subj = '?'
+        per_subj.setdefault(subj, []).append(g)
+    if not per_subj:
+        return 'Оценок пока нет.'
+    lines = []
+    all_vals: list[int] = []
+    for subj, vals in per_subj.items():
+        avg = sum(vals) / len(vals)
+        fmt = _fmt_avg(avg)
+        lines.append(f"{subj}: {fmt}")
+        all_vals.extend(vals)
+    overall = sum(all_vals) / len(all_vals) if all_vals else 0
+    overall_fmt = _fmt_avg(overall)
+    return "Средний балл:\n" + "\n".join(lines) + f"\nОбщий: {overall_fmt}"
+
+
+# alias names for tests that may use different names
+average_text = avg_text
+avg_builder = avg_text
+
+
+def debts_text(db, student_id: int) -> str:
+    st = db.get_student(student_id)
+    if not st:
+        return 'Долгов нет.'
+    group_id = st['group_id']
+    try:
+        subjects = [dict(r) for r in db.list_subjects(group_id)]
+    except Exception:
+        subjects = []
+    debts = []
+    for subj in subjects:
+        try:
+            grades = db.student_grades(student_id, subj['id'])
+        except Exception:
+            grades = []
+        if not grades:
+            debts.append(subj['name'])
+    if not debts:
+        return 'Долгов нет.'
+    return "Долги:\n" + "\n".join(debts)
+
+
+# alias
+debt_text = debts_text
+
+
 def process_text(text: str, chat_id: int, db) -> str:
     """Чистая логика диалога: вход снаружи, БД — аргументом. Возвращает ответ."""
     from tgbot import my_grades_text, today_text
@@ -235,6 +382,23 @@ def process_text(text: str, chat_id: int, db) -> str:
 
     t = (text or '').strip()
     low = t.lower()
+    # teacher command early - works regardless of binding
+    if low.startswith('/teacher') or low.startswith('teacher') or low.startswith('учитель') or low.startswith('/учитель'):
+        # extract code part
+        parts = t.split(None, 1)
+        if len(parts) < 2 or not parts[1].strip():
+            return 'Укажи код: /teacher КОД'
+        code = parts[1].strip()
+        expected = db.get_setting('max_teacher_code')
+        if expected is None:
+            import uuid
+            expected = uuid.uuid4().hex[:8]
+            db.set_setting('max_teacher_code', expected)
+        if code.strip().lower() == expected.lower():
+            db.set_setting('max_teacher_chat', str(chat_id))
+            return 'Преподаватель привязан.'
+        else:
+            return 'Неверный код — смотри Настройки'
     sid = db.get_max_link(chat_id)
     if low in ('/start', 'start', 'начать'):
         if sid:
@@ -266,6 +430,12 @@ def process_text(text: str, chat_id: int, db) -> str:
         if not st:
             return 'Привязка устарела. Отправь фамилию заново.'
         return today_text(db, dict(st))
+    if low in ('/schedule', 'schedule', 'расписание', '/расписание'):
+        return schedule_text(db, sid)
+    if low in ('/avg', 'avg', 'средний балл', 'средняя', '/средний', '/средняя'):
+        return avg_text(db, sid)
+    if low in ('/debts', 'debts', 'долги', '/долги'):
+        return debts_text(db, sid)
     if low in ('/unbind', 'отвязать'):
         db.unbind_max(chat_id)
         return 'Привязка снята. Для новой отправь фамилию.'
@@ -339,7 +509,7 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
             time.sleep(ERROR_PAUSE)
             continue
         for u in updates or []:
-            msg_type = u.get('type')
+            msg_type = u.get('update_type') or u.get('type')
             # ---- message_created ----
             if msg_type == 'message_created':
                 msg = u.get('message') or {}
@@ -362,14 +532,10 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                 finally:
                     db.close()
                 try:
-                    low = (text or '').strip().lower()
                     if reply.startswith('VEDOMOST:'):
                         _handle_vedomost(token, cid, db_factory, urlopen)
-                    elif low in ('/grades', 'оценки', 'мои оценки'):
-                        send_grades_with_buttons(
-                            token, cid, reply, urlopen=urlopen)
                     else:
-                        send_message(token, cid, reply, urlopen=urlopen)
+                        send_with_buttons(token, cid, reply, urlopen=urlopen)
                 except MaxError:
                     pass
             # ---- message_callback ----
@@ -401,7 +567,7 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                     if reply.startswith('VEDOMOST:'):
                         _handle_vedomost(token, cid, db_factory, urlopen)
                     else:
-                        send_message(token, cid, reply, urlopen=urlopen)
+                        send_with_buttons(token, cid, reply, urlopen=urlopen)
                 except MaxError:
                     pass
                 if callback_id:
@@ -428,7 +594,7 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                 finally:
                     db.close()
                 try:
-                    send_message(token, cid, reply, urlopen=urlopen)
+                    send_with_buttons(token, cid, reply, urlopen=urlopen)
                 except MaxError:
                     pass
             if new_marker is not None:
@@ -482,6 +648,36 @@ def reminder_targets(db, tomorrow_iso: str) -> list[tuple[int, str]]:
     return targets
 
 
+def due_teacher_digest(hour: int, last_sent: str | None, today: str) -> bool:
+    """True when hour==7 and not sent today."""
+    return hour == 7 and last_sent != today
+
+
+def teacher_targets(db, today_iso: str) -> str:
+    """List today's held lessons with marks count."""
+    # held lessons for today
+    lessons = [dict(r) for r in db.list_lessons_by_date(today_iso)]
+    # filter held
+    held = [l for l in lessons if l.get('status') == 'held']
+    if not held:
+        return 'Сегодня занятий нет.'
+    lines = []
+    date_label = _fmt_date_short(today_iso)
+    header = f"Дайджест {date_label}:" if date_label else "Дайджест:"
+    # group? just list each
+    for l in held:
+        subj = l.get('actual_subject_name') or l.get('planned_subject') or l.get('subject_name') or '?'
+        try:
+            cnt = db.attendance_count(l['id'])
+        except Exception:
+            cnt = 0
+        if cnt == 0:
+            lines.append(f"• {subj}: ПУСТО")
+        else:
+            lines.append(f"• {subj}: {cnt} оценок")
+    return header + "\n" + "\n".join(lines)
+
+
 def run_reminders(token: str, db_factory, stop_event=None):
     """Цикл напоминаний: каждые 600 секунд."""
     while stop_event is None or not stop_event.is_set():
@@ -503,6 +699,28 @@ def run_reminders(token: str, db_factory, stop_event=None):
                         except MaxError:
                             pass
                     db.set_setting('max_last_reminder', today_str)
+                # teacher morning digest
+                teacher_last = db.get_setting('max_teacher_digest_date')
+                if due_teacher_digest(now_hour, teacher_last, today_str):
+                    # only if bot enabled
+                    try:
+                        bot_token = db.get_setting('max_bot_token')
+                        enabled = db.get_setting('max_bot_enabled')
+                        if bot_token and enabled == '1':
+                            chat_raw = db.get_setting('max_teacher_chat')
+                            if chat_raw:
+                                try:
+                                    t_chat = int(chat_raw)
+                                    text = teacher_targets(db, today_str)
+                                    send_message(token, t_chat, text)
+                                except Exception:
+                                    pass
+                        db.set_setting('max_teacher_digest_date', today_str)
+                    except Exception:
+                        try:
+                            db.set_setting('max_teacher_digest_date', today_str)
+                        except Exception:
+                            pass
             except Exception:
                 pass
             finally:

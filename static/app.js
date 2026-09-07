@@ -336,7 +336,6 @@ App.Pages = {
     <h2>Экспорт</h2><div class="grid-2">
       <button class="btn btn-muted btn-sm" onclick="App.Pages.shareReport('${today.date}')">Поделиться отчётом</button>
     </div>`;
-    if (!today.schedule.length) html += `<button class="btn btn-success" style="width:100%;margin-top:8px" onclick="App.Pages.showCreateLessonAny()">+ Создать занятие</button>`;
     html += `<div class="card-sub" style="text-align:center;margin-top:8px">сборка ${(ver && ver.ver) || '?'}</div>`;
 
     document.getElementById('app').innerHTML = html;
@@ -715,6 +714,8 @@ App.Pages.settings = async function() {
     <button class="btn btn-muted btn-sm" onclick="App.Pages.checkMaxBot()">Проверить</button>
   </div>`;
   if (mx.has_token) html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.dropMaxBot()">Отключить</button>`;
+  html += `<div style="font-size:12px;margin-top:8px">Код преподавателя: ${mx.teacher_code || '—'} ${mx.teacher_bound ? '· привязан' : '· не привязан'}</div>`;
+  if (mx.teacher_bound) html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.unbindMaxTeacher()">Отвязать преподавателя</button>`;
   html += `</div>`;
   html += `<div class="card"><div class="card-title">Бэкап</div>`;
   html += `<div class="card-sub" style="margin-bottom:8px">Создать резервную копию или восстановить данные.</div>`;
@@ -768,6 +769,12 @@ App.Pages.checkMaxBot = async function() {
 
 App.Pages.dropMaxBot = async function() {
   try { await App.API._delete('/api/settings/maxbot'); App.UI.notify('Отключено'); }
+  catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+  App.Pages.settings();
+};
+
+App.Pages.unbindMaxTeacher = async function() {
+  try { await App.API.post('/api/settings/maxbot/teacher/unbind'); App.UI.notify('Преподаватель отвязан'); }
   catch (e) { App.UI.notify(e.error || 'Ошибка'); }
   App.Pages.settings();
 };
@@ -882,24 +889,6 @@ App.Pages._isoLocal = function(d) {
 
 App.Pages._calMonths = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 
-App.Pages.lessonDateDiag = async function() {
-  App.UI.notify('Диагностика удалена');
-};
-
-App.Pages._parseManualDate = function() {
-  const dd = (document.getElementById('in-day').value || '').trim();
-  const mm = (document.getElementById('in-mon').value || '').trim();
-  const yy = (document.getElementById('in-year').value || '').trim();
-  const d = parseInt(dd, 10), m = parseInt(mm, 10), y = parseInt(yy, 10);
-  if (!(d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 2000 && y <= 2100)) {
-    App.UI.notify('Дата как ДД ММ ГГГГ, например: 04 09 2026');
-    return null;
-  }
-  const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-  if (iso > App.Pages._todayIso()) { App.UI.notify('Будущие даты нельзя'); return null; }
-  return iso;
-};
-
 App.Pages.showCreateLessonAny = async function(preselectId, lessonNumber) {
   App.Pages._newLessonNumber = (lessonNumber == null ? null : lessonNumber);
   const subjects = await App.API.get('/api/subjects');
@@ -997,22 +986,6 @@ App.Pages.createLessonPicked = async function(daysAgo) {
   const sid = App.Pages._pickedSubject();
   if (!sid) return;
   await App.Pages.createLessonOn(sid, App.Pages._newLessonNumber || null, daysAgo);
-};
-
-App.Pages.createLessonManualPicked = async function() {
-  const sid = App.Pages._pickedSubject();
-  if (!sid) return;
-  const iso = App.Pages._parseManualDate();
-  if (!iso) return;
-  await App.Pages._createLessonAt(sid, App.Pages._newLessonNumber || null, iso);
-};
-
-App.Pages.lessonDateDiag = async function() {
-  const now = new Date();
-  App.UI.showPopup(`<h2>Диагностика даты</h2>
-    <div style="font-size:12px">Устройство ISO: ${now.toISOString().slice(0, 10)}</div>
-    <div style="font-size:12px">Вчера было бы: ${App.Pages._shiftIso(App.Pages._todayIso(), -1)}</div>
-    <div style="font-size:12px">Создай занятие пресетом и сверь дату в результате ниже.</div>`);
 };
 
 App.Pages._createLessonAt = async function(subjectId, lessonNumber, iso) {

@@ -228,7 +228,7 @@ class TestMaxClient:
     def test_get_updates(self):
         rec = []
         fake = _fake_urlopen_factory([
-            ('json', {'updates': [{'type': 'message_created'}], 'marker': 99}),
+            ('json', {'updates': [{'update_type': 'message_created'}], 'marker': 99}),
         ], rec)
         updates, marker = maxbot.get_updates('tok', marker=10, timeout=5, urlopen=fake)
         assert len(updates) == 1
@@ -321,12 +321,16 @@ class TestProcessTextExtended:
 
 class TestMaxBotAPI:
     def test_settings_crud(self, client):
-        assert client.get('/api/settings/maxbot').json == {'has_token': False, 'enabled': False}
+        j = client.get('/api/settings/maxbot').json
+        assert j['has_token'] is False and j['enabled'] is False
+        assert 'teacher_code' in j and 'teacher_bound' in j
+        assert len(j['teacher_code']) == 8
         rv = client.post('/api/settings/maxbot', json={'token': 'abc', 'enabled': True}).json
-        assert rv == {'ok': True, 'has_token': True, 'enabled': True}
+        assert rv['ok'] is True and rv['has_token'] is True and rv['enabled'] is True
         rv = client.get('/api/settings/maxbot').json
-        assert rv == {'has_token': True, 'enabled': True}
+        assert rv['has_token'] is True and rv['enabled'] is True
         assert 'abc' not in json.dumps(rv)
+        assert 'teacher_code' in rv
         assert client.delete('/api/settings/maxbot').json == {'ok': True}
         assert client.get('/api/settings/maxbot').json['has_token'] is False
 
@@ -427,7 +431,7 @@ class TestSendGradesWithButtons:
     def test_keyboard_shape(self):
         rec = []
         fake = _fake_urlopen_factory([('json', {'ok': True})], rec)
-        maxbot.send_grades_with_buttons('tok', 111, 'Оценки:\n5', urlopen=fake)
+        maxbot.send_with_buttons('tok', 111, 'Оценки:\n5', urlopen=fake)
         body = rec[0][2]
         assert body['text'] == 'Оценки:\n5'
         kbd = body['attachments'][0]
@@ -465,13 +469,13 @@ class TestRunPollingGradesButtons:
         db.close = lambda: None
         stop = threading.Event()
         rec = []
-        updates_resp = {'updates': [{'type': 'message_created', 'message': {
+        updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
             'body': {'text': '/grades'},
             'recipient': {'chat_id': 111},
         }}], 'marker': 1}
         responses = iter([
             ('json', updates_resp),     # get_updates
-            ('json', {'ok': True}),     # send_grades_with_buttons
+            ('json', {'ok': True}),     # send_with_buttons
         ])
         def fake(req, timeout=None, **kw):
             try:
@@ -498,7 +502,7 @@ class TestRunPollingGradesButtons:
             assert not t.is_alive()
         finally:
             db.close = orig_close
-        # send_grades_with_buttons uses _post → POST to chat_id=111
+        # send_with_buttons uses _post → POST to chat_id=111
         send_calls = [r for r in rec
                       if 'chat_id=111' in r[1] and r[0] == 'POST']
         assert len(send_calls) == 1
@@ -516,7 +520,7 @@ class TestRunPollingCallback:
         db.close = lambda: None
         stop = threading.Event()
         rec = []
-        cb_update = {'type': 'message_callback', 'callback': {
+        cb_update = {'update_type': 'message_callback', 'callback': {
             'callback_id': 'cb_999',
             'payload': '/help',
             'message': {'recipient': {'chat_id': 111}},
@@ -582,7 +586,7 @@ class TestVedomostFlow:
         db.close = lambda: None
         stop = threading.Event()
         rec = []
-        updates_resp = {'updates': [{'type': 'message_created', 'message': {
+        updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
             'body': {'text': '/vedomost'},
             'recipient': {'chat_id': 111},
         }}], 'marker': 1}
@@ -642,7 +646,7 @@ class TestVedomostFlow:
         db.close = lambda: None
         stop = threading.Event()
         rec = []
-        updates_resp = {'updates': [{'type': 'message_created', 'message': {
+        updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
             'body': {'text': '/vedomost'},
             'recipient': {'chat_id': 111},
         }}], 'marker': 1}
@@ -690,7 +694,7 @@ class TestVedomostFlow:
         db.close = lambda: None
         stop = threading.Event()
         rec = []
-        updates_resp = {'updates': [{'type': 'message_created', 'message': {
+        updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
             'body': {'text': '/vedomost'},
             'recipient': {'chat_id': 111},
         }}], 'marker': 1}
@@ -755,7 +759,7 @@ class TestVedomostFlow:
         db.close = lambda: None
         stop = threading.Event()
         rec = []
-        cb_update = {'type': 'message_callback', 'callback': {
+        cb_update = {'update_type': 'message_callback', 'callback': {
             'callback_id': 'cb_v1',
             'payload': '/vedomost',
             'message': {'recipient': {'chat_id': 111}},

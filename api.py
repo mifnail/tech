@@ -365,13 +365,116 @@ def get_lesson(lesson_id: int):
 @lessons_bp.route('/<int:lesson_id>/substitute', methods=['PATCH'])
 @require_fields('new_subject_id')
 def substitute_lesson(lesson_id: int):
-    new_id = get_db().substitute_lesson(lesson_id, request.json['new_subject_id'])
+    db = get_db()
+    lesson = db.get_lesson(lesson_id)
+    date_iso = lesson['date'] if lesson else ''
+    ddmm = f"{date_iso[8:10]}.{date_iso[5:7]}" if date_iso and len(date_iso) >= 10 else ''
+    old_name = lesson['actual_subject_name'] if lesson and 'actual_subject_name' in lesson.keys() else (lesson['actual_subject_name'] if lesson else '')
+    if not old_name and lesson:
+        old_name = dict(lesson).get('actual_subject_name', '')
+    new_subject_id = request.json['new_subject_id']
+    new_name = ''
+    try:
+        row = db.conn.execute("SELECT name FROM subjects WHERE id=?", (new_subject_id,)).fetchone()
+        if row:
+            new_name = row['name']
+    except Exception:
+        pass
+    group_id = None
+    if lesson:
+        try:
+            if 'group_id' in lesson.keys():
+                group_id = lesson['group_id']
+        except Exception:
+            group_id = None
+        if group_id is None:
+            try:
+                r = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (lesson['subject_id'],)).fetchone()
+                if r:
+                    group_id = r['group_id']
+            except Exception:
+                pass
+    msg_text = f"Замена {ddmm}: {old_name} → {new_name}" if ddmm else f"Замена: {old_name} → {new_name}"
+    new_id = db.substitute_lesson(lesson_id, new_subject_id)
+    try:
+        token = db.get_setting('max_bot_token')
+        enabled = db.get_setting('max_bot_enabled')
+        if token and enabled == '1' and group_id is not None:
+            chat_ids = []
+            for st in db.list_students(group_id):
+                cid = db.get_max_student_chat(st['id'])
+                if cid is not None:
+                    chat_ids.append(cid)
+            if chat_ids:
+                def _run():
+                    import time as _time
+                    import maxbot as _maxbot
+                    for cid in chat_ids:
+                        try:
+                            _maxbot.send_message(token, cid, msg_text)
+                        except Exception:
+                            pass
+                        _time.sleep(0.6)
+                threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        pass
     return jsonify({'ok': True, 'new_lesson_id': new_id})
 
 
 @lessons_bp.route('/<int:lesson_id>/cancel', methods=['PATCH'])
 def cancel_lesson(lesson_id: int):
-    get_db().cancel_lesson(lesson_id)
+    db = get_db()
+    lesson = db.get_lesson(lesson_id)
+    subject_name = ''
+    date_iso = ''
+    if lesson:
+        try:
+            subject_name = lesson['actual_subject_name'] or ''
+        except Exception:
+            subject_name = dict(lesson).get('actual_subject_name', '')
+        date_iso = lesson['date'] or ''
+    ddmm = f"{date_iso[8:10]}.{date_iso[5:7]}" if date_iso and len(date_iso) >= 10 else ''
+    group_id = None
+    if lesson:
+        try:
+            if 'group_id' in lesson.keys():
+                group_id = lesson['group_id']
+        except Exception:
+            group_id = None
+        if group_id is None:
+            try:
+                r = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (lesson['subject_id'],)).fetchone()
+                if r:
+                    group_id = r['group_id']
+            except Exception:
+                pass
+    msg_text = f"Отменено занятие: {subject_name} {ddmm}".strip() if subject_name else f"Отменено занятие: {ddmm}".strip()
+    # ensure exact format: if no ddmm, fallback
+    if not ddmm:
+        msg_text = f"Отменено занятие: {subject_name}".strip()
+    db.cancel_lesson(lesson_id)
+    try:
+        token = db.get_setting('max_bot_token')
+        enabled = db.get_setting('max_bot_enabled')
+        if token and enabled == '1' and group_id is not None:
+            chat_ids = []
+            for st in db.list_students(group_id):
+                cid = db.get_max_student_chat(st['id'])
+                if cid is not None:
+                    chat_ids.append(cid)
+            if chat_ids:
+                def _run():
+                    import time as _time
+                    import maxbot as _maxbot
+                    for cid in chat_ids:
+                        try:
+                            _maxbot.send_message(token, cid, msg_text)
+                        except Exception:
+                            pass
+                        _time.sleep(0.6)
+                threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        pass
     return jsonify({'ok': True})
 
 
@@ -650,9 +753,17 @@ maxbot_bp = Blueprint('maxbot_settings', __name__, url_prefix='/api/settings/max
 @maxbot_bp.route('', methods=['GET'])
 def maxbot_settings():
     db = get_db()
+    code = db.get_setting('max_teacher_code')
+    if not code:
+        import uuid
+        code = uuid.uuid4().hex[:8]
+        db.set_setting('max_teacher_code', code)
+    bound = bool(db.get_setting('max_teacher_chat'))
     return jsonify({
         'has_token': bool(db.get_setting('max_bot_token')),
         'enabled': db.get_setting('max_bot_enabled') == '1',
+        'teacher_code': code,
+        'teacher_bound': bound,
     })
 
 
@@ -693,6 +804,13 @@ def check_maxbot():
         msg = str(e)
         code = 401 if '401' in msg else 502
         return jsonify({'error': msg}), code
+    return jsonify({'ok': True})
+
+
+@maxbot_bp.route('/teacher/unbind', methods=['POST'])
+def teacher_unbind():
+    db = get_db()
+    db.set_setting('max_teacher_chat', None)
     return jsonify({'ok': True})
 
 
