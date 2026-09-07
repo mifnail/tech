@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import random
-import ssl
 import string
 import threading
 import time
@@ -17,38 +16,28 @@ import urllib.error
 import urllib.request
 from datetime import date, timedelta
 
+from botcore import (
+    BotError,
+    BotRateLimited,
+    MAX_TEXT,
+    WELCOME,
+    _ctx,
+    _UNVERIFIED_CTX,
+    _fio,
+    _fmt_date,
+    _read_body,
+    open_url_with_fallback,
+    retry_on_connection,
+)
+
 MAX_API = 'https://platform-api2.max.ru'
 POLL_TIMEOUT = 25
 ERROR_PAUSE = 5
-MAX_TEXT = 4000
-
-
-class MaxError(Exception):
-    """Ошибка MAX API / сети."""
-
-
-def _ctx():
-    try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        return ssl.create_default_context()
-
-
-_UNVERIFIED_CTX = ssl._create_unverified_context()
-
-
-def _read_body(resp) -> dict:
-    try:
-        raw = resp.read()
-    except Exception:
-        return {}
-    if not raw:
-        return {}
-    try:
-        return json.loads(raw.decode('utf-8'))
-    except ValueError:
-        return {}
+# Re-exported from botcore: WELCOME, MAX_TEXT, _fio, _fmt_date, _ctx, _read_body, BotError
+MaxError = BotError
+# Alias for compat: BotError name also available
+BotError = BotError  # noqa: keep for patch points
+BotRateLimited = BotRateLimited
 
 
 def _get(path: str, token: str, urlopen=None, timeout: int = 35):
@@ -56,25 +45,14 @@ def _get(path: str, token: str, urlopen=None, timeout: int = 35):
     req = urllib.request.Request(f'{MAX_API}{path}')
     req.add_header('Authorization', token)
     try:
-        if urlopen is not None:
-            resp = urlopen(req, timeout=timeout)
-        else:
-            resp = urllib.request.urlopen(req, timeout=timeout, context=_ctx())
-        with resp:
-            return _read_body(resp)
+        body = open_url_with_fallback(req, urlopen=urlopen, timeout=timeout)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise MaxError('bad bot token (401)')
         raise MaxError(f'max api HTTP {e.code}')
     except urllib.error.URLError as e:
-        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
-            try:
-                with urllib.request.urlopen(req, timeout=timeout, context=_UNVERIFIED_CTX) as resp2:
-                    return _read_body(resp2)
-            except Exception as e2:
-                raise MaxError(f'no connection: {e2}')
-        else:
-            raise MaxError(f'no connection: {e.reason}')
+        raise MaxError(f'no connection: {e.reason}')
+    return body
 
 
 def _post(path: str, token: str, data: dict, urlopen=None, timeout: int = 35):
@@ -84,33 +62,24 @@ def _post(path: str, token: str, data: dict, urlopen=None, timeout: int = 35):
     req.add_header('Authorization', token)
     req.add_header('Content-Type', 'application/json')
     try:
-        if urlopen is not None:
-            resp = urlopen(req, timeout=timeout)
-        else:
-            resp = urllib.request.urlopen(req, timeout=timeout, context=_ctx())
-        with resp:
-            return _read_body(resp)
+        body = open_url_with_fallback(req, urlopen=urlopen, timeout=timeout)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise MaxError('bad bot token (401)')
         raise MaxError(f'max api HTTP {e.code}')
     except urllib.error.URLError as e:
-        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
-            try:
-                with urllib.request.urlopen(req, timeout=timeout, context=_UNVERIFIED_CTX) as resp2:
-                    return _read_body(resp2)
-            except Exception as e2:
-                raise MaxError(f'no connection: {e2}')
-        else:
-            raise MaxError(f'no connection: {e.reason}')
+        raise MaxError(f'no connection: {e.reason}')
+    return body
 
 
 def check(token: str, urlopen=None):
     """Проверить токен: GET updates?timeout=0&limit=1. Возвращает True-ish dict при успехе."""
-    body = _get('/updates?timeout=0&limit=1', token, urlopen=urlopen)
-    if body:
-        return body
-    return {'ok': True}
+    def _do():
+        body = _get('/updates?timeout=0&limit=1', token, urlopen=urlopen)
+        if body:
+            return body
+        return {'ok': True}
+    return retry_on_connection(_do, retries=3, sleep=2)
 
 
 def send_message(token: str, chat_id: int, text: str, urlopen=None):
@@ -141,23 +110,13 @@ def upload_file(token: str, data: bytes, filename: str, urlopen=None) -> str:
     req1 = urllib.request.Request(f'{MAX_API}/uploads?type=file', method='POST')
     req1.add_header('Authorization', token)
     try:
-        if urlopen is not None:
-            resp1 = urlopen(req1, timeout=35)
-        else:
-            resp1 = urllib.request.urlopen(req1, timeout=35, context=_ctx())
-        with resp1:
-            body1 = _read_body(resp1)
+        body1 = open_url_with_fallback(req1, urlopen=urlopen, timeout=35)
     except urllib.error.HTTPError as e:
         raise MaxError(f'upload step1 HTTP {e.code}')
     except urllib.error.URLError as e:
-        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
-            try:
-                with urllib.request.urlopen(req1, timeout=35, context=_UNVERIFIED_CTX) as r:
-                    body1 = _read_body(r)
-            except Exception as e2:
-                raise MaxError(f'upload step1: {e2}')
-        else:
-            raise MaxError(f'upload step1: {e.reason}')
+        raise MaxError(f'upload step1: {e.reason}')
+    except MaxError:
+        raise
     upload_url = body1.get('url')
     if not upload_url:
         raise MaxError('upload step1: no url')
@@ -230,8 +189,7 @@ def get_updates(token: str, marker=None, timeout: int = POLL_TIMEOUT, urlopen=No
     return updates, new_marker
 
 
-WELCOME = ('Привет! Я журнал TeachHelper.\n'
-            'Отправь свою фамилию для привязки — например: Иванов')
+WELCOME = WELCOME
 HELP_NEW = ('Команды:\n'
             '/start — привязать фамилию\n'
             '/help — эта справка')

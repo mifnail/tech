@@ -8,51 +8,39 @@ Polling идёт в daemon-потоке рядом с Flask — входящие
 from __future__ import annotations
 
 import json
-import ssl
 import threading
 import time
 import urllib.error
 import urllib.request
 from datetime import date
 
+from botcore import (
+    BotError,
+    BotRateLimited,
+    MAX_TEXT,
+    WELCOME,
+    _ctx,
+    _UNVERIFIED_CTX,
+    _fio,
+    _fmt_date,
+    _read_body,
+    open_url_with_fallback,
+    retry_on_connection,
+)
+
 TG_API = 'https://api.telegram.org'
 POLL_TIMEOUT = 25
 ERROR_PAUSE = 5
-MAX_TEXT = 4000
-
-
-class BotError(Exception):
-    """Ошибка Telegram API / сети."""
-
-
-class BotRateLimited(BotError):
-    def __init__(self, wait: int):
-        super().__init__(f'rate limited, retry after {wait}s')
-        self.wait = wait
-
-
-def _ctx():
-    try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        return ssl.create_default_context()
-
-
-_UNVERIFIED_CTX = ssl._create_unverified_context()
-
-
-def _read_body(resp) -> dict:
-    try:
-        raw = resp.read()
-    except Exception:
-        return {}
-    if not raw:
-        return {}
-    try:
-        return json.loads(raw.decode('utf-8'))
-    except ValueError:
-        return {}
+# MAX_TEXT, WELCOME, _fio, _fmt_date, _ctx, _read_body, BotError etc. re-exported from botcore
+# Keep aliases identical objects for patch points
+HELP_NEW = ('Команды:\n'
+            '/start — привязать фамилию\n'
+            '/help — эта справка')
+HELP_BOUND = ('Команды:\n'
+              '/grades — мои оценки\n'
+              '/today — занятия сегодня\n'
+              '/unbind — отвязать чат\n'
+              '/help — эта справка')
 
 
 def _call(token: str, method: str, params: dict | None = None,
@@ -62,12 +50,7 @@ def _call(token: str, method: str, params: dict | None = None,
     req = urllib.request.Request(f'{TG_API}/bot{token}/{method}', data=payload, method='POST')
     req.add_header('Content-Type', 'application/json')
     try:
-        if urlopen is not None:
-            resp = urlopen(req, timeout=timeout)
-        else:
-            resp = urllib.request.urlopen(req, timeout=timeout, context=_ctx())
-        with resp:
-            body = _read_body(resp)
+        body = open_url_with_fallback(req, urlopen=urlopen, timeout=timeout)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise BotError('bad bot token (401)')
@@ -80,15 +63,7 @@ def _call(token: str, method: str, params: dict | None = None,
             raise BotRateLimited(wait)
         raise BotError(f'telegram api HTTP {e.code}')
     except urllib.error.URLError as e:
-        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
-            # Сети с MITM / устройства без системных CA: повторяем без проверки.
-            try:
-                with urllib.request.urlopen(req, timeout=timeout, context=_UNVERIFIED_CTX) as resp2:
-                    body = _read_body(resp2)
-            except Exception as e2:
-                raise BotError(f'no connection: {e2}')
-        else:
-            raise BotError(f'no connection: {e.reason}')
+        raise BotError(f'no connection: {e.reason}')
     if not body.get('ok'):
         raise BotError(f"telegram error: {body.get('description', '?')}")
     return body.get('result')
@@ -96,19 +71,7 @@ def _call(token: str, method: str, params: dict | None = None,
 
 def get_me(token: str, urlopen=None, retries: int = 3):
     """getMe с ретраями при обрывах сети. HTTP-ошибки (401) — сразу наружу."""
-    import time
-    last = None
-    for i in range(max(1, retries)):
-        try:
-            return _call(token, 'getMe', urlopen=urlopen)
-        except BotRateLimited:
-            raise
-        except BotError as e:
-            last = e
-            if 'no connection' not in str(e) or i == max(1, retries) - 1:
-                raise
-            time.sleep(2)
-    raise last
+    return retry_on_connection(lambda: _call(token, 'getMe', urlopen=urlopen), retries=retries, sleep=2)
 
 
 def send_message(token: str, chat_id: int, text: str, urlopen=None):
@@ -122,27 +85,7 @@ def get_updates(token: str, offset: int = 0, timeout: int = POLL_TIMEOUT, urlope
                  urlopen=urlopen, timeout=timeout + 10)
 
 
-WELCOME = ('Привет! Я журнал TeachHelper.\n'
-           'Отправь свою фамилию для привязки — например: Иванов')
-HELP_NEW = ('Команды:\n'
-            '/start — привязать фамилию\n'
-            '/help — эта справка')
-HELP_BOUND = ('Команды:\n'
-              '/grades — мои оценки\n'
-              '/today — занятия сегодня\n'
-              '/unbind — отвязать чат\n'
-              '/help — эта справка')
-
-
-def _fio(row) -> str:
-    return f"{row['last_name']} {row['first_name']}".strip()
-
-
-def _fmt_date(iso: str) -> str:
-    if iso and len(iso) >= 10:
-        return f'{iso[8:10]}.{iso[5:7]}'
-    return iso or ''
-
+# WELCOME already imported; keep HELP etc.
 
 def my_grades_text(db, student_id: int, limit_per_subject: int = 5) -> str:
     rows = [dict(r) for r in db.student_grades(student_id)]
