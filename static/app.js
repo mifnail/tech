@@ -246,7 +246,7 @@ App.Pages = {
           const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
           const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
           html += `<div style="display:flex;align-items:center;gap:4px;margin-top:4px">
-            <a href="#lesson/${l.id}" style="flex:1">${label} · ${App.UI.formatDate(l.date)}${l.needs_attention ? ' <span class="badge badge-cancelled">⚠ не заполнено</span>' : ''}</a>
+            <a href="#lesson/${l.id}" style="flex:1">${label} · ${App.UI.formatDate(l.date)}${''}</a>
             <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
           </div>`;
         }
@@ -262,14 +262,14 @@ App.Pages = {
         const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
         html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
           <div class="card-title">${App.UI.escHtml(l.actual_subject_name)}</div>
-          <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${cls}">${label}</span>${l.needs_attention ? ' <span class="badge badge-cancelled">⚠ не заполнено</span>' : ''}</div>
+          <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${cls}">${label}</span>${''}</div>
         </div>`;
       }
     }
     if (!schedule.length && !lessons.length) {
       html += `<div class="card"><div class="card-sub">Сегодня занятий нет</div></div>`;
     }
-    html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.showCustomLesson()">+ Создать занятие</button>`;
+    html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.showCreateLessonAny()">+ Создать занятие</button>`;
     return html;
   },
 
@@ -336,7 +336,7 @@ App.Pages = {
     <h2>Экспорт</h2><div class="grid-2">
       <button class="btn btn-muted btn-sm" onclick="App.Pages.shareReport('${today.date}')">Поделиться отчётом</button>
     </div>`;
-    html += `<button class="btn btn-success" style="width:100%;margin-top:8px" onclick="App.Pages.showCreateLessonAny()">+ Создать занятие</button>`;
+    if (!today.schedule.length) html += `<button class="btn btn-success" style="width:100%;margin-top:8px" onclick="App.Pages.showCreateLessonAny()">+ Создать занятие</button>`;
     html += `<div class="card-sub" style="text-align:center;margin-top:8px">сборка ${(ver && ver.ver) || '?'}</div>`;
 
     document.getElementById('app').innerHTML = html;
@@ -381,7 +381,7 @@ App.Pages = {
             const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
             const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
             html += `<div style="display:flex;align-items:center;gap:4px;margin-top:4px">
-              <a href="#lesson/${l.id}" style="flex:1">${label} · ${App.UI.formatDate(l.date)}${l.needs_attention ? ' <span class="badge badge-cancelled">⚠ не заполнено</span>' : ''}</a>
+              <a href="#lesson/${l.id}" style="flex:1">${label} · ${App.UI.formatDate(l.date)}${''}</a>
               <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
             </div>`;
           }
@@ -400,7 +400,6 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
             html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
               <div class="card-title">${App.UI.escHtml(l.actual_subject_name)}</div>
               <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${cls}">${label}</span>
-                ${l.needs_attention ? '<span class="badge badge-cancelled">⚠ не заполнено</span>' : ''}
                 ${l.status === 'cancelled' ? '· Отменено' : ''}</div>
               <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
             </div>`;
@@ -413,7 +412,7 @@ html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="
     }
 
     if (!subjectId) {
-      html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.showCustomLesson()">Создать занятие вручную</button>`;
+      html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.showCreateLessonAny()">Создать занятие вручную</button>`;
     }
 
     if (currentSubject) {
@@ -874,40 +873,17 @@ App.Pages.shareReport = async function(dateStr) {
 };
 
 App.Pages.startLesson = async function(subjectId, lessonNumber) {
-  App.UI.showPopup(`
-    <h2>Начать занятие</h2>
-    <div class="grid-2">
-      <button class="btn btn-success btn-sm" onclick="App.Pages.createLessonOn(${subjectId}, ${lessonNumber}, 0)">Сегодня</button>
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonOn(${subjectId}, ${lessonNumber}, 1)">Вчера</button>
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonOn(${subjectId}, ${lessonNumber}, 2)">Позавчера</button>
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonOn(${subjectId}, ${lessonNumber}, 7)">−7 дней</button>
-    </div>
-    <div style="display:flex;gap:6px;margin-top:8px">
-      <input id="in-day" inputmode="numeric" placeholder="ДД" style="flex:1;min-width:0">
-      <input id="in-mon" inputmode="numeric" placeholder="ММ" style="flex:1;min-width:0">
-      <input id="in-year" inputmode="numeric" placeholder="ГГГГ" style="flex:2;min-width:0">
-      <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.createLessonManual(${subjectId}, ${lessonNumber})">ОК</button>
-    </div>
-    <div class="grid-2" style="margin-top:8px">
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.lessonDateDiag()">Диагностика</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
-    </div>
-  `);
+  await App.Pages.showCreateLessonAny(subjectId, lessonNumber);
 };
 
-App.Pages._shiftIso = function(iso, delta) {
-  const d = new Date(iso + 'T12:00:00');
-  d.setDate(d.getDate() + delta);
-  return d.toISOString().slice(0, 10);
+App.Pages._isoLocal = function(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-App.Pages._todayIso = function() {
-  return new Date().toISOString().slice(0, 10);
-};
+App.Pages._calMonths = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 
-App.Pages.createLessonOn = async function(subjectId, lessonNumber, daysAgo) {
-  const iso = App.Pages._shiftIso(App.Pages._todayIso(), -daysAgo);
-  await App.Pages._createLessonAt(subjectId, lessonNumber, iso);
+App.Pages.lessonDateDiag = async function() {
+  App.UI.notify('Диагностика удалена');
 };
 
 App.Pages._parseManualDate = function() {
@@ -924,26 +900,90 @@ App.Pages._parseManualDate = function() {
   return iso;
 };
 
-App.Pages.showCreateLessonAny = async function() {
+App.Pages.showCreateLessonAny = async function(preselectId, lessonNumber) {
+  App.Pages._newLessonNumber = (lessonNumber == null ? null : lessonNumber);
   const subjects = await App.API.get('/api/subjects');
-  const opts = subjects.map(s => `<option value="${s.id}">${App.UI.escHtml(s.name)} · ${App.UI.escHtml(s.group_name || '')}</option>`).join('');
+  App.Pages._newLessonSubjects = subjects;
+  App.Pages._newLessonSubject = preselectId || null;
+  const t = new Date();
+  App.Pages._cal = { y: t.getFullYear(), m: t.getMonth(), sel: App.Pages._isoLocal(t) };
   App.UI.showPopup(`
     <h2>Создать занятие</h2>
-    <select id="new-lesson-subject">${opts}</select>
+    <div id="new-lesson-subjects" style="max-height:130px;overflow-y:auto"></div>
+    <div id="lesson-cal" style="margin-top:8px"></div>
     <div class="grid-2" style="margin-top:8px">
-      <button class="btn btn-success btn-sm" onclick="App.Pages.createLessonPicked(0)">Сегодня</button>
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonPicked(1)">Вчера</button>
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonPicked(2)">Позавчера</button>
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.createLessonPicked(7)">−7 дней</button>
+      <button class="btn btn-success" onclick="App.Pages.createLessonCalPicked()">Создать</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
     </div>
-    <div style="display:flex;gap:6px;margin-top:8px">
-      <input id="in-day" inputmode="numeric" placeholder="ДД" style="flex:1;min-width:0">
-      <input id="in-mon" inputmode="numeric" placeholder="ММ" style="flex:1;min-width:0">
-      <input id="in-year" inputmode="numeric" placeholder="ГГГГ" style="flex:2;min-width:0">
-      <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.createLessonManualPicked()">ОК</button>
-    </div>
-    <div style="margin-top:8px"><button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button></div>
   `);
+  App.Pages._renderLessonSubjects(subjects);
+  App.Pages._renderCal();
+};
+
+App.Pages._renderLessonSubjects = function(subjects) {
+  const box = document.getElementById('new-lesson-subjects');
+  if (!box) return;
+  box.innerHTML = subjects.map(s => {
+    const sel = s.id === App.Pages._newLessonSubject;
+    return `<button class="btn ${sel ? 'btn-success' : 'btn-muted'} btn-sm" style="display:block;width:100%;margin-bottom:4px;text-align:left" onclick="App.Pages._pickLessonSubject(${s.id})">${App.UI.escHtml(s.name)} · ${App.UI.escHtml(s.group_name || '')}</button>`;
+  }).join('');
+};
+
+App.Pages._pickLessonSubject = function(id) {
+  App.Pages._newLessonSubject = id;
+  App.Pages._renderLessonSubjects(App.Pages._newLessonSubjects || []);
+};
+
+App.Pages._renderCal = function() {
+  const box = document.getElementById('lesson-cal');
+  if (!box) return;
+  const st = App.Pages._cal;
+  const todayIso = App.Pages._isoLocal(new Date());
+  const startDay = (new Date(st.y, st.m, 1).getDay() + 6) % 7;
+  const dim = new Date(st.y, st.m + 1, 0).getDate();
+  const pad = n => String(n).padStart(2, '0');
+  let cells = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(n => `<div style="text-align:center;font-size:11px;color:#888">${n}</div>`).join('');
+  for (let i = 0; i < startDay; i++) cells += `<div></div>`;
+  for (let d = 1; d <= dim; d++) {
+    const iso = `${st.y}-${pad(st.m + 1)}-${pad(d)}`;
+    if (iso > todayIso) {
+      cells += `<div style="text-align:center;padding:6px 0;color:#ccc">${d}</div>`;
+    } else {
+      const sel = iso === st.sel ? 'background:#007aff;color:#fff;' : '';
+      cells += `<div onclick="App.Pages._calPick('${iso}')" style="text-align:center;padding:6px 0;cursor:pointer;border-radius:6px;${sel}">${d}</div>`;
+    }
+  }
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages._calNav(-1)">◀</button>
+      <div style="font-weight:600;font-size:14px">${App.Pages._calMonths[st.m]} ${st.y}</div>
+      <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages._calNav(1)">▶</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">${cells}</div>`;
+};
+
+App.Pages._calNav = function(delta) {
+  const st = App.Pages._cal;
+  const d = new Date(st.y, st.m + delta, 1);
+  const t = new Date();
+  if (d.getFullYear() > t.getFullYear() || (d.getFullYear() === t.getFullYear() && d.getMonth() > t.getMonth())) {
+    App.UI.notify('Будущие месяцы закрыты');
+    return;
+  }
+  st.y = d.getFullYear();
+  st.m = d.getMonth();
+  App.Pages._renderCal();
+};
+
+App.Pages._calPick = function(iso) {
+  App.Pages._cal.sel = iso;
+  App.Pages._renderCal();
+};
+
+App.Pages.createLessonCalPicked = async function() {
+  const sid = App.Pages._newLessonSubject;
+  if (!sid) { App.UI.notify('Выбери предмет'); return; }
+  await App.Pages._createLessonAt(sid, App.Pages._newLessonNumber || null, App.Pages._cal.sel);
 };
 
 App.Pages._pickedSubject = function() {
@@ -956,7 +996,7 @@ App.Pages._pickedSubject = function() {
 App.Pages.createLessonPicked = async function(daysAgo) {
   const sid = App.Pages._pickedSubject();
   if (!sid) return;
-  await App.Pages.createLessonOn(sid, null, daysAgo);
+  await App.Pages.createLessonOn(sid, App.Pages._newLessonNumber || null, daysAgo);
 };
 
 App.Pages.createLessonManualPicked = async function() {
@@ -964,13 +1004,7 @@ App.Pages.createLessonManualPicked = async function() {
   if (!sid) return;
   const iso = App.Pages._parseManualDate();
   if (!iso) return;
-  await App.Pages._createLessonAt(sid, null, iso);
-};
-
-App.Pages.createLessonManual = async function(subjectId, lessonNumber) {
-  const iso = App.Pages._parseManualDate();
-  if (!iso) return;
-  await App.Pages._createLessonAt(subjectId, lessonNumber, iso);
+  await App.Pages._createLessonAt(sid, App.Pages._newLessonNumber || null, iso);
 };
 
 App.Pages.lessonDateDiag = async function() {
@@ -1066,26 +1100,7 @@ App.Pages.deleteLesson = async function(lessonId) {
   }
 };
 
-App.Pages.showCustomLesson = function() {
-  App.API.get('/api/subjects').then(subjects => {
-    const opts = subjects.map(s => `<option value="${s.id}">${App.UI.escHtml(s.name)} (${App.UI.escHtml(s.group_name)})</option>`).join('');
-    App.UI.showPopup(`
-      <h2>Создать занятие</h2>
-      <select id="custom-subject">${opts}</select>
-      <button class="btn btn-primary btn-sm" onclick="App.Pages.createCustomLesson()">Создать</button>
-    `);
-  });
-};
-
-App.Pages.createCustomLesson = async function() {
-  const subjectId = +document.getElementById('custom-subject').value;
-  await App.API.post('/api/lessons', {
-    subject_id: subjectId, actual_subject_id: subjectId, status: 'held'
-  });
-  App.UI.notify('Занятие создано');
-  App.UI.closePopup();
-  App.Pages.today();
-};
+// showCustomLesson/createCustomLesson removed — creation goes via showCreateLessonAny.
 
 App.Pages.showAddSubject = async function() {
   const groups = await App.API.get('/api/groups');
