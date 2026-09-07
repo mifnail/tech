@@ -163,6 +163,10 @@ def send_with_buttons(token: str, chat_id: int, text: str, urlopen=None):
         {'type': 'callback', 'text': 'Оценки', 'payload': '/grades'},
         {'type': 'callback', 'text': 'Сегодня', 'payload': '/today'},
     ], [
+        {'type': 'message', 'text': 'Расписание'},
+        {'type': 'message', 'text': 'Средний балл'},
+        {'type': 'message', 'text': 'Долги'},
+    ], [
         {'type': 'callback', 'text': 'Отвязать', 'payload': '/unbind'},
     ]]
     attachments = [{'type': 'inline_keyboard', 'payload': {'buttons': keyboard}}]

@@ -437,10 +437,13 @@ class TestSendGradesWithButtons:
         kbd = body['attachments'][0]
         assert kbd['type'] == 'inline_keyboard'
         buttons = kbd['payload']['buttons']
-        assert len(buttons) == 2
+        assert len(buttons) == 3
         assert buttons[0][0]['payload'] == '/grades'
         assert buttons[0][1]['payload'] == '/today'
-        assert buttons[1][0]['payload'] == '/unbind'
+        assert buttons[1][0]['type'] == 'message' and buttons[1][0]['text'] == 'Расписание' and 'payload' not in buttons[1][0]
+        assert buttons[1][1]['type'] == 'message' and buttons[1][1]['text'] == 'Средний балл' and 'payload' not in buttons[1][1]
+        assert buttons[1][2]['type'] == 'message' and buttons[1][2]['text'] == 'Долги' and 'payload' not in buttons[1][2]
+        assert buttons[2][0]['payload'] == '/unbind'
 
 
 # ======================== ANSWER CALLBACK ========================
