@@ -758,6 +758,7 @@ App.Pages.settings = async function() {
   html += `<div class="card-sub" style="margin-bottom:8px">Создать резервную копию или восстановить данные.</div>`;
   html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.doBackup()">Выгрузить копию</button>`;
   html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.confirmRestoreLatest()">Восстановить последнюю копию</button>`;
+  html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.confirmRestoreList()">Восстановить из копии…</button>`;
   html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
   html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
   html += `</div>`;
@@ -883,6 +884,61 @@ App.Pages.restoreLatest = async function() {
   try {
     const r = await App.API.post('/api/restore/latest');
     App.UI.notify('Данные восстановлены из ' + (r.name || 'последнего бэкапа'));
+    App.Pages.settings();
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка восстановления');
+    App.Pages.settings();
+  }
+};
+
+App.Pages.confirmRestoreList = async function() {
+  let r;
+  try {
+    r = await App.API.get('/api/backup/list');
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка получения списка');
+    return;
+  }
+  const backups = r.backups || [];
+  if (!backups.length) {
+    App.UI.notify('Бэкапы не найдены — сначала выгрузите копию');
+    return;
+  }
+  const fmtSize = s => s == null ? '' : (s / 1048576 >= 1 ? (s / 1048576).toFixed(1) + ' МБ' : Math.round(s / 1024) + ' КБ');
+  const fmtMtime = t => t == null ? '' : new Date(t * 1000).toLocaleString();
+  const rows = backups.map(b =>
+    `<button class="backup-row" style="display:block;width:100%;text-align:left;padding:10px 12px;margin-bottom:6px;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface);cursor:pointer" onclick="App.Pages.confirmRestoreNamed('${App.UI.escJs(b.name)}')">
+      <div style="font-weight:600">${App.UI.escHtml(b.name)}</div>
+      <div style="font-size:12px;color:var(--color-text-muted);margin-top:2px">${App.UI.escHtml(fmtSize(b.size))}${b.mtime != null ? ' · ' : ''}${App.UI.escHtml(fmtMtime(b.mtime))}</div>
+    </button>`
+  ).join('');
+  App.UI.showPopup(`
+    <h2>Восстановить из копии</h2>
+    <p style="margin-bottom:12px">Выберите бэкап из «Загрузок»:</p>
+    <div style="max-height:300px;overflow-y:auto">${rows}</div>
+    <div class="grid-2" style="margin-top:4px">
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
+    </div>
+  `);
+};
+
+App.Pages.confirmRestoreNamed = function(name) {
+  App.UI.showPopup(`
+    <h2>Восстановить данные?</h2>
+    <p style="margin-bottom:12px">База будет заменена копией <b>${App.UI.escHtml(name)}</b>. Все несохранённые изменения будут потеряны.</p>
+    <div class="grid-2">
+      <button class="btn btn-danger" onclick="App.Pages.restoreNamed('${App.UI.escJs(name)}')">Да, заменить</button>
+      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
+    </div>
+  `);
+};
+
+App.Pages.restoreNamed = async function(name) {
+  App.UI.closePopup();
+  App.Loading.show();
+  try {
+    const r = await App.API.post('/api/restore/named', { name });
+    App.UI.notify('Данные восстановлены из ' + (r.name || name));
     App.Pages.settings();
   } catch (e) {
     App.UI.notify(e.error || 'Ошибка восстановления');

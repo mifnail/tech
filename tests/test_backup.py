@@ -351,3 +351,121 @@ class TestDrainPfd:
         with pytest.raises(RuntimeError, match='detach fail'):
             _api_module._drain_pfd(Stub())
         assert closed['v'] is True
+
+
+class TestListBackupFiles:
+    def test_list_backup_files_desktop(self, monkeypatch):
+        """Desktop enumeration finds >0 backups and returns them newest-first."""
+        d = tempfile.mkdtemp()
+        p_old = os.path.join(d, 'teachhelper_2026-01-01.db')
+        p_new = os.path.join(d, 'teachhelper_2026-01-02.db')
+        try:
+            with open(p_old, 'wb') as f:
+                f.write(b'11111')
+            with open(p_new, 'wb') as f:
+                f.write(b'222')
+            os.utime(p_old, (1000, 1000))
+            os.utime(p_new, (2000, 2000))
+            monkeypatch.setattr(_api_module, '_is_android', lambda: False)
+            monkeypatch.setattr(_api_module._glob, 'glob', lambda pattern: [p_old, p_new])
+
+            entries = _api_module._list_backup_files()
+            assert len(entries) == 2
+            assert entries[0]['name'] == 'teachhelper_2026-01-02.db'
+            assert entries[1]['name'] == 'teachhelper_2026-01-01.db'
+            assert entries[0]['size'] == 3
+            assert entries[1]['size'] == 5
+            assert entries[0]['mtime'] == 2000.0
+            assert entries[1]['mtime'] == 1000.0
+            # sorted newest-first by mtime
+            assert entries[0]['mtime'] > entries[1]['mtime']
+            assert set(entries[0].keys()) == {'name', 'size', 'mtime'}
+        finally:
+            for f in (p_old, p_new):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+
+    def test_list_backup_files_desktop_empty(self, monkeypatch):
+        """Desktop enumeration returns [] when matching files do not exist."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: False)
+        monkeypatch.setattr(_api_module._glob, 'glob', lambda pattern: [])
+        assert _api_module._list_backup_files() == []
+
+
+class TestBackupList:
+    def test_backup_list_shape(self, client, monkeypatch):
+        """GET /api/backup/list returns {backups:[{name,size,mtime}]}."""
+        monkeypatch.setattr(_api_module, '_list_backup_files', lambda: [
+            {'name': 'teachhelper_2026-01-02.db', 'size': 12, 'mtime': 2000.0},
+            {'name': 'teachhelper_2026-01-01.db', 'size': 5, 'mtime': 1000.0},
+        ])
+        rv = client.get('/api/backup/list')
+        assert rv.status_code == 200
+        assert rv.json == {'backups': [
+            {'name': 'teachhelper_2026-01-02.db', 'size': 12, 'mtime': 2000.0},
+            {'name': 'teachhelper_2026-01-01.db', 'size': 5, 'mtime': 1000.0},
+        ]}
+
+    def test_backup_list_empty(self, client, monkeypatch):
+        """GET /api/backup/list returns an empty array when no backups exist."""
+        monkeypatch.setattr(_api_module, '_list_backup_files', lambda: [])
+        rv = client.get('/api/backup/list')
+        assert rv.status_code == 200
+        assert rv.json == {'backups': []}
+
+
+class TestRestoreNamed:
+    def test_restore_named_ok(self, client, monkeypatch):
+        """POST /api/restore/named replaces the DB with the named backup."""
+        valid_data = _make_valid_db_bytes()
+        restore_target = tempfile.mktemp(suffix='.db')
+        try:
+            monkeypatch.setattr(_api_module, '_DB_PATH', restore_target)
+            with open(restore_target, 'wb') as f:
+                f.write(b'old data')
+
+            written = {}
+            real_replace = os.replace
+            def fake_replace(src, dst):
+                with open(src, 'rb') as f:
+                    written['data'] = f.read()
+                real_replace(src, dst)
+            monkeypatch.setattr(os, 'replace', fake_replace)
+            monkeypatch.setattr(_api_module, '_save_to_downloads_full',
+                                lambda data, fn, mt: ('/bak', None))
+            monkeypatch.setattr(_api_module, '_read_backup_bytes', lambda name: valid_data)
+
+            rv = client.post('/api/restore/named', json={'name': 'teachhelper_2026-01-01.db'})
+            assert rv.status_code == 200
+            assert rv.json['ok'] is True
+            assert rv.json['name'] == 'teachhelper_2026-01-01.db'
+            assert written['data'] == valid_data
+        finally:
+            for f in (restore_target, restore_target + '-wal', restore_target + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+
+    def test_restore_named_invalid(self, client, monkeypatch):
+        """POST /api/restore/named returns 400 for non-basename names."""
+        for bad in ['../teachhelper_x.db', 'teachhelper', 'evil.db',
+                    'teachhelper_2026.db/..', '', 'a/b.db',
+                    'teachhelper_2026-01-01.dbc', 123, None]:
+            rv = client.post('/api/restore/named', json={'name': bad})
+            assert rv.status_code == 400, bad
+
+    def test_restore_named_not_found(self, client, monkeypatch):
+        """POST /api/restore/named returns 404 when the backup is missing."""
+        def fake_read(name):
+            raise _api_module.BackupNotFound('no backup file: teachhelper_none.db')
+        monkeypatch.setattr(_api_module, '_read_backup_bytes', fake_read)
+        rv = client.post('/api/restore/named', json={'name': 'teachhelper_none.db'})
+        assert rv.status_code == 404
+        assert 'no backup' in rv.json['error']

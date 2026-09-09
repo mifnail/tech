@@ -10,6 +10,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 import os
+import re as _re
 
 import sqlite3
 
@@ -1353,67 +1354,182 @@ def _drain_pfd(pfd) -> bytes:
     return b''.join(chunks)
 
 
+def _is_android() -> bool:
+    """True when running under pyjnius (Android/WebView runtime)."""
+    try:
+        from jnius import autoclass  # noqa: F401 — Android only
+        return True
+    except ImportError:
+        return False
+
+
+def _valid_backup_name(name) -> bool:
+    """A name must be a plain basename of a teachhelper backup (no path, no ..)."""
+    if not isinstance(name, str) or not name:
+        return False
+    if '/' in name or '\\' in name:
+        return False
+    if name.startswith('..') or name == '.':
+        return False
+    return _re.match(r'^teachhelper_.*\.db$', name) is not None
+
+
+def _list_backup_files() -> list[dict]:
+    """Enumerate every teachhelper_*.db backup in Downloads, newest first.
+
+    Works on both platforms: desktop globs ~/Downloads; Android queries
+    MediaStore Downloads and falls back to a direct filesystem scan of the
+    public Download directory when MediaStore has not indexed the folder.
+    Returns a list of {name, size, mtime} sorted by mtime descending.
+    """
+    entries: list[dict] = []
+    if not _is_android():
+        # Desktop: glob ~/Downloads
+        try:
+            home = os.path.expanduser('~')
+            pattern = os.path.join(home, 'Downloads', 'teachhelper_*.db')
+            for path in _glob.glob(pattern):
+                try:
+                    st = os.stat(path)
+                except OSError:
+                    continue
+                entries.append({
+                    'name': os.path.basename(path),
+                    'size': st.st_size,
+                    'mtime': st.st_mtime,
+                })
+        except Exception:
+            pass
+        entries.sort(key=lambda e: e['mtime'], reverse=True)
+        return entries
+
+    # Android: query MediaStore Downloads
+    seen: set[str] = set()
+    try:
+        from jnius import autoclass  # noqa — Android only
+        Downloads = autoclass('android.provider.MediaStore$Downloads')
+        collection = Downloads.getContentUri('external')
+        resolver = _android_resolver()
+        cursor = resolver.query(
+            collection,
+            ['_id', '_display_name', 'date_added'],
+            '_display_name LIKE ?',
+            ['teachhelper_%.db'],
+            'date_added DESC',
+        )
+        try:
+            if cursor is not None:
+                idx_name = cursor.getColumnIndex('_display_name')
+                idx_added = cursor.getColumnIndex('date_added')
+                idx_size = cursor.getColumnIndex('_size')
+                while cursor.moveToNext():
+                    try:
+                        name = cursor.getString(idx_name)
+                    except Exception:
+                        continue
+                    if not name:
+                        continue
+                    seen.add(name)
+                    mtime = None
+                    size = None
+                    try:
+                        mtime = cursor.getLong(idx_added)
+                    except Exception:
+                        pass
+                    try:
+                        size = cursor.getLong(idx_size)
+                    except Exception:
+                        pass
+                    entries.append({'name': name, 'size': size, 'mtime': mtime})
+        finally:
+            if cursor is not None:
+                cursor.close()
+    except Exception:
+        pass
+
+    # Fallback: MediaStore didn't index the folder — read Download/ directly.
+    try:
+        from jnius import autoclass  # noqa — Android only
+        env = autoclass('android.os.Environment')
+        dl = env.getExternalStoragePublicDirectory(env.DIRECTORY_DOWNLOADS)
+        dl_path = str(dl.getAbsolutePath())
+        for path in _glob.glob(_glob.join(dl_path, 'teachhelper_*.db')):
+            name = os.path.basename(path)
+            if name in seen:
+                continue
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            entries.append({'name': name, 'size': st.st_size, 'mtime': st.st_mtime})
+    except Exception:
+        pass
+
+    entries.sort(key=lambda e: e['mtime'] or 0, reverse=True)
+    return entries
+
+
+def _read_backup_bytes(name: str) -> bytes:
+    """Read a backup's bytes by display name (same enumeration + open)."""
+    if not _is_android():
+        path = os.path.join(os.path.expanduser('~'), 'Downloads', name)
+        if not os.path.isfile(path):
+            raise BackupNotFound(f'no backup file: {name}')
+        with open(path, 'rb') as f:
+            return f.read()
+    # Android: prefer MediaStore by exact name, then the direct filesystem path.
+    try:
+        from jnius import autoclass  # noqa — Android only
+        Downloads = autoclass('android.provider.MediaStore$Downloads')
+        collection = Downloads.getContentUri('external')
+        resolver = _android_resolver()
+        cursor = resolver.query(
+            collection,
+            ['_id', '_display_name'],
+            '_display_name=?',
+            [name],
+            None,
+        )
+        try:
+            if cursor is not None and cursor.moveToFirst():
+                ContentUris = autoclass('android.content.ContentUris')
+                uri = ContentUris.withAppendedId(collection, cursor.getLong(cursor.getColumnIndex('_id')))
+                pfd = resolver.openFileDescriptor(uri, 'r')
+                return _drain_pfd(pfd)
+        finally:
+            if cursor is not None:
+                cursor.close()
+    except Exception:
+        pass
+    try:
+        from jnius import autoclass  # noqa — Android only
+        env = autoclass('android.os.Environment')
+        dl = env.getExternalStoragePublicDirectory(env.DIRECTORY_DOWNLOADS)
+        dl_path = str(dl.getAbsolutePath())
+        path = os.path.join(dl_path, name)
+        if not os.path.isfile(path):
+            raise BackupNotFound(f'no backup file: {name}')
+        with open(path, 'rb') as f:
+            return f.read()
+    except BackupNotFound:
+        raise
+    except Exception as e:
+        raise BackupNotFound(f'no backup file: {name}') from e
+
+
 def _find_latest_backup_bytes() -> tuple[bytes, str]:
     """Find the most recent teachhelper_*.db in Downloads.
 
-    On Android: queries MediaStore via ContentResolver.
+    On Android: queries MediaStore via ContentResolver (+ fs fallback).
     On desktop: globs ~/Downloads.
     Returns (bytes, display_name).
     Raises BackupNotFound if nothing found.
     """
-    try:
-        from jnius import autoclass  # noqa — Android only
-    except ImportError:
-        # Desktop: glob ~/Downloads
-        home = os.path.expanduser('~')
-        pattern = os.path.join(home, 'Downloads', 'teachhelper_*.db')
-        files = sorted(_glob.glob(pattern), key=os.path.getmtime, reverse=True)
-        if not files:
-            raise BackupNotFound('no backup files found in ~/Downloads')
-        path = files[0]
-        with open(path, 'rb') as f:
-            return f.read(), os.path.basename(path)
-    # Android: query MediaStore Downloads
-    Downloads = autoclass('android.provider.MediaStore$Downloads')
-    collection = Downloads.getContentUri('external')
-    resolver = _android_resolver()
-    cursor = resolver.query(
-        collection,
-        ['_id', '_display_name', 'date_added'],
-        '_display_name LIKE ?',
-        ['teachhelper_%.db'],
-        'date_added DESC',
-    )
-    try:
-        if cursor is not None and cursor.moveToFirst():
-            idx_id = cursor.getColumnIndex('_id')
-            idx_name = cursor.getColumnIndex('_display_name')
-            ContentUris = autoclass('android.content.ContentUris')
-            uri = ContentUris.withAppendedId(collection, cursor.getLong(idx_id))
-            display_name = cursor.getString(idx_name)
-            pfd = resolver.openFileDescriptor(uri, 'r')
-            data = _drain_pfd(pfd)
-            return data, display_name
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-    # Fallback: MediaStore не проиндексировал папку — читаем Download/ напрямую.
-    # На Android 10+ файл пишется в /storage/emulated/0/Download/.
-    try:
-        import glob as _g
-        env = autoclass('android.os.Environment')
-        dl = env.getExternalStoragePublicDirectory(env.DIRECTORY_DOWNLOADS)
-        dl_path = str(dl.getAbsolutePath())
-        files = sorted(_g.glob(_g.join(dl_path, 'teachhelper_*.db')), key=os.path.getmtime, reverse=True)
-        if files:
-            path = files[0]
-            with open(path, 'rb') as f:
-                return f.read(), os.path.basename(path)
-    except Exception:
-        pass
-
-    raise BackupNotFound('no backup files found in Downloads')
+    entries = _list_backup_files()
+    if not entries:
+        raise BackupNotFound('no backup files found in Downloads')
+    data = _read_backup_bytes(entries[0]['name'])
+    return data, entries[0]['name']
 
 
 backup_bp = Blueprint('backup', __name__, url_prefix='/api')
@@ -1460,6 +1576,34 @@ def restore_latest():
         return jsonify({'error': str(e)}), 404
     except Exception as e:
         return jsonify({'error': f'find backup failed: {e}'}), 500
+    try:
+        _restore_from_bytes(data)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'restore failed: {e}'}), 500
+    return jsonify({'ok': True, 'name': name})
+
+
+@backup_bp.route('/backup/list', methods=['GET'])
+def list_backups():
+    """List backups in Downloads, newest first. Response {backups:[{name,size,mtime}]}."""
+    return jsonify({'backups': _list_backup_files()})
+
+
+@backup_bp.route('/restore/named', methods=['POST'])
+def restore_named():
+    """Restore a specific backup found in Downloads by display name."""
+    body = request.get_json(silent=True) or {}
+    name = body.get('name')
+    if not _valid_backup_name(name):
+        return jsonify({'error': 'invalid backup name'}), 400
+    try:
+        data = _read_backup_bytes(name)
+    except BackupNotFound as e:
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        return jsonify({'error': f'read backup failed: {e}'}), 500
     try:
         _restore_from_bytes(data)
     except ValueError as e:
