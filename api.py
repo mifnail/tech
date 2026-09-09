@@ -181,6 +181,7 @@ def index():
         html = f.read()
     html = html.replace('/static/app.js', f'/static/app.js?v={STATIC_VER}')
     html = html.replace('/static/style.css', f'/static/style.css?v={STATIC_VER}')
+    html = html.replace('/static/fonts/local.css', f'/static/fonts/local.css?v={STATIC_VER}')
     return Response(html, mimetype='text/html')
 
 

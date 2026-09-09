@@ -59,6 +59,13 @@ App.UI = {
     const p = document.getElementById('popup');
     if (p) p.remove();
   },
+  setTheme(mode) {
+    try {
+      if (mode !== 'dark') mode = 'light';
+      document.documentElement.setAttribute('data-theme', mode);
+      localStorage.setItem('th-theme', mode);
+    } catch (e) {}
+  },
   formatDate(iso) {
     if (!iso) return '';
     const [y, m, d] = iso.split('-');
@@ -730,6 +737,7 @@ App.Pages.settings = async function() {
   try { mx = await App.API.get('/api/settings/maxbot'); } catch (e) {}
   let html = App.Nav.render();
   html += `<h1>Настройки</h1>`;
+  html += `<div class="card"><div class="card-title">Оформление</div><div class="grid-2"><button class="btn btn-muted btn-sm" onclick="App.UI.setTheme('light')">Светлая</button><button class="btn btn-muted btn-sm" onclick="App.UI.setTheme('dark')">Тёмная</button></div></div>`;
   html += `<div class="card"><div class="card-title">Telegram-бот «Мои оценки»</div>`;
   html += `<div class="card-sub" style="margin-bottom:8px">Студенты смотрят оценки через бота, пока приложение открыто. Токен: <a href="https://t.me/BotFather" target="_blank">BotFather → /newbot</a></div>`;
   html += `<div style="font-size:12px;margin-bottom:4px">Статус: ${st.has_token ? 'токен есть' : 'нет токена'}${st.enabled ? ' · включён' : ''}</div>`;

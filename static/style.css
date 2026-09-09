@@ -3,7 +3,8 @@
    ========================================================================== */
 
 :root {
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-display: 'Unbounded', 'Manrope', -apple-system, 'Segoe UI', sans-serif;
   
   --color-bg: #f4f5f7;
   --color-surface: #ffffff;
@@ -38,6 +39,80 @@
   --transition-smooth: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Dark theme: manual toggle via html[data-theme] (no media queries — Android 7+ safe, no blur) */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0c0f16;
+  --color-surface: #141a26;
+  --color-text: #e8ecf3;
+  --color-text-muted: #9aa7bd;
+  --color-border: #232c3d;
+  --primary: #4d9fff;
+  --primary-hover: #6db3ff;
+  --primary-light: #16283f;
+  --success: #34d399;
+  --success-light: rgba(52, 211, 153, 0.14);
+  --danger: #f87171;
+  --danger-light: rgba(248, 113, 113, 0.14);
+  --warning: #fbbf24;
+  --warning-light: rgba(251, 191, 36, 0.14);
+}
+
+html[data-theme="dark"] body {
+  background: var(--color-bg);
+}
+
+html[data-theme="dark"] .card {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background: var(--color-surface);
+}
+
+html[data-theme="dark"] .btn-muted {
+  background: #232c3d;
+}
+
+html[data-theme="dark"] .btn-muted:hover {
+  background: #2e3a4f;
+}
+
+html[data-theme="dark"] .grade-none {
+  background: #232c3d;
+}
+
+html[data-theme="dark"] .badge-scheduled {
+  color: var(--warning);
+}
+
+html[data-theme="dark"] .stat {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+html[data-theme="dark"] .nav a:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] .attendance-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+html[data-theme="dark"] .att-badge {
+  background-color: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+html[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -63,6 +138,7 @@ body {
 
 /* Typography */
 h1 {
+  font-family: var(--font-display);
   font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -548,8 +624,6 @@ textarea {
   width: 100%;
   height: 100%;
   background: rgba(15, 23, 42, 0.5);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -646,4 +720,30 @@ textarea {
   text-overflow: ellipsis;
   max-width: 100%;
   display: block;
+}
+
+/* Theme press feedback + legacy WebView fallbacks (Android 7+) */
+html {
+  color-scheme: light;
+}
+
+.att-badge {
+  transition: transform var(--transition-fast);
+}
+
+.att-row-2col:active .att-badge {
+  transform: scale(1.12);
+}
+
+@supports ((-webkit-backdrop-filter: blur(8px)) or (backdrop-filter: blur(8px))) {
+  .popup {
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+  }
+}
+
+@supports not (gap: 6px) {
+  .nav a + a {
+    margin-left: 6px;
+  }
 }
