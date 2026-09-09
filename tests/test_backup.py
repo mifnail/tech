@@ -469,3 +469,78 @@ class TestRestoreNamed:
         rv = client.post('/api/restore/named', json={'name': 'teachhelper_none.db'})
         assert rv.status_code == 404
         assert 'no backup' in rv.json['error']
+
+
+class TestRestorePick:
+    def test_restore_pick_desktop_400(self, client, monkeypatch):
+        """POST /api/restore/pick is Android-only: 400 without a device module."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: False)
+        rv = client.post('/api/restore/pick', json={})
+        assert rv.status_code == 400
+        assert rv.json['error'] == 'Доступно только на Android'
+
+    def test_on_pick_result_stores_bytes_and_sets_event(self, monkeypatch):
+        """Activity-result callback stores the picked bytes + name on the coordinator."""
+        class FakeUri:
+            def getLastPathSegment(self):
+                return 'picked.db'
+        class FakeIntent:
+            def getData(self):
+                return FakeUri()
+        class DummyResolver:
+            def openFileDescriptor(self, uri, mode):
+                return object()
+            def query(self, *a, **k):
+                return None
+        _api_module._file_pick['code'] = -1
+        _api_module._file_pick['bytes'] = None
+        _api_module._file_pick['name'] = None
+        _api_module._file_pick['event'].clear()
+        monkeypatch.setattr(_api_module, '_android_resolver', lambda: DummyResolver())
+        monkeypatch.setattr(_api_module, '_drain_pfd', lambda pfd: b'FAKEDATA')
+
+        _api_module._on_pick_result(_api_module._REQUEST_CODE, -1, FakeIntent())
+        assert _api_module._file_pick['code'] == 4242
+        assert _api_module._file_pick['bytes'] == b'FAKEDATA'
+        assert _api_module._file_pick['name'] == 'picked.db'
+        assert _api_module._file_pick['event'].is_set()
+
+    def test_restore_pick_roundtrip(self, client, monkeypatch):
+        """Handler reads coordinator bytes and restores them (restore captured)."""
+        valid_data = _make_valid_db_bytes()
+        restore_target = tempfile.mktemp(suffix='.db')
+        try:
+            monkeypatch.setattr(_api_module, '_DB_PATH', restore_target)
+            with open(restore_target, 'wb') as f:
+                f.write(b'old data')
+
+            captured = {}
+            real_replace = os.replace
+            def fake_replace(src, dst):
+                with open(src, 'rb') as f:
+                    captured['data'] = f.read()
+                real_replace(src, dst)
+            monkeypatch.setattr(os, 'replace', fake_replace)
+            monkeypatch.setattr(_api_module, '_save_to_downloads_full',
+                                lambda data, fn, mt: ('/bak', None))
+            monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+            monkeypatch.setattr(_api_module, '_restore_from_bytes',
+                                lambda data: captured.update(data=data))
+
+            def fake_start():
+                _api_module._file_pick['bytes'] = valid_data
+                _api_module._file_pick['name'] = 'picked.db'
+                _api_module._file_pick['event'].set()
+            monkeypatch.setattr(_api_module, '_start_picker', fake_start)
+
+            rv = client.post('/api/restore/pick', json={})
+            assert rv.status_code == 200
+            assert rv.json['ok'] is True
+            assert rv.json['name'] == 'picked.db'
+            assert captured['data'] == valid_data
+        finally:
+            for f in (restore_target, restore_target + '-wal', restore_target + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass

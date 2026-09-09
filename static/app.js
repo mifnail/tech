@@ -759,6 +759,7 @@ App.Pages.settings = async function() {
   html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.doBackup()">Выгрузить копию</button>`;
   html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.confirmRestoreLatest()">Восстановить последнюю копию</button>`;
   html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.confirmRestoreList()">Восстановить из копии…</button>`;
+  html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.restoreByPicker()">Выбрать файл (Android)</button>`;
   html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
   html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
   html += `</div>`;
@@ -943,6 +944,17 @@ App.Pages.restoreNamed = async function(name) {
   } catch (e) {
     App.UI.notify(e.error || 'Ошибка восстановления');
     App.Pages.settings();
+  }
+};
+
+App.Pages.restoreByPicker = async function() {
+  App.UI.notify('Выберите файл базы…');
+  try {
+    const r = await App.API.post('/api/restore/pick', {});
+    App.UI.notify('Восстановлено из ' + (r.name || 'выбранного файла'));
+    App.Pages.settings();
+  } catch (e) {
+    App.UI.notify(e.error || 'Ошибка восстановления');
   }
 };
 

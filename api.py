@@ -1532,6 +1532,115 @@ def _find_latest_backup_bytes() -> tuple[bytes, str]:
     return data, entries[0]['name']
 
 
+# ---- Native Android file picker (ACTION_OPEN_DOCUMENT) ----
+# The picker result callback fires on the Android UI thread, OUTSIDE the Flask
+# request stack. We hand bytes across threads through a module-level dict and a
+# threading.Event, and the API handler waits on that event while the user picks.
+_REQUEST_CODE = 4242
+_RESULT_OK = -1  # android.app.Activity.RESULT_OK is -1
+_file_pick = {'event': threading.Event(), 'bytes': None, 'name': None, 'code': -1}
+_picker_bound = False
+
+
+def _resolve_display_name(resolver, uri):
+    """Best-effort display name for a content/documents URI (OpenableColumns)."""
+    try:
+        from jnius import autoclass  # noqa — Android only
+        OpenableColumns = autoclass('android.provider.OpenableColumns')
+        cursor = resolver.query(uri, [OpenableColumns.DISPLAY_NAME], None, None, None)
+        try:
+            if cursor is not None and cursor.moveToFirst():
+                idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if idx >= 0:
+                    name = cursor.getString(idx)
+                    if name:
+                        return name
+        finally:
+            if cursor is not None:
+                cursor.close()
+    except Exception:
+        pass
+    return None
+
+
+def _on_pick_result(code, result_code, intent):
+    """activity_bind(on_activity_result=...): runs on the Android UI thread."""
+    try:
+        if code != _REQUEST_CODE:
+            return
+        _file_pick['code'] = code
+        if result_code != _RESULT_OK:
+            _file_pick['event'].set()
+            return
+        uri = intent.getData() if intent is not None else None
+        if uri is None:
+            _file_pick['event'].set()
+            return
+        try:
+            _file_pick['name'] = uri.getLastPathSegment() or None
+        except Exception:
+            _file_pick['name'] = None
+        try:
+            _file_pick['name'] = _resolve_display_name(_android_resolver(), uri) or _file_pick['name']
+        except Exception:
+            pass
+        try:
+            pfd = _android_resolver().openFileDescriptor(uri, 'r')
+            _file_pick['bytes'] = _drain_pfd(pfd)
+        except Exception:
+            _file_pick['bytes'] = b''
+        _file_pick['event'].set()
+    except Exception:
+        _file_pick['event'].set()
+
+
+def _start_picker():
+    """Launch ACTION_OPEN_DOCUMENT on Android (UI thread). Returns True if shown.
+
+    On non-Android returns None immediately; the caller decides how to react.
+    """
+    if not _is_android():
+        return None
+    global _picker_bound
+    from android.activity import bind as activity_bind
+    from android.runnable import run_on_ui_thread
+    from jnius import autoclass, cast
+
+    Intent = autoclass('android.content.Intent')
+    String = autoclass('java.lang.String')
+
+    def _do_start():
+        try:
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            mActivity = PythonActivity.mActivity
+            intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            intent.setType('*/*')
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            chooser = Intent.createChooser(
+                intent, cast('java.lang.CharSequence', String('Выберите файл базы')))
+            mActivity.startActivityForResult(chooser, _REQUEST_CODE)
+        except Exception:
+            # Launch failed — unblock the waiting handler.
+            _file_pick['event'].set()
+
+    if not _picker_bound:
+        try:
+            activity_bind(on_activity_result=_on_pick_result)
+            _picker_bound = True
+        except Exception:
+            pass
+    _file_pick['code'] = -1
+    _file_pick['bytes'] = None
+    _file_pick['name'] = None
+    _file_pick['event'].clear()
+    try:
+        run_on_ui_thread(_do_start)()
+    except Exception:
+        _file_pick['event'].set()
+    return True
+
+
 backup_bp = Blueprint('backup', __name__, url_prefix='/api')
 
 
@@ -1604,6 +1713,34 @@ def restore_named():
         return jsonify({'error': str(e)}), 404
     except Exception as e:
         return jsonify({'error': f'read backup failed: {e}'}), 500
+    try:
+        _restore_from_bytes(data)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'restore failed: {e}'}), 500
+    return jsonify({'ok': True, 'name': name})
+
+
+@backup_bp.route('/restore/pick', methods=['POST'])
+def restore_pick():
+    """Restore a DB file the user picks via the native Android document picker.
+
+    The Flask handler launches the picker, then waits for the result that the
+    UI-thread callback delivers through the module-level coordinator.
+    """
+    if not _is_android():
+        return jsonify({'error': 'Доступно только на Android'}), 400
+    _file_pick['code'] = -1
+    _file_pick['bytes'] = None
+    _file_pick['name'] = None
+    _file_pick['event'].clear()
+    _start_picker()
+    _file_pick['event'].wait(120)
+    data = _file_pick['bytes']
+    name = _file_pick['name']
+    if not data:
+        return jsonify({'error': 'Выбор файла отменён или файл не найден'}), 404
     try:
         _restore_from_bytes(data)
     except ValueError as e:
