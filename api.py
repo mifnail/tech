@@ -1385,19 +1385,35 @@ def _find_latest_backup_bytes() -> tuple[bytes, str]:
         'date_added DESC',
     )
     try:
-        if cursor is None or not cursor.moveToFirst():
-            raise BackupNotFound('no backup files found in Downloads')
-        idx_id = cursor.getColumnIndex('_id')
-        idx_name = cursor.getColumnIndex('_display_name')
-        ContentUris = autoclass('android.content.ContentUris')
-        uri = ContentUris.withAppendedId(collection, cursor.getLong(idx_id))
-        display_name = cursor.getString(idx_name)
-        pfd = resolver.openFileDescriptor(uri, 'r')
-        data = _drain_pfd(pfd)
-        return data, display_name
+        if cursor is not None and cursor.moveToFirst():
+            idx_id = cursor.getColumnIndex('_id')
+            idx_name = cursor.getColumnIndex('_display_name')
+            ContentUris = autoclass('android.content.ContentUris')
+            uri = ContentUris.withAppendedId(collection, cursor.getLong(idx_id))
+            display_name = cursor.getString(idx_name)
+            pfd = resolver.openFileDescriptor(uri, 'r')
+            data = _drain_pfd(pfd)
+            return data, display_name
     finally:
         if cursor is not None:
             cursor.close()
+
+    # Fallback: MediaStore не проиндексировал папку — читаем Download/ напрямую.
+    # На Android 10+ файл пишется в /storage/emulated/0/Download/.
+    try:
+        import glob as _g
+        env = autoclass('android.os.Environment')
+        dl = env.getExternalStoragePublicDirectory(env.DIRECTORY_DOWNLOADS)
+        dl_path = str(dl.getAbsolutePath())
+        files = sorted(_g.glob(_g.join(dl_path, 'teachhelper_*.db')), key=os.path.getmtime, reverse=True)
+        if files:
+            path = files[0]
+            with open(path, 'rb') as f:
+                return f.read(), os.path.basename(path)
+    except Exception:
+        pass
+
+    raise BackupNotFound('no backup files found in Downloads')
 
 
 backup_bp = Blueprint('backup', __name__, url_prefix='/api')
