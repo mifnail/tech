@@ -607,23 +607,53 @@ def mark_attendance(lesson_id: int):
             t.start()
 
         # ---- Curator push (group-wide) ----
+        # Resolve group_id: try actual_subject_id first (the subject
+        # actually taught), then subject_id, then any graded student's group.
         group_id = None
         try:
             les = db.get_lesson(lesson_id)
             if les is not None:
-                sid_sub = row_get(les, 'subject_id', None)
-                if sid_sub is not None:
-                    prow = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (sid_sub,)).fetchone()
-                    if prow:
-                        group_id = prow['group_id']
-        except Exception:
-            pass
+                for col in ('actual_subject_id', 'subject_id'):
+                    sid_sub = row_get(les, col, None)
+                    if sid_sub is not None and sid_sub != '':
+                        try:
+                            prow = db.conn.execute(
+                                "SELECT group_id FROM subjects WHERE id=?",
+                                (sid_sub,),
+                            ).fetchone()
+                            if prow:
+                                group_id = prow['group_id']
+                                break
+                        except Exception:
+                            pass
+                # Fallback: pick group from any graded student
+                if group_id is None:
+                    for _sid, _g in pairs:
+                        try:
+                            st = db.get_student(_sid)
+                            if st:
+                                group_id = row_get(st, 'group_id', None)
+                                if group_id is not None:
+                                    break
+                        except Exception:
+                            pass
+        except Exception as exc:
+            print(f"[curator-push] group_id resolve error: {exc}", flush=True)
+
         cur_chat = None
         try:
             if group_id is not None:
                 cur_chat = db.get_curator_chat(group_id)
-        except Exception:
+        except Exception as exc:
+            print(f"[curator-push] get_curator_chat error: {exc}", flush=True)
             cur_chat = None
+
+        print(
+            f"[curator-push] schedule: lesson={lesson_id} group={group_id} "
+            f"cur_chat={cur_chat} pairs={len(pairs)}",
+            flush=True,
+        )
+
         if cur_chat is None:
             for sid, _grade in pairs:
                 key = (lesson_id, sid)
@@ -646,8 +676,8 @@ def mark_attendance(lesson_id: int):
                 t2.daemon = True
                 _pending_curator[key] = t2
                 t2.start()
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[curator-push] outer error: {exc}", flush=True)
 
     return jsonify({'ok': True})
 
@@ -713,19 +743,53 @@ def _fire_curator_push(token: str, lesson_id: int, student_id: int, group_id: in
         try:
             grade = _read_settled_grade(db, lesson_id, student_id)
             if not grade:
+                print(f"[curator-push] skip: no grade for lesson={lesson_id} student={student_id}", flush=True)
                 return
+
+            # Resolve cur_chat: prefer the group_id passed from schedule,
+            # fall back to re-lookup from lesson row.
+            cur_chat = None
             try:
                 cur_chat = db.get_curator_chat(group_id)
-            except Exception:
-                cur_chat = None
+            except Exception as exc:
+                print(f"[curator-push] get_curator_chat({group_id}) error: {exc}", flush=True)
+
             if not cur_chat:
+                # Fallback: try to resolve group from lesson's subject
+                try:
+                    les = db.get_lesson(lesson_id)
+                    if les is not None:
+                        for col in ('actual_subject_id', 'subject_id'):
+                            sid_sub = row_get(les, col, None)
+                            if sid_sub is not None and sid_sub != '':
+                                prow = db.conn.execute(
+                                    "SELECT group_id FROM subjects WHERE id=?",
+                                    (sid_sub,),
+                                ).fetchone()
+                                if prow and prow['group_id']:
+                                    cur_chat = db.get_curator_chat(prow['group_id'])
+                                    if cur_chat:
+                                        group_id = prow['group_id']
+                                        break
+                except Exception as exc:
+                    print(f"[curator-push] fallback group resolve error: {exc}", flush=True)
+
+            if not cur_chat:
+                print(
+                    f"[curator-push] no cur_chat: lesson={lesson_id} student={student_id} "
+                    f"group={group_id}",
+                    flush=True,
+                )
                 return
+
             st = db.get_student(student_id)
             if not st:
+                print(f"[curator-push] no student: id={student_id}", flush=True)
                 return
             fio = f"{st['last_name']} {st['first_name'][0]}." if st['first_name'] else f"{st['last_name']}"
             lesson = db.get_lesson(lesson_id)
             if not lesson:
+                print(f"[curator-push] no lesson: id={lesson_id}", flush=True)
                 return
             raw_date = lesson['date'] or ''
             date_str = f'{raw_date[8:10]}.{raw_date[5:7]}' if len(raw_date) >= 10 else ''
@@ -735,15 +799,19 @@ def _fire_curator_push(token: str, lesson_id: int, student_id: int, group_id: in
             text = f"{fio}: {subject} — {grade} ({date_str})"
             import maxbot as _maxbot
             _maxbot.send_message(token, int(cur_chat), text)
-        except Exception:
-            pass
+            print(
+                f"[curator-push] sent: cur_chat={cur_chat} text={text!r}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[curator-push] inner error: {exc}", flush=True)
         finally:
             try:
                 db.close()
             except Exception:
                 pass
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[curator-push] outer error: {exc}", flush=True)
 
 
 @lessons_bp.route('/date/<date_str>', methods=['GET'])

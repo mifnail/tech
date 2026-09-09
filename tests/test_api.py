@@ -577,3 +577,213 @@ class TestStudentGradesAPI:
         assert len(rv.json) == 1
         rv = client.get(f'/api/students/{student_id}/grades?subject_id={sid}')
         assert len(rv.json) == 1
+
+
+# ======================== CURATOR PUSH ========================
+
+class TestCuratorPush:
+    """End-to-end test: curator bound, student graded -> curator notified."""
+
+    def test_curator_push_sends(self, client, monkeypatch):
+        """Verify _fire_curator_push sends message when curator is bound."""
+        import api as _api
+        import database as _dbmod
+
+        # --- Setup: group, subject, student, curator, lesson ---
+        gid = client.post('/api/groups', json={'name': 'ИС-11'}).json['id']
+        sid = client.post('/api/subjects', json={
+            'name': 'Математика', 'total_hours': 32, 'group_id': gid
+        }).json['id']
+        db = get_db()
+        db.set_setting('max_bot_token', 'fake-token')
+        db.set_setting('max_bot_enabled', '1')
+        student_id = db.add_student(gid, 'Иванов', 'Иван')
+
+        # Bind curator
+        db.bind_curator(gid, 9999)
+
+        lid = client.post('/api/lessons', json={
+            'subject_id': sid, 'actual_subject_id': sid,
+            'date': '2026-09-01', 'status': 'held'
+        }).json['id']
+
+        # Mark attendance via API so the schedule code path is exercised
+        rv = client.post(f'/api/lessons/{lid}/attendance', json={
+            'student_id': student_id, 'grade': '5'
+        })
+        assert rv.status_code == 200
+
+        # --- Directly fire curator push (avoid new empty DB) ---
+        sent_messages = []
+
+        def fake_send_message(token, chat_id, text, urlopen=None):
+            sent_messages.append({
+                'token': token, 'chat_id': chat_id, 'text': text
+            })
+
+        monkeypatch.setattr('maxbot.send_message', fake_send_message)
+        # Make the timer callback use the test DB
+        monkeypatch.setattr(_dbmod, 'Database', lambda *_a, **_kw: db)
+
+        _api._fire_curator_push('fake-token', lid, student_id, gid)
+
+        assert len(sent_messages) == 1
+        assert sent_messages[0]['chat_id'] == 9999
+        assert 'Иванов' in sent_messages[0]['text']
+        assert '5' in sent_messages[0]['text']
+
+    def test_curator_push_uses_actual_subject_group(self, client, monkeypatch):
+        """If actual_subject_id differs from subject_id, curator of the
+        actual subject's group should be notified."""
+        import api as _api
+        import database as _dbmod
+
+        # Group A
+        gid_a = client.post('/api/groups', json={'name': 'ИС-11'}).json['id']
+        sid_a = client.post('/api/subjects', json={
+            'name': 'Математика', 'total_hours': 32, 'group_id': gid_a
+        }).json['id']
+
+        # Group B — actual subject
+        gid_b = client.post('/api/groups', json={'name': 'ИС-12'}).json['id']
+        sid_b = client.post('/api/subjects', json={
+            'name': 'Физика', 'total_hours': 24, 'group_id': gid_b
+        }).json['id']
+
+        db = get_db()
+        db.set_setting('max_bot_token', 'fake-token')
+        db.set_setting('max_bot_enabled', '1')
+        student_id = db.add_student(gid_b, 'Петров', 'Пётр')
+
+        # Bind curator to group B only
+        db.bind_curator(gid_b, 8888)
+
+        lid = client.post('/api/lessons', json={
+            'subject_id': sid_a, 'actual_subject_id': sid_b,
+            'date': '2026-09-02', 'status': 'held'
+        }).json['id']
+
+        # Mark attendance
+        rv = client.post(f'/api/lessons/{lid}/attendance', json={
+            'student_id': student_id, 'grade': '4'
+        })
+        assert rv.status_code == 200
+
+        # --- Directly fire curator push ---
+        sent_messages = []
+
+        def fake_send_message(token, chat_id, text, urlopen=None):
+            sent_messages.append({
+                'token': token, 'chat_id': chat_id, 'text': text
+            })
+
+        monkeypatch.setattr('maxbot.send_message', fake_send_message)
+        monkeypatch.setattr(_dbmod, 'Database', lambda *_a, **_kw: db)
+
+        _api._fire_curator_push('fake-token', lid, student_id, gid_b)
+
+        assert len(sent_messages) == 1
+        # Curator of group B should be notified
+        assert sent_messages[0]['chat_id'] == 8888
+        assert 'Петров' in sent_messages[0]['text']
+
+    def test_curator_push_schedule_resolves_group(self, client, monkeypatch):
+        """Verify the schedule path resolves group_id from actual_subject_id."""
+        import api as _api
+
+        gid_a = client.post('/api/groups', json={'name': 'ИС-11'}).json['id']
+        sid_a = client.post('/api/subjects', json={
+            'name': 'Математика', 'total_hours': 32, 'group_id': gid_a
+        }).json['id']
+
+        gid_b = client.post('/api/groups', json={'name': 'ИС-12'}).json['id']
+        sid_b = client.post('/api/subjects', json={
+            'name': 'Физика', 'total_hours': 24, 'group_id': gid_b
+        }).json['id']
+
+        db = get_db()
+        db.set_setting('max_bot_token', 'fake-token')
+        db.set_setting('max_bot_enabled', '1')
+        student_id = db.add_student(gid_b, 'Петров', 'Пётр')
+        db.bind_curator(gid_b, 8888)
+
+        lid = client.post('/api/lessons', json={
+            'subject_id': sid_a, 'actual_subject_id': sid_b,
+            'date': '2026-09-02', 'status': 'held'
+        }).json['id']
+
+        # Mark attendance — schedule code should find cur_chat via actual_subject_id
+        rv = client.post(f'/api/lessons/{lid}/attendance', json={
+            'student_id': student_id, 'grade': '4'
+        })
+        assert rv.status_code == 200
+
+        # A timer should be scheduled (not cancelled)
+        key = (lid, student_id)
+        assert key in _api._pending_curator, "curator timer was not scheduled"
+
+    def test_pending_curator_separate_from_pending(self, client, monkeypatch):
+        """Cancelling student timers must not cancel curator timers."""
+        import api as _api
+        import database as _dbmod
+
+        gid = client.post('/api/groups', json={'name': 'ИС-11'}).json['id']
+        sid = client.post('/api/subjects', json={
+            'name': 'Математика', 'total_hours': 32, 'group_id': gid
+        }).json['id']
+        db = get_db()
+        db.set_setting('max_bot_token', 'fake-token')
+        db.set_setting('max_bot_enabled', '1')
+        student_id = db.add_student(gid, 'Иванов', 'Иван')
+
+        db.bind_curator(gid, 6666)
+
+        lid = client.post('/api/lessons', json={
+            'subject_id': sid, 'actual_subject_id': sid,
+            'date': '2026-09-04', 'status': 'held'
+        }).json['id']
+
+        # First attendance — should schedule both student + curator timers
+        rv1 = client.post(f'/api/lessons/{lid}/attendance', json={
+            'student_id': student_id, 'grade': '5'
+        })
+        assert rv1.status_code == 200
+
+        key = (lid, student_id)
+        assert key in _api._pending, "student timer not scheduled"
+        assert key in _api._pending_curator, "curator timer not scheduled"
+
+        # Save the old curator timer ref
+        old_curator_timer = _api._pending_curator.get(key)
+
+        # Second attendance — should cancel old timers and create new
+        rv2 = client.post(f'/api/lessons/{lid}/attendance', json={
+            'student_id': student_id, 'grade': '4'
+        })
+        assert rv2.status_code == 200
+
+        # Old timer should have been cancelled
+        assert old_curator_timer is not None
+        # New timers should exist
+        assert key in _api._pending, "student timer missing after re-mark"
+        assert key in _api._pending_curator, "curator timer missing after re-mark"
+        assert _api._pending_curator[key] is not old_curator_timer, \
+            "curator timer was not replaced"
+
+        # Now actually fire the push to verify it sends
+        sent_messages = []
+
+        def fake_send_message(token, chat_id, text, urlopen=None):
+            sent_messages.append({
+                'token': token, 'chat_id': chat_id, 'text': text
+            })
+
+        monkeypatch.setattr('maxbot.send_message', fake_send_message)
+        monkeypatch.setattr(_dbmod, 'Database', lambda *_a, **_kw: db)
+
+        _api._fire_curator_push('fake-token', lid, student_id, gid)
+
+        curator_msgs = [m for m in sent_messages if m['chat_id'] == 6666]
+        assert len(curator_msgs) == 1
+        # Final grade should be the last one
+        assert '4' in curator_msgs[0]['text']
