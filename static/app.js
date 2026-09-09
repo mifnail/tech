@@ -735,6 +735,7 @@ App.Pages.settings = async function() {
   html += `<div style="font-size:12px;margin-bottom:4px">Статус: ${st.has_token ? 'токен есть' : 'нет токена'}${st.enabled ? ' · включён' : ''}</div>`;
   html += `<input id="set-btoken" type="password" placeholder="Токен бота" autocomplete="off">`;
   html += `<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px"><input id="set-benabled" type="checkbox" ${st.enabled ? 'checked' : ''} style="width:auto"> Включить бота</label>`;
+  html += `<div style="font-size:11px;color:#b91c1c;margin-top:4px">⚠️ Для госучреждений использование Telegram для ПД запрещено 41-ФЗ с 01.06.2025 — включайте только для частного использования с согласия студентов. Основной канал — MAX.</div>`;
   html += `<div class="grid-2" style="margin-top:8px">
     <button class="btn btn-primary btn-sm" onclick="App.Pages.saveBot()">Сохранить</button>
     <button class="btn btn-muted btn-sm" onclick="App.Pages.checkBot()">Проверить</button>
@@ -760,6 +761,10 @@ App.Pages.settings = async function() {
   html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.confirmRestoreLatest()">Восстановить последнюю копию</button>`;
   html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
   html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
+  html += `</div>`;
+  html += `<div class="card" style="opacity:0.85"><div class="card-title">Поддержать проект</div>`;
+  html += `<div class="card-sub" style="margin-bottom:8px">Если TeachHelper экономит вам время — можно сказать спасибо ☕</div>`;
+  html += `<button class="btn btn-muted btn-sm" onclick="window.open('https://boosty.to/mifnail/donate', '_blank')">Поддержать</button>`;
   html += `</div>`;
   document.getElementById('app').innerHTML = html;
 };

@@ -1,5 +1,8 @@
 # TeachHelper4 — журнал преподавателя (LessonTracker)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Privacy](https://img.shields.io/badge/Политика-приватности-green.svg)](https://mifnail.github.io/tech/PRIVACY.md)
+
 Мобильный журнал преподавателя: группы, предметы, занятия, оценки и посещаемость,
 экспорт ведомостей в Excel, уведомления студентов через Telegram и MAX.
 Работает как Android-приложение (WebView) и как desktop-версия в браузере.

@@ -3,6 +3,9 @@
 # Локально APK НЕ собираем (см. AGENT.md §6).
 name: Build debug APK
 
+permissions:
+  contents: write
+
 on:
   push:
     branches: [ "main" ]
