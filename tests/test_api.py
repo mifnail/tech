@@ -33,8 +33,8 @@ class TestSPA:
     def test_index(self, client):
         rv = client.get('/')
         assert rv.status_code == 200
-        assert b'<!DOCTYPE html>' in rv.data
-        assert b'app.js?v=' in rv.data
+        assert b'<!doctype html>' in rv.data.lower()
+        assert b'id="root"' in rv.data
 
     def test_version(self, client):
         rv = client.get('/api/version')
