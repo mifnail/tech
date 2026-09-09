@@ -254,10 +254,6 @@ App.Grades = {
     if (grade === 'absent' || grade === 'н/я') return 'absent';
     return 'none';
   },
-  bgColor(grade) {
-    const map = { '0': '#e8f5e9', 'present': '#e8f5e9', '5': '#ffebee', '4': '#e3f2fd', '3': '#fff8e1', '2': '#e0e0e0' };
-    return map[grade] || '';
-  },
   async cycle(lessonId, studentId, currentGrade, ev) {
     // Направление перебора от места тапа: правая половина — вперёд, левая — назад.
     let dir = 1;
@@ -589,10 +585,9 @@ App.Pages = {
     for (const s of data.students || []) {
       const grade = attMap[s.id] || null;
       const label = (grade === null || grade === '') ? '—' : grade;
-      const bgStyle = grade === null ? '' : `background:${App.Grades.bgColor(grade)}`;
       const fullName = `${s.last_name} ${s.first_name || ''} ${s.middle_name || ''}`.trim();
       const displayName = `${s.last_name} ${s.first_name ? s.first_name[0] + '.' : ''}`;
-      html += `<div class="att-row-2col ${grade ? 'marked' : ''}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}', event)" style="${bgStyle}" title="${App.UI.escHtml(fullName)}">
+      html += `<div class="att-row-2col ${grade ? 'marked' : ''} grade-tint-${App.Grades.colorClass(grade).replace('0','present')}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}', event)" title="${App.UI.escHtml(fullName)}">
         <div class="att-name">${App.UI.escHtml(displayName)}</div>
         <div class="att-badge grade-${App.Grades.colorClass(grade)}">${label}</div>
       </div>`;

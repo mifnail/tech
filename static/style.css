@@ -485,6 +485,64 @@ h2 {
   color: #fff;
 }
 
+/* Grade Tint Colors (soft row backgrounds — single source of truth) */
+.grade-tint-none {
+  background: transparent;
+}
+
+.grade-tint-present {
+  background: #e8f5e9;
+}
+
+.grade-tint-absent {
+  background: #fee2e2;
+}
+
+.grade-tint-5 {
+  background: #ffebee;
+}
+
+.grade-tint-4 {
+  background: #e3f2fd;
+}
+
+.grade-tint-3 {
+  background: #fff8e1;
+}
+
+.grade-tint-2 {
+  background: #e0e0e0;
+}
+
+/* Dark-theme translucent tint variants */
+html[data-theme=dark] .grade-tint-none {
+  background: transparent;
+}
+
+html[data-theme=dark] .grade-tint-present {
+  background: rgba(16, 185, 129, 0.12);
+}
+
+html[data-theme=dark] .grade-tint-absent {
+  background: rgba(239, 68, 68, 0.14);
+}
+
+html[data-theme=dark] .grade-tint-5 {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+html[data-theme=dark] .grade-tint-4 {
+  background: rgba(0, 102, 204, 0.14);
+}
+
+html[data-theme=dark] .grade-tint-3 {
+  background: rgba(245, 158, 11, 0.14);
+}
+
+html[data-theme=dark] .grade-tint-2 {
+  background: rgba(148, 163, 184, 0.18);
+}
+
 /* Forms & Inputs */
 input, select, textarea {
   width: 100%;
