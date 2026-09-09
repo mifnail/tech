@@ -2,6 +2,7 @@ from __future__ import annotations
 import functools
 import glob as _glob
 import io
+import json as _json
 import tempfile
 import threading
 import time as _time
@@ -1453,3 +1454,220 @@ def restore_latest():
 
 
 app.register_blueprint(backup_bp)
+
+
+# ---- In-app updater (GitHub Releases) ----
+import urllib.request as _urllib_request
+import urllib.error as _urllib_error
+
+_GH_RELEASE_URL = 'https://api.github.com/repos/mifnail/tech/releases/latest'
+_GH_COMMITS_URL = 'https://api.github.com/repos/mifnail/tech/commits?per_page=1'
+_CACHE_TTL = 3600  # 1 hour
+
+_upd_cache = None   # dict with release info
+_upd_ts = 0.0       # time.monotonic() of last fetch
+
+
+def _fetch_github_release():
+    """Fetch latest release from GitHub, fallback to commits on 404."""
+    import time as _time_mod
+    global _upd_cache, _upd_ts
+    now = _time_mod.monotonic()
+    if _upd_cache is not None and (now - _upd_ts) < _CACHE_TTL:
+        return _upd_cache
+
+    try:
+        req = _urllib_request.Request(
+            _GH_RELEASE_URL,
+            headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'teachhelper-updater'}
+        )
+        from botcore import _ctx as _ssl_ctx
+        resp = _urllib_request.urlopen(req, timeout=10, context=_ssl_ctx())
+        with resp:
+            raw = resp.read()
+            data = _json.loads(raw.decode('utf-8'))
+    except _urllib_error.HTTPError as e:
+        if e.code == 404:
+            # No releases — fallback to latest commit
+            try:
+                req2 = _urllib_request.Request(
+                    _GH_COMMITS_URL,
+                    headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'teachhelper-updater'}
+                )
+                resp2 = _urllib_request.urlopen(req2, timeout=10, context=_ssl_ctx())
+                with resp2:
+                    commits = _json.loads(resp2.read().decode('utf-8'))
+                    if commits:
+                        sha = commits[0]['sha'][:7]
+                        msg = commits[0]['commit']['message'].split('\n', 1)[0]
+                        published = commits[0]['commit']['author']['date']
+                        result = {
+                            'version': f'0.dev.{sha}',
+                            'url': f'https://github.com/mifnail/tech/archive/{commits[0]["sha"]}.zip',
+                            'notes': msg,
+                            'published_at': published,
+                        }
+                        _upd_cache = result
+                        _upd_ts = _time_mod.monotonic()
+                        return result
+            except Exception:
+                pass
+            # No fallback data available
+            raise
+        raise
+    except Exception:
+        raise
+
+    assets = data.get('assets', [])
+    if assets:
+        dl_url = assets[0].get('browser_download_url', '')
+    else:
+        dl_url = data.get('zipball_url', '')
+
+    tag = data.get('tag_name', '')
+    result = {
+        'version': tag.lstrip('v') if tag else '',
+        'url': dl_url,
+        'notes': data.get('body', '') or '',
+        'published_at': data.get('published_at', '') or '',
+    }
+    _upd_cache = result
+    _upd_ts = _time_mod.monotonic()
+    return result
+
+
+def _parse_version(v: str) -> list[int]:
+    """Parse '0.123' or 'v0.123' into [0, 123]."""
+    v = v.strip().lstrip('v')
+    parts = []
+    for p in v.split('.'):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            break
+    return parts or [0]
+
+
+update_bp = Blueprint('update', __name__, url_prefix='/api/update')
+
+
+@update_bp.route('/latest', methods=['GET'])
+def update_latest():
+    try:
+        info = _fetch_github_release()
+        return jsonify(info)
+    except _urllib_error.HTTPError as e:
+        return jsonify({'error': f'GitHub API error: {e.code}'}), 502
+    except Exception as e:
+        return jsonify({'error': str(e)}), 502
+
+
+@update_bp.route('/check', methods=['GET'])
+def update_check():
+    current = request.args.get('current', '0.0')
+    try:
+        latest = _fetch_github_release()
+    except Exception:
+        latest = {'version': '0.0', 'url': '', 'notes': '', 'published_at': ''}
+    cur = _parse_version(current)
+    lat = _parse_version(latest.get('version', '0.0'))
+    return jsonify({
+        'update_available': lat > cur,
+        'latest': latest,
+    })
+
+
+@update_bp.route('/download', methods=['POST'])
+def update_download():
+    # Android only
+    try:
+        from jnius import autoclass  # noqa — Android only
+    except ImportError:
+        return jsonify({'error': 'download available only on Android'}), 400
+
+    try:
+        info = _fetch_github_release()
+    except Exception as e:
+        return jsonify({'error': f'cannot fetch release: {e}'}), 502
+
+    dl_url = info.get('url', '')
+    if not dl_url:
+        return jsonify({'error': 'no download URL in release'}), 502
+
+    try:
+        from botcore import _ctx as _ssl_ctx
+        req = _urllib_request.Request(dl_url, headers={'User-Agent': 'teachhelper-updater'})
+        resp = _urllib_request.urlopen(req, timeout=60, context=_ssl_ctx())
+        with resp:
+            apk_bytes = resp.read()
+    except Exception as e:
+        return jsonify({'error': f'download failed: {e}'}), 502
+
+    try:
+        path, uri = _save_to_downloads_full(
+            apk_bytes,
+            'teachhelper-latest.apk',
+            'application/vnd.android.package-archive',
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    return jsonify({'path': path, 'uri': uri})
+
+
+@update_bp.route('/install', methods=['POST'])
+def update_install():
+    # Android only
+    try:
+        from jnius import autoclass, cast
+    except ImportError:
+        return jsonify({'error': 'install available only on Android'}), 400
+
+    data = request.json or {}
+    uri_str = data.get('uri', '')
+
+    # If no URI provided, find latest APK via MediaStore
+    if not uri_str:
+        try:
+            Downloads = autoclass('android.provider.MediaStore$Downloads')
+            collection = Downloads.getContentUri('external')
+            resolver = _android_resolver()
+            cursor = resolver.query(
+                collection,
+                ['_id', '_display_name'],
+                '_display_name=?',
+                ['teachhelper-latest.apk'],
+                None,
+            )
+            if cursor and cursor.moveToFirst():
+                ContentUris = autoclass('android.content.ContentUris')
+                idx_id = cursor.getColumnIndex('_id')
+                uri = ContentUris.withAppendedId(collection, cursor.getLong(idx_id))
+                uri_str = uri.toString()
+                cursor.close()
+        except Exception:
+            pass
+
+    if not uri_str:
+        return jsonify({'error': 'no APK URI found'}), 404
+
+    try:
+        Uri = autoclass('android.net.Uri')
+        Intent = autoclass('android.content.Intent')
+        ctx = _android_context()
+        uri = Uri.parse(uri_str)
+        intent = Intent(Intent.ACTION_VIEW)
+        intent.setDataAndType(
+            uri,
+            'application/vnd.android.package-archive',
+        )
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(intent)
+    except Exception as e:
+        return jsonify({'error': f'install intent failed: {e}'}), 500
+
+    return jsonify({'ok': True})
+
+
+app.register_blueprint(update_bp)

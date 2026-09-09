@@ -28,7 +28,7 @@ osx.kivy_version = 2.2.0
 presplash.filename =
 icon.filename =
 
-android.permissions = INTERNET
+android.permissions = INTERNET,REQUEST_INSTALL_PACKAGES
 android.api = 34
 android.minapi = 24
 android.archs = arm64-v8a

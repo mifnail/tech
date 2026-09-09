@@ -162,6 +162,71 @@ App.Download = {
   }
 };
 
+App.Update = {
+  _updateData: null,
+  async checkBanner() {
+    try {
+      const vr = await App.API.get('/api/version');
+      const ver = vr && vr.ver ? vr.ver : '';
+      if (!ver) return;
+      const r = await App.API.get('/api/update/check?current=' + encodeURIComponent(ver));
+      if (!r || !r.update_available) return;
+      const dismissed = localStorage.getItem('update_dismiss_ts');
+      if (dismissed && (Date.now() - Number(dismissed)) < 24 * 3600 * 1000) return;
+      const latest = r.latest || {};
+      const verLabel = App.UI.escHtml(latest.version || '');
+      const notes = App.UI.escHtml(latest.notes || '');
+      App.Update._updateData = latest;
+      const h2s = document.querySelectorAll('h2');
+      const exportH2 = Array.from(h2s).find(function(el) { return el.textContent === 'Экспорт'; });
+      if (!exportH2) return;
+      const banner = document.createElement('div');
+      banner.id = 'update-banner';
+      banner.className = 'card';
+      banner.style.cssText = 'border-left:3px solid #007aff;margin-bottom:12px';
+      banner.innerHTML =
+        '<div class="card-title">Доступно обновление ' + verLabel + (notes ? ' · ' + notes : '') + '</div>' +
+        '<div style="display:flex;gap:8px;margin-top:8px">' +
+        '<button class="btn btn-primary btn-sm" id="btn-upd-action" onclick="App.Update.download()">Скачать</button>' +
+        '<button class="btn btn-muted btn-sm" onclick="App.Update.dismiss()">Скрыть</button>' +
+        '</div>';
+      exportH2.parentElement.insertBefore(banner, exportH2);
+    } catch (_) {}
+  },
+  async download() {
+    var btn = document.getElementById('btn-upd-action');
+    if (btn) { btn.textContent = 'Загрузка…'; btn.disabled = true; }
+    try {
+      var r = await App.API.post('/api/update/download');
+      App.Update._updateData = App.Update._updateData || {};
+      App.Update._updateData.uri = r.uri;
+      if (btn) {
+        btn.textContent = 'Установить';
+        btn.disabled = false;
+        btn.onclick = function() { App.Update.install(); };
+      }
+    } catch (e) {
+      if (btn) { btn.textContent = 'Скачать'; btn.disabled = false; }
+    }
+  },
+  async install() {
+    var btn = document.getElementById('btn-upd-action');
+    if (btn) { btn.textContent = 'Установка…'; btn.disabled = true; }
+    var uri = (App.Update._updateData && App.Update._updateData.uri) || '';
+    try {
+      await App.API.post('/api/update/install', { uri: uri });
+      if (btn) { btn.textContent = 'Установлено'; btn.disabled = true; }
+    } catch (e) {
+      if (btn) { btn.textContent = 'Установить'; btn.disabled = false; }
+    }
+  },
+  dismiss() {
+    localStorage.setItem('update_dismiss_ts', String(Date.now()));
+    var el = document.getElementById('update-banner');
+    if (el) el.remove();
+  }
+};
+
 App.Nav = {
   render() {
     const pages = [
@@ -343,6 +408,7 @@ App.Pages = {
       <button class="btn btn-muted btn-sm" onclick="App.Pages.shareReport('${today.date}')">Поделиться отчётом</button>
     </div>`;
     document.getElementById('app').innerHTML = html;
+    App.Update.checkBanner();
   },
 
   async today(subjectId) {
