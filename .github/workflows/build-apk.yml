@@ -90,6 +90,7 @@ jobs:
 
       - name: Install system dependencies
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google.list 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y \
             automake autoconf libtool build-essential \
