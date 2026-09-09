@@ -239,7 +239,11 @@ App.Nav = {
       pages.map(p =>
         `<a href="${p.hash}" class="${active === p.hash ? 'active' : ''}">${p.label}</a>`
       ).join('')
-    }</div>`;
+    }</div>${this.showFab() ? '<button class="fab" onclick="App.Pages.showCreateLessonAny()" aria-label="Новое занятие">+</button>' : ''}`;
+  },
+  showFab() {
+    const h = location.hash.split('?')[0];
+    return h === '' || h === '#home' || h === '#schedule' || h === '#today';
   }
 };
 
