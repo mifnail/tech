@@ -534,10 +534,10 @@ App.Pages = {
     html += `</div></div>`;
 
     html += `<div style="display:flex;gap:6px;margin-top:6px">
-      <button class="btn btn-warning btn-sm" style="flex:1;padding:6px 4px;font-size:11px" onclick="App.Pages.showLessonSubstitution(${lessonId})">🔄 Замена</button>
-      <button class="btn btn-danger btn-sm" style="flex:1;padding:6px 4px;font-size:11px" onclick="App.Pages.confirmCancelLesson(${lessonId})">✕ Отмена</button>
-      <button class="btn btn-danger btn-sm" style="flex:1;padding:6px 4px;font-size:11px" onclick="App.Pages.confirmDeleteLesson(${lessonId})">🗑 Удал.</button>
-      <button class="btn btn-success btn-sm" style="flex:1;padding:6px 4px;font-size:11px" onclick="location='#subject/${App.state.lessonSubjectId}'">📖 Журнал</button>
+      <button class="btn btn-warning btn-sm" style="flex:1;min-height:44px;padding:6px 4px;font-size:11px" onclick="App.Pages.showLessonSubstitution(${lessonId})">🔄 Замена</button>
+      <button class="btn btn-danger btn-sm" style="flex:1;min-height:44px;padding:6px 4px;font-size:11px" onclick="App.Pages.confirmCancelLesson(${lessonId})">✕ Отмена</button>
+      <button class="btn btn-danger btn-sm" style="flex:1;min-height:44px;padding:6px 4px;font-size:11px" onclick="App.Pages.confirmDeleteLesson(${lessonId})">🗑 Удал.</button>
+      <button class="btn btn-success btn-sm" style="flex:1;min-height:44px;padding:6px 4px;font-size:11px" onclick="location='#subject/${App.state.lessonSubjectId}'">📖 Журнал</button>
     </div>`;
     document.getElementById('app').innerHTML = html;
   },
@@ -918,7 +918,7 @@ App.Pages._renderCal = function() {
       cells += `<div style="text-align:center;padding:6px 0;color:#ccc">${d}</div>`;
     } else {
       const sel = iso === st.sel ? 'background:#007aff;color:#fff;' : '';
-      cells += `<div onclick="App.Pages._calPick('${iso}')" style="text-align:center;padding:6px 0;cursor:pointer;border-radius:6px;${sel}">${d}</div>`;
+      cells += `<div onclick="App.Pages._calPick('${iso}')" style="min-height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;${sel}">${d}</div>`;
     }
   }
   box.innerHTML = `
