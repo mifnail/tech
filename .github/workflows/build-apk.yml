@@ -55,6 +55,39 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "concept/package-lock.json"
+
+      - name: Build dark concept (React singlefile)
+        run: |
+          echo "Building React dark concept..."
+          if [ -d "concept" ]; then SRC="concept"; elif [ -d "../code-and-design-review" ]; then SRC="../code-and-design-review"; else echo "No concept dir, skipping"; exit 0; fi
+          npm --prefix "$SRC" ci
+          npm --prefix "$SRC" run build
+          cp "$SRC/dist/index.html" templates/index.html
+          echo "Injecting local fonts fallback if available..."
+          if [ -f "static/fonts/local.css" ]; then
+            python3 - << 'PY'
+          import pathlib, re
+          tmpl = pathlib.Path("templates/index.html")
+          html = tmpl.read_text(encoding="utf-8")
+          if 'local-fonts' not in html:
+              local = pathlib.Path("static/fonts/local.css").read_text(encoding="utf-8")
+              inject = f'<link rel="stylesheet" href="/static/fonts/local.css">\n<style id="local-fonts">\n{local}\n</style>\n'
+              html = re.sub(r'(<link href="https://fonts.googleapis.com[^>]+>\s*)', r'\1' + inject, html, count=1)
+              tmpl.write_text(html, encoding="utf-8")
+              print("local fonts injected after CDN")
+          else:
+              print("local fonts already present")
+          PY
+          fi
+          ls -lh templates/index.html
+          echo "Build done"
+
       - name: Install system dependencies
         run: |
           sudo apt-get update

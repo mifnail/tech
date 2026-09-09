@@ -34,7 +34,10 @@ class TestSPA:
         rv = client.get('/')
         assert rv.status_code == 200
         assert b'<!DOCTYPE html>' in rv.data
-        assert b'app.js?v=' in rv.data
+        # Singlefile React build no longer references split app.js; allow either legacy or new root
+        assert (b'app.js?v=' in rv.data) or (b'id="root"' in rv.data) or (b'id="app"' in rv.data)
+        # singlefile must still serve no-store (offline WebView cache bust)
+        assert rv.headers.get('Cache-Control') == 'no-store'
 
     def test_version(self, client):
         rv = client.get('/api/version')

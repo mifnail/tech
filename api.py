@@ -165,8 +165,21 @@ def _static_ver() -> str:
     """Версия статики по mtime bundle: новый APK = новый URL = WebView не отдаст кэш."""
     try:
         base = os.path.join(os.path.dirname(__file__), 'static')
-        m = max(os.path.getmtime(os.path.join(base, f)) for f in ('app.js', 'style.css'))
-        return str(int(m))
+        candidates: list[float] = []
+        for rel in ('app.js', 'style.css'):
+            p = os.path.join(base, rel)
+            if os.path.exists(p):
+                candidates.append(os.path.getmtime(p))
+        tmpl = os.path.join(os.path.dirname(__file__), 'templates', 'index.html')
+        if os.path.exists(tmpl):
+            candidates.append(os.path.getmtime(tmpl))
+        # fonts local.css also busts cache
+        lp = os.path.join(base, 'fonts', 'local.css')
+        if os.path.exists(lp):
+            candidates.append(os.path.getmtime(lp))
+        if candidates:
+            return str(int(max(candidates)))
+        return '1'
     except Exception:
         return '1'
 
@@ -179,9 +192,14 @@ def index():
     with open(os.path.join(os.path.dirname(__file__), 'templates', 'index.html'),
               encoding='utf-8') as f:
         html = f.read()
+    # Legacy bust for old split assets (no-op for singlefile, kept for rollback compat)
     html = html.replace('/static/app.js', f'/static/app.js?v={STATIC_VER}')
     html = html.replace('/static/style.css', f'/static/style.css?v={STATIC_VER}')
-    return Response(html, mimetype='text/html')
+    # Bust fonts local.css as well (singlefile keeps CDN fallback)
+    html = html.replace('/static/fonts/local.css', f'/static/fonts/local.css?v={STATIC_VER}')
+    resp = Response(html, mimetype='text/html')
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 @app.route('/static/<path:path>')

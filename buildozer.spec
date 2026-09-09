@@ -8,7 +8,7 @@ package.name = teachhelper4
 package.domain = com.teachhelper4
 
 source.dir = .
-source.include_exts = py,png,jpg,html,css,js,txt,db
+source.include_exts = py,png,jpg,html,css,js,txt,db,woff2,woff,ttf,otf
 version = 0.1
 
 # webview bootstrap — встроенный Android WebView, Kivy не нужен
