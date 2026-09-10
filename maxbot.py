@@ -742,7 +742,7 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                     text = body.get('text')
                     recipient = msg.get('recipient') or {}
                     cid = recipient.get('chat_id')
-                    attachments = msg.get('attachments') or []
+                    attachments = body.get('attachments') or msg.get('attachments') or []
                     try:
                         cid = int(cid)
                     except (TypeError, ValueError):

@@ -1241,9 +1241,9 @@ class TestFileRestoreViaBot:
         maxbot._handle_file_restore = spy_handle
         try:
             updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
-                'body': {'text': ''},
+                'body': {'text': '', 'attachments': [
+                    {'type': 'file', 'payload': {'url': 'https://example.com/db.db'}}]},
                 'recipient': {'chat_id': 111},
-                'attachments': [{'type': 'file', 'payload': {'url': 'https://example.com/db.db'}}],
             }}], 'marker': 1}
             responses = iter([
                 ('json', updates_resp),
@@ -1288,9 +1288,9 @@ class TestFileRestoreViaBot:
         maxbot._handle_file_restore = spy_handle
         try:
             updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
-                'body': {'text': '/help'},
+                'body': {'text': '/help', 'attachments': [
+                    {'type': 'image', 'payload': {'url': 'https://example.com/img.jpg'}}]},
                 'recipient': {'chat_id': 111},
-                'attachments': [{'type': 'image', 'payload': {'url': 'https://example.com/img.jpg'}}],
             }}], 'marker': 1}
             responses = iter([
                 ('json', updates_resp),
@@ -1340,9 +1340,8 @@ class TestFileRestoreViaBot:
         try:
             # Attachment with type=file but no url in payload
             updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
-                'body': {'text': ''},
+                'body': {'text': '', 'attachments': [{'type': 'file', 'payload': {}}]},
                 'recipient': {'chat_id': 111},
-                'attachments': [{'type': 'file', 'payload': {}}],
             }}], 'marker': 1}
             responses = iter([
                 ('json', updates_resp),
@@ -1395,9 +1394,8 @@ class TestFileRestoreViaBot:
         maxbot.send_message = lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True}
         try:
             updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
-                'body': {'text': ''},
+                'body': {'text': '', 'attachments': [{'type': 'file', 'payload': {}}]},
                 'recipient': {'chat_id': 111},
-                'attachments': [{'type': 'file', 'payload': {}}],
             }}], 'marker': 1}
             responses = iter([
                 ('json', updates_resp),
@@ -1429,4 +1427,102 @@ class TestFileRestoreViaBot:
         finally:
             maxbot._handle_file_restore = real_handle
             maxbot.send_message = real_send
+            db.close = orig_close
+
+    def test_run_polling_toplevel_attachments_fallback(self, db):
+        """Top-level message.attachments still triggers file handler (fallback)."""
+        db.set_setting('max_teacher_chat', '111')
+        orig_close = db.close
+        db.close = lambda: None
+        stop = threading.Event()
+        file_seen = [False]
+        real_handle = maxbot._handle_file_restore
+        def spy_handle(token, cid, file_att, db_factory, urlopen=None):
+            file_seen[0] = True
+        maxbot._handle_file_restore = spy_handle
+        try:
+            # Attachments at top-level message (NOT nested under body)
+            updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
+                'body': {'text': ''},
+                'recipient': {'chat_id': 111},
+                'attachments': [{'type': 'file', 'payload': {'url': 'https://example.com/db.db'}}],
+            }}], 'marker': 1}
+            responses = iter([
+                ('json', updates_resp),
+            ])
+            def fake(req, timeout=None, **kw):
+                try:
+                    kind, payload = next(responses)
+                except StopIteration:
+                    stop.set()
+                    return FakeResp(json.dumps({'updates': [], 'marker': 99}).encode())
+                raw_body = getattr(req, 'data', None)
+                body_data = None
+                if raw_body:
+                    try:
+                        body_data = json.loads(raw_body)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        body_data = raw_body
+                if kind == 'json':
+                    return FakeResp(json.dumps(payload).encode())
+                raise AssertionError
+            t = threading.Thread(target=maxbot.run_polling,
+                                  args=('tok', lambda: db, stop, fake))
+            t.start()
+            t.join(timeout=5)
+            assert not t.is_alive()
+            assert file_seen[0]
+        finally:
+            maxbot._handle_file_restore = real_handle
+            db.close = orig_close
+
+    def test_run_polling_body_nested_file_invokes_handler(self, db):
+        """Regression: teacher sends file with body-nested attachment → handler called."""
+        db.set_setting('max_teacher_chat', '111')
+        orig_close = db.close
+        db.close = lambda: None
+        stop = threading.Event()
+        file_seen = [False]
+        captured_args = [None]
+        real_handle = maxbot._handle_file_restore
+        def spy_handle(token, cid, file_att, db_factory, urlopen=None):
+            file_seen[0] = True
+            captured_args[0] = (token, cid, file_att)
+        maxbot._handle_file_restore = spy_handle
+        try:
+            updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
+                'body': {'text': '', 'attachments': [
+                    {'type': 'file', 'payload': {'url': 'https://example.com/backup.db'}}]},
+                'recipient': {'chat_id': 111},
+            }}], 'marker': 1}
+            responses = iter([
+                ('json', updates_resp),
+            ])
+            def fake(req, timeout=None, **kw):
+                try:
+                    kind, payload = next(responses)
+                except StopIteration:
+                    stop.set()
+                    return FakeResp(json.dumps({'updates': [], 'marker': 99}).encode())
+                raw_body = getattr(req, 'data', None)
+                body_data = None
+                if raw_body:
+                    try:
+                        body_data = json.loads(raw_body)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        body_data = raw_body
+                if kind == 'json':
+                    return FakeResp(json.dumps(payload).encode())
+                raise AssertionError
+            t = threading.Thread(target=maxbot.run_polling,
+                                  args=('tok', lambda: db, stop, fake))
+            t.start()
+            t.join(timeout=5)
+            assert not t.is_alive()
+            # Regression: on old code this would FAIL because msg.attachments was empty
+            assert file_seen[0]
+            assert captured_args[0][1] == 111  # cid
+            assert captured_args[0][2]['payload']['url'] == 'https://example.com/backup.db'
+        finally:
+            maxbot._handle_file_restore = real_handle
             db.close = orig_close
