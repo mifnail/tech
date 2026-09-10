@@ -736,6 +736,8 @@ App.Pages.settings = async function() {
   try { st = await App.API.get('/api/settings/bot'); } catch (e) {}
   let mx = { has_token: false, enabled: false };
   try { mx = await App.API.get('/api/settings/maxbot'); } catch (e) {}
+  let appVer = '';
+  try { const vv = await App.API.get('/api/version'); appVer = (vv && vv.ver) || ''; } catch (e) {}
   let android = false;
   let pickerAvailable = false;
   try {
@@ -801,6 +803,7 @@ App.Pages.settings = async function() {
   html += `<div class="card-sub" style="margin-bottom:8px">Если TeachHelper экономит вам время — можно сказать спасибо ☕</div>`;
   html += `<button class="btn btn-muted btn-sm" onclick="window.open('https://boosty.to/mifnail/donate', '_blank')">Поддержать</button>`;
   html += `</div>`;
+  html += `<div style="font-size:11px;color:var(--color-text-muted);text-align:center;margin-top:4px">сборка ${App.UI.escHtml(appVer) || '?'}</div>`;
   document.getElementById('app').innerHTML = html;
 };
 
