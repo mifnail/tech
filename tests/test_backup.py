@@ -725,3 +725,23 @@ class TestLatestExcludesAutobackup:
         rv = client.get('/api/backup/list')
         assert rv.status_code == 200
         assert rv.json['backups'][0]['name'] == 'teachhelper_backup_20260103_120000.db'
+
+
+class TestAllFilesAccess:
+    def test_has_all_files_access_desktop_false(self):
+        """Without jnius (desktop) all-files access is reported False."""
+        assert _api_module._has_all_files_access() is False
+
+    def test_restore_access_desktop_granted_true(self, client, monkeypatch):
+        """GET /api/restore/access is granted on desktop (no UI nagging)."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: False)
+        rv = client.get('/api/restore/access')
+        assert rv.status_code == 200
+        assert rv.json == {'granted': True}
+
+    def test_restore_request_access_desktop_400(self, client, monkeypatch):
+        """POST /api/restore/request-access is Android-only."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: False)
+        rv = client.post('/api/restore/request-access', json={})
+        assert rv.status_code == 400
+        assert rv.json['error'] == 'Доступно только на Android'

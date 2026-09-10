@@ -729,6 +729,10 @@ App.Pages.settings = async function() {
   try { mx = await App.API.get('/api/settings/maxbot'); } catch (e) {}
   let android = false;
   try { const d = await App.API.get('/api/restore/pick/diag'); android = !!(d && d.android); } catch (e) {}
+  let allFiles = true;
+  if (android) {
+    try { const a = await App.API.get('/api/restore/access'); allFiles = !!(a && a.granted); } catch (e) {}
+  }
   let html = App.Nav.render();
   html += `<h1>Настройки</h1>`;
   html += `<div class="card"><div class="card-title">Telegram-бот «Мои оценки»</div>`;
@@ -763,6 +767,12 @@ App.Pages.settings = async function() {
   html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.confirmRestoreList()">Восстановить из копии…</button>`;
   if (android) {
     html += `<button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="App.Pages.restoreByPicker()">Выбрать файл (Android)</button>`;
+    if (!allFiles) {
+      html += `<div style="margin-top:8px;padding:8px 10px;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:rgba(245,158,11,0.08)">
+        <div style="font-size:12px;color:var(--color-text-muted)">Для поиска всех копий нужно разрешить доступ ко всем файлам</div>
+        <button class="btn btn-muted btn-sm" style="margin-top:6px" onclick="App.Pages.requestAllFilesAccess()">Разрешить доступ</button>
+      </div>`;
+    }
   } else {
     html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
     html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
@@ -995,6 +1005,28 @@ App.Pages.restorePickDiag = async function() {
     <div style="margin-bottom:12px">${rows}</div>
     <button class="btn btn-muted" onclick="App.UI.closePopup()">Закрыть</button>
   `);
+};
+
+App.Pages.requestAllFilesAccess = async function() {
+  try {
+    const r = await App.API.post('/api/restore/request-access', {});
+    if (r && r.granted) {
+      App.UI.notify('Доступ ко всем файлам разрешён');
+      App.Pages.settings();
+      return;
+    }
+    App.UI.notify('Включите «Доступ ко всем файлам» и вернитесь в приложение');
+    const recheck = () => {
+      if (document.hidden) return;
+      window.removeEventListener('focus', recheck);
+      document.removeEventListener('visibilitychange', recheck);
+      if (location.hash.split('?')[0] === '#settings') App.Pages.settings();
+    };
+    window.addEventListener('focus', recheck);
+    document.addEventListener('visibilitychange', recheck);
+  } catch (e) {
+    App.UI.notify((e && e.error) || 'Не удалось открыть настройки');
+  }
 };
 
 App.Pages.unbindBot = async function(studentId) {

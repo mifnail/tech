@@ -11,6 +11,7 @@ from datetime import date, datetime
 from typing import Any
 import os
 import re as _re
+import sys
 
 import sqlite3
 
@@ -1094,6 +1095,19 @@ def _android_resolver():
     return _android_context().getContentResolver()
 
 
+def _has_all_files_access() -> bool:
+    """True when the app holds MANAGE_EXTERNAL_STORAGE (all-files) access.
+
+    Android 11+ only; False on desktop or on any exception.
+    """
+    try:
+        from jnius import autoclass  # noqa — Android only
+        Environment = autoclass('android.os.Environment')
+        return bool(Environment.isExternalStorageManager())
+    except Exception:
+        return False
+
+
 def _mediastore_delete_name(resolver, collection, filename: str) -> None:
     """Удалить старые записи с таким именем. Best-effort: любые ошибки молча."""
     try:
@@ -1478,8 +1492,8 @@ def _list_backup_files() -> list[dict]:
             except OSError:
                 continue
             entries.append({'name': name, 'size': st.st_size, 'mtime': st.st_mtime, 'path': path})
-    except Exception:
-        pass
+    except Exception as e:
+        print(f'[backup/list] fs scan failed: {e}', file=sys.stderr)
 
     _sort_backups(entries)
     return entries
@@ -1530,6 +1544,7 @@ def _read_backup_bytes(name: str) -> bytes:
     except BackupNotFound:
         raise
     except Exception as e:
+        print(f'[restore] fs read failed for {name}: {e}', file=sys.stderr)
         raise BackupNotFound(f'no backup file: {name}') from e
 
 
@@ -1852,6 +1867,53 @@ def restore_pick_diag():
     if errors:
         report['errors'] = errors
     return jsonify(report)
+
+
+@backup_bp.route('/restore/access', methods=['GET'])
+def restore_access():
+    """Report all-files access. Always granted on desktop (UI must not nag)."""
+    if not _is_android():
+        return jsonify({'granted': True})
+    return jsonify({'granted': _has_all_files_access()})
+
+
+@backup_bp.route('/restore/request-access', methods=['POST'])
+def restore_request_access():
+    """Open the system all-files-access settings screen (Android only)."""
+    if not _is_android():
+        return jsonify({'error': 'Доступно только на Android'}), 400
+    if _has_all_files_access():
+        return jsonify({'ok': True, 'granted': True, 'opened': False})
+    opened = False
+    try:
+        from android.runnable import run_on_ui_thread
+        from jnius import autoclass
+
+        def _ui():
+            nonlocal opened
+            try:
+                Settings = autoclass('android.provider.Settings')
+                Uri = autoclass('android.net.Uri')
+                Intent = autoclass('android.content.Intent')
+                context = _android_context()
+                pkg = context.getPackageName()
+                action = getattr(Settings, 'ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION', None)
+                if action:
+                    intent = Intent(action)
+                    intent.setData(Uri.parse('package:' + pkg))
+                else:
+                    # Fallback for devices where the per-app action is missing.
+                    intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                opened = True
+            except Exception as e:
+                print(f'[restore/request-access] {e}', file=sys.stderr)
+
+        run_on_ui_thread(_ui)()
+    except Exception as e:
+        print(f'[restore/request-access] {e}', file=sys.stderr)
+    return jsonify({'ok': True, 'granted': _has_all_files_access(), 'opened': opened})
 
 
 @backup_bp.route('/restore/pick', methods=['POST'])

@@ -28,7 +28,12 @@ osx.kivy_version = 2.2.0
 presplash.filename =
 icon.filename =
 
-android.permissions = INTERNET,REQUEST_INSTALL_PACKAGES
+# NOTE: buildozer's android.permissions is a plain comma-separated name list
+# (python-for-android emits <uses-permission> without maxSdkVersion), so a
+# per-permission maxSdkVersion cannot be expressed here. READ_EXTERNAL_STORAGE
+# is therefore requested plain (needed on Android <=12 for Download/ scanning;
+# on 13+ it is ignored and MANAGE_EXTERNAL_STORAGE is the effective grant).
+android.permissions = INTERNET,REQUEST_INSTALL_PACKAGES,MANAGE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
 android.api = 34
 android.minapi = 24
 android.archs = arm64-v8a
