@@ -1364,30 +1364,40 @@ def _is_android() -> bool:
 
 
 def _valid_backup_name(name) -> bool:
-    """A name must be a plain basename of a teachhelper backup (no path, no ..)."""
+    """A name must be a plain *.db basename (no path, no leading ..)."""
     if not isinstance(name, str) or not name:
         return False
     if '/' in name or '\\' in name:
         return False
     if name.startswith('..') or name == '.':
         return False
-    return _re.match(r'^teachhelper_.*\.db$', name) is not None
+    return _re.match(r'^.+\.db$', name) is not None
+
+
+def _sort_backups(entries: list[dict]) -> None:
+    """Sort in place: teachhelper_* first, then others; each by mtime desc."""
+    entries.sort(key=lambda e: (
+        0 if str(e.get('name', '')).startswith('teachhelper_') else 1,
+        -(e.get('mtime') or 0),
+    ))
 
 
 def _list_backup_files() -> list[dict]:
-    """Enumerate every teachhelper_*.db backup in Downloads, newest first.
+    """Enumerate every *.db backup in Downloads, teachhelper_* first.
 
     Works on both platforms: desktop globs ~/Downloads; Android queries
     MediaStore Downloads and falls back to a direct filesystem scan of the
     public Download directory when MediaStore has not indexed the folder.
-    Returns a list of {name, size, mtime} sorted by mtime descending.
+    Returns a list of {name, size, mtime, path} where path is the full fs
+    path when known (fs branch) or None (MediaStore-only). Sorted with
+    teachhelper_* first, each group by mtime descending.
     """
     entries: list[dict] = []
     if not _is_android():
         # Desktop: glob ~/Downloads
         try:
             home = os.path.expanduser('~')
-            pattern = os.path.join(home, 'Downloads', 'teachhelper_*.db')
+            pattern = os.path.join(home, 'Downloads', '*.db')
             for path in _glob.glob(pattern):
                 try:
                     st = os.stat(path)
@@ -1397,10 +1407,11 @@ def _list_backup_files() -> list[dict]:
                     'name': os.path.basename(path),
                     'size': st.st_size,
                     'mtime': st.st_mtime,
+                    'path': path,
                 })
         except Exception:
             pass
-        entries.sort(key=lambda e: e['mtime'], reverse=True)
+        _sort_backups(entries)
         return entries
 
     # Android: query MediaStore Downloads
@@ -1414,7 +1425,7 @@ def _list_backup_files() -> list[dict]:
             collection,
             ['_id', '_display_name', 'date_added'],
             '_display_name LIKE ?',
-            ['teachhelper_%.db'],
+            ['%.db'],
             'date_added DESC',
         )
         try:
@@ -1440,7 +1451,7 @@ def _list_backup_files() -> list[dict]:
                         size = cursor.getLong(idx_size)
                     except Exception:
                         pass
-                    entries.append({'name': name, 'size': size, 'mtime': mtime})
+                    entries.append({'name': name, 'size': size, 'mtime': mtime, 'path': None})
         finally:
             if cursor is not None:
                 cursor.close()
@@ -1453,19 +1464,24 @@ def _list_backup_files() -> list[dict]:
         env = autoclass('android.os.Environment')
         dl = env.getExternalStoragePublicDirectory(env.DIRECTORY_DOWNLOADS)
         dl_path = str(dl.getAbsolutePath())
-        for path in _glob.glob(os.path.join(dl_path, 'teachhelper_*.db')):
+        for path in _glob.glob(os.path.join(dl_path, '*.db')):
             name = os.path.basename(path)
             if name in seen:
+                # Prefer the known fs path for entries already found via MediaStore.
+                for e in entries:
+                    if e['name'] == name and not e.get('path'):
+                        e['path'] = path
                 continue
+            seen.add(name)
             try:
                 st = os.stat(path)
             except OSError:
                 continue
-            entries.append({'name': name, 'size': st.st_size, 'mtime': st.st_mtime})
+            entries.append({'name': name, 'size': st.st_size, 'mtime': st.st_mtime, 'path': path})
     except Exception:
         pass
 
-    entries.sort(key=lambda e: e['mtime'] or 0, reverse=True)
+    _sort_backups(entries)
     return entries
 
 

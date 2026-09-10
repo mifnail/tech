@@ -379,7 +379,7 @@ class TestListBackupFiles:
             assert entries[1]['mtime'] == 1000.0
             # sorted newest-first by mtime
             assert entries[0]['mtime'] > entries[1]['mtime']
-            assert set(entries[0].keys()) == {'name', 'size', 'mtime'}
+            assert set(entries[0].keys()) == {'name', 'size', 'mtime', 'path'}
         finally:
             for f in (p_old, p_new):
                 try:
@@ -396,6 +396,52 @@ class TestListBackupFiles:
         monkeypatch.setattr(_api_module, '_is_android', lambda: False)
         monkeypatch.setattr(_api_module._glob, 'glob', lambda pattern: [])
         assert _api_module._list_backup_files() == []
+
+    def test_list_backup_files_broadened_and_sorted(self, monkeypatch):
+        """Any *.db is found; teachhelper_* still sort before other *.db files."""
+        d = tempfile.mkdtemp()
+        p_th_old = os.path.join(d, 'teachhelper_2026-01-01.db')
+        p_th_new = os.path.join(d, 'teachhelper_2026-01-02.db')
+        p_other = os.path.join(d, 'other.db')
+        try:
+            for p, data in ((p_th_old, b'aa'), (p_th_new, b'bbb'), (p_other, b'cccc')):
+                with open(p, 'wb') as f:
+                    f.write(data)
+            os.utime(p_th_old, (1000, 1000))
+            os.utime(p_th_new, (2000, 2000))
+            # other.db is newest overall but must still sort after teachhelper_*.
+            os.utime(p_other, (3000, 3000))
+            monkeypatch.setattr(_api_module, '_is_android', lambda: False)
+            monkeypatch.setattr(_api_module._glob, 'glob',
+                                lambda pattern: [p_other, p_th_old, p_th_new])
+
+            entries = _api_module._list_backup_files()
+            names = [e['name'] for e in entries]
+            assert set(names) == {'teachhelper_2026-01-01.db',
+                                  'teachhelper_2026-01-02.db', 'other.db'}
+            assert names == ['teachhelper_2026-01-02.db',
+                             'teachhelper_2026-01-01.db', 'other.db']
+            assert entries[0]['path'] == p_th_new
+            assert entries[2]['path'] == p_other
+            assert set(entries[0].keys()) == {'name', 'size', 'mtime', 'path'}
+        finally:
+            for f in (p_th_old, p_th_new, p_other):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+
+    def test_valid_backup_name_broadened(self):
+        """Any plain *.db basename is accepted; paths / non-.db are rejected."""
+        assert _api_module._valid_backup_name('other.db') is True
+        assert _api_module._valid_backup_name('teachhelper_2026-01-01.db') is True
+        for bad in ('../evil.db', '/abs.db', 'x.txt', 'sub/evil.db',
+                    '..evil.db', '.', '', None, 123, 'a\\b.db'):
+            assert _api_module._valid_backup_name(bad) is False, bad
 
 
 class TestBackupList:
@@ -454,8 +500,8 @@ class TestRestoreNamed:
                     pass
 
     def test_restore_named_invalid(self, client, monkeypatch):
-        """POST /api/restore/named returns 400 for non-basename names."""
-        for bad in ['../teachhelper_x.db', 'teachhelper', 'evil.db',
+        """POST /api/restore/named returns 400 for non-basename / non-.db names."""
+        for bad in ['../teachhelper_x.db', 'teachhelper',
                     'teachhelper_2026.db/..', '', 'a/b.db',
                     'teachhelper_2026-01-01.dbc', 123, None]:
             rv = client.post('/api/restore/named', json={'name': bad})
@@ -469,6 +515,38 @@ class TestRestoreNamed:
         rv = client.post('/api/restore/named', json={'name': 'teachhelper_none.db'})
         assert rv.status_code == 404
         assert 'no backup' in rv.json['error']
+
+    def test_restore_named_non_teachhelper(self, client, monkeypatch):
+        """POST /api/restore/named accepts any valid *.db basename."""
+        valid_data = _make_valid_db_bytes()
+        restore_target = tempfile.mktemp(suffix='.db')
+        try:
+            monkeypatch.setattr(_api_module, '_DB_PATH', restore_target)
+            with open(restore_target, 'wb') as f:
+                f.write(b'old data')
+
+            written = {}
+            real_replace = os.replace
+            def fake_replace(src, dst):
+                with open(src, 'rb') as f:
+                    written['data'] = f.read()
+                real_replace(src, dst)
+            monkeypatch.setattr(os, 'replace', fake_replace)
+            monkeypatch.setattr(_api_module, '_save_to_downloads_full',
+                                lambda data, fn, mt: ('/bak', None))
+            monkeypatch.setattr(_api_module, '_read_backup_bytes', lambda name: valid_data)
+
+            rv = client.post('/api/restore/named', json={'name': 'other.db'})
+            assert rv.status_code == 200
+            assert rv.json['ok'] is True
+            assert rv.json['name'] == 'other.db'
+            assert written['data'] == valid_data
+        finally:
+            for f in (restore_target, restore_target + '-wal', restore_target + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
 
 
 class TestRestorePick:

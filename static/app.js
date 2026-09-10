@@ -912,6 +912,7 @@ App.Pages.confirmRestoreList = async function() {
     `<button class="backup-row" style="display:block;width:100%;text-align:left;padding:10px 12px;margin-bottom:6px;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface);cursor:pointer" onclick="App.Pages.confirmRestoreNamed('${App.UI.escJs(b.name)}')">
       <div style="font-weight:600">${App.UI.escHtml(b.name)}</div>
       <div style="font-size:12px;color:var(--color-text-muted);margin-top:2px">${App.UI.escHtml(fmtSize(b.size))}${b.mtime != null ? ' · ' : ''}${App.UI.escHtml(fmtMtime(b.mtime))}</div>
+      ${b.path ? `<div style="font-size:11px;color:var(--color-text-muted);margin-top:1px;word-break:break-all">${App.UI.escHtml(b.path)}</div>` : ''}
     </button>`
   ).join('');
   App.UI.showPopup(`
