@@ -1534,14 +1534,18 @@ def _read_backup_bytes(name: str) -> bytes:
 
 
 def _find_latest_backup_bytes() -> tuple[bytes, str]:
-    """Find the most recent teachhelper_*.db in Downloads.
+    """Find the most recent manual teachhelper_*.db in Downloads.
 
     On Android: queries MediaStore via ContentResolver (+ fs fallback).
     On desktop: globs ~/Downloads.
-    Returns (bytes, display_name).
+    Auto-backups created by _restore_from_bytes (teachhelper_backup_*) are
+    excluded so restore/latest can't ping-pong state. Returns (bytes, name).
     Raises BackupNotFound if nothing found.
     """
-    entries = _list_backup_files()
+    entries = [
+        e for e in _list_backup_files()
+        if not str(e.get('name', '')).startswith('teachhelper_backup_')
+    ]
     if not entries:
         raise BackupNotFound('no backup files found in Downloads')
     data = _read_backup_bytes(entries[0]['name'])
@@ -1554,7 +1558,8 @@ def _find_latest_backup_bytes() -> tuple[bytes, str]:
 # threading.Event, and the API handler waits on that event while the user picks.
 _REQUEST_CODE = 4242
 _RESULT_OK = -1  # android.app.Activity.RESULT_OK is -1
-_file_pick = {'event': threading.Event(), 'bytes': None, 'name': None,
+_PICK_TIMEOUT = 120  # seconds the Flask thread waits for the UI-thread callback
+_file_pick = {'event': threading.Event(), 'uri': None, 'name': None,
               'code': -1, 'error': None, 'stage': None}
 _picker_bound = False
 
@@ -1646,14 +1651,18 @@ def _read_picked_uri(uri) -> bytes:
 
 
 def _on_pick_result(code, result_code, intent):
-    """activity_bind(on_activity_result=...): runs on the Android UI thread."""
+    """activity_bind(on_activity_result=...): runs on the Android UI thread.
+
+    Stores only the picked content URI + display name. Bytes are read later on
+    the Flask thread (see restore_pick) to avoid blocking/ANR on the UI thread.
+    """
     try:
         if code != _REQUEST_CODE:
             return
         _file_pick['code'] = code
         _file_pick['stage'] = 'result'
         if result_code != _RESULT_OK:
-            # User cancelled — no error text; the handler returns 404.
+            # User cancelled — no URI, no error text.
             _file_pick['event'].set()
             return
         uri = intent.getData() if intent is not None else None
@@ -1661,6 +1670,7 @@ def _on_pick_result(code, result_code, intent):
             _file_pick['error'] = 'no data URI in result'
             _file_pick['event'].set()
             return
+        _file_pick['uri'] = uri
         try:
             _file_pick['name'] = uri.getLastPathSegment() or None
         except Exception:
@@ -1669,12 +1679,6 @@ def _on_pick_result(code, result_code, intent):
             _file_pick['name'] = _resolve_display_name(_android_resolver(), uri) or _file_pick['name']
         except Exception:
             pass
-        try:
-            _file_pick['bytes'] = _read_picked_uri(uri)
-        except Exception as e:
-            _file_pick['stage'] = 'read'
-            _file_pick['error'] = str(e)
-            _file_pick['bytes'] = b''
         _file_pick['event'].set()
     except Exception as e:
         _file_pick['stage'] = 'result'
@@ -1854,28 +1858,37 @@ def restore_pick_diag():
 def restore_pick():
     """Restore a DB file the user picks via the native Android document picker.
 
-    The Flask handler launches the picker, then waits for the result that the
-    UI-thread callback delivers through the module-level coordinator.
+    The Flask handler launches the picker and waits for the UI-thread callback
+    to hand back a content URI; bytes are then read HERE (never on the UI
+    thread) before restoring.
     """
     if not _is_android():
         return jsonify({'error': 'Доступно только на Android'}), 400
     _file_pick['code'] = -1
-    _file_pick['bytes'] = None
+    _file_pick['uri'] = None
     _file_pick['name'] = None
     _file_pick['error'] = None
     _file_pick['stage'] = None
     _file_pick['event'].clear()
     _start_picker()
-    _file_pick['event'].wait(120)
-    data = _file_pick['bytes']
+    if not _file_pick['event'].wait(_PICK_TIMEOUT):
+        return jsonify({'error': 'picker: timeout: нет ответа от выбора файла'}), 504
+    uri = _file_pick['uri']
     name = _file_pick['name']
     stage = _file_pick['stage']
     err = _file_pick['error']
-    if not data:
+    if uri is None:
         if err:
             msg = f'picker: {stage}: {err}' if stage else f'picker: {err}'
             return jsonify({'error': msg}), 500
-        return jsonify({'error': 'Выбор файла отменён или файл не найден'}), 404
+        return jsonify({'error': 'Выбор файла отменён'}), 404
+    # Read bytes in THIS Flask thread (never on the UI thread).
+    try:
+        data = _read_picked_uri(uri)
+    except Exception as e:
+        return jsonify({'error': f'picker: read: {e}'}), 500
+    if not data:
+        return jsonify({'error': 'Выбор файла отменён или файл пуст'}), 404
     try:
         _restore_from_bytes(data)
     except ValueError as e:

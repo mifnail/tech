@@ -85,4 +85,4 @@ if __name__ == '__main__':
     _maybe_start_bot(debug)
     _maybe_start_maxbot(debug)
 
-    app.run(host=host, port=port, debug=debug)
+    app.run(host=host, port=port, debug=debug, threaded=True)

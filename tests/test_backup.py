@@ -557,8 +557,8 @@ class TestRestorePick:
         assert rv.status_code == 400
         assert rv.json['error'] == 'Доступно только на Android'
 
-    def test_on_pick_result_stores_bytes_and_sets_event(self, monkeypatch):
-        """Activity-result callback stores the picked bytes + name on the coordinator."""
+    def test_on_pick_result_stores_uri_not_bytes(self, monkeypatch):
+        """Activity-result callback stores the URI + name only (no byte read)."""
         class FakeUri:
             def getLastPathSegment(self):
                 return 'picked.db'
@@ -566,25 +566,25 @@ class TestRestorePick:
             def getData(self):
                 return FakeUri()
         class DummyResolver:
-            def openFileDescriptor(self, uri, mode):
-                return object()
             def query(self, *a, **k):
                 return None
-        _api_module._file_pick['code'] = -1
-        _api_module._file_pick['bytes'] = None
-        _api_module._file_pick['name'] = None
+        _api_module._file_pick.update({'code': -1, 'uri': None, 'name': None,
+                                      'error': None, 'stage': None})
         _api_module._file_pick['event'].clear()
         monkeypatch.setattr(_api_module, '_android_resolver', lambda: DummyResolver())
-        monkeypatch.setattr(_api_module, '_drain_pfd', lambda pfd: b'FAKEDATA')
+
+        def must_not_read(uri):
+            raise AssertionError('must not read bytes on the UI thread')
+        monkeypatch.setattr(_api_module, '_read_picked_uri', must_not_read)
 
         _api_module._on_pick_result(_api_module._REQUEST_CODE, -1, FakeIntent())
         assert _api_module._file_pick['code'] == 4242
-        assert _api_module._file_pick['bytes'] == b'FAKEDATA'
+        assert _api_module._file_pick['uri'] is not None
         assert _api_module._file_pick['name'] == 'picked.db'
         assert _api_module._file_pick['event'].is_set()
 
     def test_restore_pick_roundtrip(self, client, monkeypatch):
-        """Handler reads coordinator bytes and restores them (restore captured)."""
+        """Handler reads bytes (mocked) from the coordinator URI and restores."""
         valid_data = _make_valid_db_bytes()
         restore_target = tempfile.mktemp(suffix='.db')
         try:
@@ -604,9 +604,10 @@ class TestRestorePick:
             monkeypatch.setattr(_api_module, '_is_android', lambda: True)
             monkeypatch.setattr(_api_module, '_restore_from_bytes',
                                 lambda data: captured.update(data=data))
+            monkeypatch.setattr(_api_module, '_read_picked_uri', lambda uri: valid_data)
 
             def fake_start():
-                _api_module._file_pick['bytes'] = valid_data
+                _api_module._file_pick['uri'] = object()
                 _api_module._file_pick['name'] = 'picked.db'
                 _api_module._file_pick['event'].set()
             monkeypatch.setattr(_api_module, '_start_picker', fake_start)
@@ -623,37 +624,52 @@ class TestRestorePick:
                 except OSError:
                     pass
 
+    def test_restore_pick_timeout_504(self, client, monkeypatch):
+        """No callback before the timeout returns 504."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+        monkeypatch.setattr(_api_module, '_PICK_TIMEOUT', 0)
+        monkeypatch.setattr(_api_module, '_start_picker', lambda: None)
+
+        rv = client.post('/api/restore/pick', json={})
+        assert rv.status_code == 504
+        assert 'picker: timeout' in rv.json['error']
+
+    def test_restore_pick_cancelled_404(self, client, monkeypatch):
+        """A cancelled pick (no URI, no error) returns 404."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+
+        def fake_start():
+            _api_module._file_pick['stage'] = 'result'
+            _api_module._file_pick['event'].set()
+        monkeypatch.setattr(_api_module, '_start_picker', fake_start)
+
+        rv = client.post('/api/restore/pick', json={})
+        assert rv.status_code == 404
+        assert 'отменён' in rv.json['error']
+
+    def test_restore_pick_read_error_500(self, client, monkeypatch):
+        """A byte-read failure in the handler is surfaced with stage='read'."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+
+        def fake_start():
+            _api_module._file_pick['uri'] = object()
+            _api_module._file_pick['event'].set()
+        monkeypatch.setattr(_api_module, '_start_picker', fake_start)
+
+        def boom(uri):
+            raise RuntimeError('cannot read stream')
+        monkeypatch.setattr(_api_module, '_read_picked_uri', boom)
+
+        rv = client.post('/api/restore/pick', json={})
+        assert rv.status_code == 500
+        assert rv.json['error'] == 'picker: read: cannot read stream'
+
     def test_restore_pick_diag_desktop(self, client, monkeypatch):
         """GET /api/restore/pick/diag reports {'android': False} off-device."""
         monkeypatch.setattr(_api_module, '_is_android', lambda: False)
         rv = client.get('/api/restore/pick/diag')
         assert rv.status_code == 200
         assert rv.json == {'android': False}
-
-    def test_on_pick_result_read_error_stores_error(self, monkeypatch):
-        """A read failure is recorded on the coordinator (stage='read')."""
-        class FakeUri:
-            def getLastPathSegment(self):
-                return 'picked.db'
-        class FakeIntent:
-            def getData(self):
-                return FakeUri()
-        class DummyResolver:
-            def query(self, *a, **k):
-                return None
-        _api_module._file_pick.update({'code': -1, 'bytes': None, 'name': None,
-                                      'error': None, 'stage': None})
-        _api_module._file_pick['event'].clear()
-        monkeypatch.setattr(_api_module, '_android_resolver', lambda: DummyResolver())
-
-        def boom(uri):
-            raise RuntimeError('cannot read stream')
-        monkeypatch.setattr(_api_module, '_read_picked_uri', boom)
-
-        _api_module._on_pick_result(_api_module._REQUEST_CODE, -1, FakeIntent())
-        assert _api_module._file_pick['stage'] == 'read'
-        assert 'cannot read stream' in _api_module._file_pick['error']
-        assert _api_module._file_pick['event'].is_set()
 
     def test_restore_pick_surfaces_error(self, client, monkeypatch):
         """The handler returns 500 with the exact stage + error text."""
@@ -668,3 +684,44 @@ class TestRestorePick:
         rv = client.post('/api/restore/pick', json={})
         assert rv.status_code == 500
         assert rv.json['error'] == 'picker: launch: boom launch'
+
+
+class TestLatestExcludesAutobackup:
+    def test_find_latest_skips_autobackup(self, monkeypatch):
+        """_find_latest_backup_bytes ignores teachhelper_backup_* autobackups."""
+        entries = [
+            {'name': 'teachhelper_backup_20260103_120000.db', 'size': 1,
+             'mtime': 3000, 'path': None},
+            {'name': 'teachhelper_2026-01-02.db', 'size': 2, 'mtime': 2000, 'path': None},
+        ]
+        monkeypatch.setattr(_api_module, '_list_backup_files', lambda: entries)
+        read = {}
+        def fake_read(name):
+            read['name'] = name
+            return b'DATA'
+        monkeypatch.setattr(_api_module, '_read_backup_bytes', fake_read)
+
+        data, name = _api_module._find_latest_backup_bytes()
+        assert name == 'teachhelper_2026-01-02.db'
+        assert read['name'] == 'teachhelper_2026-01-02.db'
+        assert data == b'DATA'
+
+    def test_find_latest_only_autobackups_raises(self, monkeypatch):
+        """If only autobackups exist, latest raises BackupNotFound."""
+        entries = [
+            {'name': 'teachhelper_backup_20260103_120000.db', 'size': 1,
+             'mtime': 3000, 'path': None},
+        ]
+        monkeypatch.setattr(_api_module, '_list_backup_files', lambda: entries)
+        with pytest.raises(_api_module.BackupNotFound):
+            _api_module._find_latest_backup_bytes()
+
+    def test_backup_list_includes_autobackup(self, client, monkeypatch):
+        """GET /api/backup/list still shows autobackups."""
+        monkeypatch.setattr(_api_module, '_list_backup_files', lambda: [
+            {'name': 'teachhelper_backup_20260103_120000.db', 'size': 1,
+             'mtime': 3000, 'path': None},
+        ])
+        rv = client.get('/api/backup/list')
+        assert rv.status_code == 200
+        assert rv.json['backups'][0]['name'] == 'teachhelper_backup_20260103_120000.db'

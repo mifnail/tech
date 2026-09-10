@@ -727,6 +727,8 @@ App.Pages.settings = async function() {
   try { st = await App.API.get('/api/settings/bot'); } catch (e) {}
   let mx = { has_token: false, enabled: false };
   try { mx = await App.API.get('/api/settings/maxbot'); } catch (e) {}
+  let android = false;
+  try { const d = await App.API.get('/api/restore/pick/diag'); android = !!(d && d.android); } catch (e) {}
   let html = App.Nav.render();
   html += `<h1>Настройки</h1>`;
   html += `<div class="card"><div class="card-title">Telegram-бот «Мои оценки»</div>`;
@@ -759,10 +761,13 @@ App.Pages.settings = async function() {
   html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.doBackup()">Выгрузить копию</button>`;
   html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.confirmRestoreLatest()">Восстановить последнюю копию</button>`;
   html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.confirmRestoreList()">Восстановить из копии…</button>`;
-  html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.restoreByPicker()">Выбрать файл (Android)</button>`;
+  if (android) {
+    html += `<button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="App.Pages.restoreByPicker()">Выбрать файл (Android)</button>`;
+  } else {
+    html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
+    html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
+  }
   html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.restorePickDiag()">Диагностика</button>`;
-  html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
-  html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
   html += `</div>`;
   html += `<div class="card" style="opacity:0.85"><div class="card-title">Поддержать проект</div>`;
   html += `<div class="card-sub" style="margin-bottom:8px">Если TeachHelper экономит вам время — можно сказать спасибо ☕</div>`;
@@ -880,6 +885,17 @@ App.Pages.confirmRestoreLatest = async function() {
   `);
 };
 
+App.Pages._restoreMsg = function(e) {
+  const raw = (e && e.error) ? e.error : ((e && e.message) ? e.message : '');
+  let msg;
+  if (!raw) msg = 'Ошибка восстановления';
+  else if (raw.indexOf('no backup files found') >= 0) msg = 'Резервные копии не найдены';
+  else if (raw.indexOf('no backup file') >= 0) msg = 'Файл копии не найден';
+  else if (raw.indexOf('no file') >= 0) msg = 'Файл не выбран';
+  else msg = raw;
+  return msg + ' — попробуйте выбор файла';
+};
+
 App.Pages.restoreLatest = async function() {
   App.UI.closePopup();
   App.Loading.show();
@@ -888,7 +904,7 @@ App.Pages.restoreLatest = async function() {
     App.UI.notify('Данные восстановлены из ' + (r.name || 'последнего бэкапа'));
     App.Pages.settings();
   } catch (e) {
-    App.UI.notify(e.error || 'Ошибка восстановления');
+    App.UI.notify(App.Pages._restoreMsg(e));
     App.Pages.settings();
   }
 };
