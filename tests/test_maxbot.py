@@ -1017,7 +1017,7 @@ class TestFileRestoreViaBot:
                     def __exit__(self, *a):
                         return False
                 return R()
-            monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+            monkeypatch.setattr(maxbot, 'open_raw_with_fallback', fake_open)
             att = {'type': 'file', 'payload': {'url': 'https://example.com/test.db'}}
             maxbot._handle_file_restore('tok', 111, att, lambda: db)
             assert any('База восстановлена' in s for s in sent)
@@ -1061,7 +1061,7 @@ class TestFileRestoreViaBot:
                     def __exit__(self, *a):
                         return False
                 return R()
-            monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+            monkeypatch.setattr(maxbot, 'open_raw_with_fallback', fake_open)
             att = {'type': 'file', 'payload': {'url': 'https://example.com/test.db'}}
             maxbot._handle_file_restore('tok', 555, att, lambda: db)
             assert any('База восстановлена' in s for s in sent)
@@ -1087,7 +1087,7 @@ class TestFileRestoreViaBot:
                 def __exit__(self, *a):
                     return False
             return R()
-        monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+        monkeypatch.setattr(maxbot, 'open_raw_with_fallback', fake_open)
         att = {'type': 'file', 'payload': {'url': 'https://example.com/bad.db'}}
         maxbot._handle_file_restore('tok', 111, att, lambda: db)
         assert any('не похож на базу' in s for s in sent)
@@ -1118,7 +1118,7 @@ class TestFileRestoreViaBot:
                 def __exit__(self, *a):
                     return False
             return R()
-        monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+        monkeypatch.setattr(maxbot, 'open_raw_with_fallback', fake_open)
         att = {'type': 'file', 'payload': {'url': 'https://example.com/incomplete.db'}}
         maxbot._handle_file_restore('tok', 111, att, lambda: db)
         assert any('не похож на базу' in s for s in sent)
@@ -1139,7 +1139,7 @@ class TestFileRestoreViaBot:
                 def __exit__(self, *a):
                     return False
             return R()
-        monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+        monkeypatch.setattr(maxbot, 'open_raw_with_fallback', fake_open)
         att = {'type': 'file', 'payload': {'url': 'https://example.com/huge.db'}}
         maxbot._handle_file_restore('tok', 111, att, lambda: db)
         assert any('слишком большой' in s for s in sent)
@@ -1176,7 +1176,7 @@ class TestFileRestoreViaBot:
                     def __exit__(self, *a):
                         return False
                 return R()
-            monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+            monkeypatch.setattr(maxbot, 'open_raw_with_fallback', fake_open)
             att = {'type': 'file', 'payload': {'url': 'https://example.com/db.db'}}
             maxbot._handle_file_restore('tok', 111, att, lambda: db)
             # Check that restore succeeded (either detailed or simple message)
@@ -1526,3 +1526,60 @@ class TestFileRestoreViaBot:
         finally:
             maxbot._handle_file_restore = real_handle
             db.close = orig_close
+
+    def test_open_raw_with_fallback_returns_response_object(self, db, monkeypatch):
+        """Regression: open_raw_with_fallback must return a response object (not a parsed dict).
+
+        The download block does `with resp: data = resp.read()` which requires
+        a real response with __enter__/__exit__/read — not a dict.
+        """
+        db.set_setting('max_teacher_chat', '111')
+        valid_data = _make_valid_db_bytes_with_data(0, 0)
+        sent = []
+        restore_target = tempfile.mktemp(suffix='.db')
+        try:
+            with open(restore_target, 'wb') as f:
+                f.write(b'old data')
+            import api as _api
+            monkeypatch.setattr(_api, '_DB_PATH', restore_target)
+            monkeypatch.setattr('database.DB_PATH', restore_target)
+            monkeypatch.setattr(maxbot, 'send_message',
+                                lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True})
+            monkeypatch.setattr(_api, '_save_to_downloads_full',
+                                lambda data, fn, mt: ('/bak', None))
+            real_replace = os.replace
+            def fake_replace(src, dst):
+                with open(src, 'rb') as sf:
+                    d = sf.read()
+                with open(dst, 'wb') as df:
+                    df.write(d)
+            monkeypatch.setattr(os, 'replace', fake_replace)
+            # Use the real open_raw_with_fallback with a fake urlopen that returns a response-like object
+            from botcore import open_raw_with_fallback as real_open_raw
+            class FakeResponse:
+                def __init__(self, data):
+                    self._data = data
+                    self._idx = 0
+                def read(self, n=-1):
+                    if n == -1:
+                        result = self._data[self._idx:]
+                        self._idx = len(self._data)
+                    else:
+                        result = self._data[self._idx:self._idx + n]
+                        self._idx += len(result)
+                    return result
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    return False
+            def fake_urlopen(req, timeout=None):
+                return FakeResponse(valid_data)
+            att = {'type': 'file', 'payload': {'url': 'https://example.com/test.db'}}
+            maxbot._handle_file_restore('tok', 111, att, lambda: db, urlopen=fake_urlopen)
+            assert any('База восстановлена' in s for s in sent), f"Expected success reply, got: {sent}"
+        finally:
+            for f in (restore_target, restore_target + '-wal', restore_target + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass

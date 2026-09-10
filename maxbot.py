@@ -29,6 +29,7 @@ from botcore import (
     _fio,
     _fmt_date,
     _read_body,
+    open_raw_with_fallback,
     open_url_with_fallback,
     retry_on_connection,
 )
@@ -523,7 +524,7 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
         return
     try:
         req = urllib.request.Request(file_url)
-        resp = open_url_with_fallback(req, urlopen=urlopen, timeout=60)
+        resp = open_raw_with_fallback(req, urlopen=urlopen, timeout=60)
         with resp:
             data = resp.read()
     except Exception:

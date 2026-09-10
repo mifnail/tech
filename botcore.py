@@ -77,6 +77,35 @@ def open_url_with_fallback(req, urlopen=None, timeout: int = 35) -> dict:
         raise
 
 
+def open_raw_with_fallback(req, urlopen=None, timeout: int = 35):
+    """Perform urlopen, return the raw open response object (caller must read/close).
+
+    Mirror of open_url_with_fallback but does NOT parse the body — the caller
+    gets back the raw urllib response so it can read binary data etc.
+    Lets HTTPError propagate.  On CERTIFICATE_VERIFY_FAILED retries unverified
+    only when no injected urlopen.
+    """
+    try:
+        if urlopen is not None:
+            resp = urlopen(req, timeout=timeout)
+        else:
+            resp = urllib.request.urlopen(req, timeout=timeout, context=_ctx())
+        return resp
+    except urllib.error.HTTPError:
+        raise
+    except urllib.error.URLError as e:
+        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
+            try:
+                return urllib.request.urlopen(req, timeout=timeout, context=_UNVERIFIED_CTX)
+            except urllib.error.HTTPError:
+                raise
+            except urllib.error.URLError as e2:
+                raise e2
+            except Exception as e2:
+                raise e2
+        raise
+
+
 def retry_on_connection(fn, retries: int = 3, sleep: int = 2):
     """Calls fn(), retries ONLY errors whose str contains 'no connection', re-raises otherwise (incl. BotRateLimited)."""
     last = None
