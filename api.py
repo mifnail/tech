@@ -1280,16 +1280,20 @@ class BackupNotFound(Exception):
     """Raised when no backup file is found in Downloads."""
 
 
-def _validate_sqlite_bytes(data: bytes) -> None:
+def _validate_sqlite_bytes(data: bytes, require_schedule: bool = False) -> None:
     """Validate raw bytes look like a SQLite DB with required tables.
 
     Raises ValueError with a human message on invalid input.
+    When *require_schedule* is True the ``schedule`` table is also required
+    (used by the MAX-bot restore path).
     """
     if len(data) < 16:
         raise ValueError('file too small to be SQLite')
     if data[:16] != b'SQLite format 3\x00':
         raise ValueError('not a SQLite file')
     required = {'groups', 'students', 'subjects', 'lessons', 'grades'}
+    if require_schedule:
+        required = required | {'schedule'}
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
     try:
         tmp.write(data)
@@ -1309,20 +1313,12 @@ def _validate_sqlite_bytes(data: bytes) -> None:
         os.unlink(tmp.name)
 
 
-def _restore_from_bytes(data: bytes) -> None:
-    """Validate, auto-backup, checkpoint WAL, and atomically replace the DB.
+def _atomic_replace_db(data: bytes) -> None:
+    """Checkpoint WAL, write *data* to a temp file, then atomically replace DB.
 
-    Raises ValueError with a human message on bad input.
+    Also removes -wal / -shm sidecar files. Does **not** validate the data —
+    callers must validate beforehand. Safe to call from any thread.
     """
-    _validate_sqlite_bytes(data)
-    # Best-effort auto-backup of current DB
-    try:
-        with open(_DB_PATH, 'rb') as f:
-            old_data = f.read()
-        bak_name = f'teachhelper_backup_{_time.strftime("%Y%m%d_%H%M%S")}.db'
-        _save_to_downloads_full(old_data, bak_name, 'application/x-sqlite3')
-    except Exception:
-        pass
     # Checkpoint WAL and close all connections
     try:
         db = Database()
@@ -1342,6 +1338,23 @@ def _restore_from_bytes(data: bytes) -> None:
             os.unlink(sidecar)
         except OSError:
             pass
+
+
+def _restore_from_bytes(data: bytes) -> None:
+    """Validate, auto-backup, and atomically replace the DB.
+
+    Raises ValueError with a human message on bad input.
+    """
+    _validate_sqlite_bytes(data)
+    # Best-effort auto-backup of current DB
+    try:
+        with open(_DB_PATH, 'rb') as f:
+            old_data = f.read()
+        bak_name = f'teachhelper_backup_{_time.strftime("%Y%m%d_%H%M%S")}.db'
+        _save_to_downloads_full(old_data, bak_name, 'application/x-sqlite3')
+    except Exception:
+        pass
+    _atomic_replace_db(data)
 
 
 def _drain_pfd(pfd) -> bytes:

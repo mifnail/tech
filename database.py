@@ -727,4 +727,8 @@ class Database:
         self.add_schedule_entry(6, 2, math_id, 2)
 
     def close(self) -> None:
+        try:
+            self.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        except Exception:
+            pass
         self.conn.close()
