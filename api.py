@@ -1453,7 +1453,7 @@ def _list_backup_files() -> list[dict]:
         env = autoclass('android.os.Environment')
         dl = env.getExternalStoragePublicDirectory(env.DIRECTORY_DOWNLOADS)
         dl_path = str(dl.getAbsolutePath())
-        for path in _glob.glob(_glob.join(dl_path, 'teachhelper_*.db')):
+        for path in _glob.glob(os.path.join(dl_path, 'teachhelper_*.db')):
             name = os.path.basename(path)
             if name in seen:
                 continue
@@ -1719,6 +1719,16 @@ backup_bp = Blueprint('backup', __name__, url_prefix='/api')
 
 @backup_bp.route('/backup', methods=['POST'])
 def backup_db():
+    # Checkpoint WAL first: in WAL mode recent commits may live only in -wal,
+    # so a raw file copy without checkpoint would be stale/incomplete.
+    try:
+        _ck = get_db()
+        try:
+            _ck.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        finally:
+            _ck.close()
+    except Exception:
+        pass
     try:
         with open(_DB_PATH, 'rb') as f:
             data = f.read()
