@@ -544,3 +544,49 @@ class TestRestorePick:
                     os.unlink(f)
                 except OSError:
                     pass
+
+    def test_restore_pick_diag_desktop(self, client, monkeypatch):
+        """GET /api/restore/pick/diag reports {'android': False} off-device."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: False)
+        rv = client.get('/api/restore/pick/diag')
+        assert rv.status_code == 200
+        assert rv.json == {'android': False}
+
+    def test_on_pick_result_read_error_stores_error(self, monkeypatch):
+        """A read failure is recorded on the coordinator (stage='read')."""
+        class FakeUri:
+            def getLastPathSegment(self):
+                return 'picked.db'
+        class FakeIntent:
+            def getData(self):
+                return FakeUri()
+        class DummyResolver:
+            def query(self, *a, **k):
+                return None
+        _api_module._file_pick.update({'code': -1, 'bytes': None, 'name': None,
+                                      'error': None, 'stage': None})
+        _api_module._file_pick['event'].clear()
+        monkeypatch.setattr(_api_module, '_android_resolver', lambda: DummyResolver())
+
+        def boom(uri):
+            raise RuntimeError('cannot read stream')
+        monkeypatch.setattr(_api_module, '_read_picked_uri', boom)
+
+        _api_module._on_pick_result(_api_module._REQUEST_CODE, -1, FakeIntent())
+        assert _api_module._file_pick['stage'] == 'read'
+        assert 'cannot read stream' in _api_module._file_pick['error']
+        assert _api_module._file_pick['event'].is_set()
+
+    def test_restore_pick_surfaces_error(self, client, monkeypatch):
+        """The handler returns 500 with the exact stage + error text."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+
+        def fake_start():
+            _api_module._file_pick['stage'] = 'launch'
+            _api_module._file_pick['error'] = 'boom launch'
+            _api_module._file_pick['event'].set()
+        monkeypatch.setattr(_api_module, '_start_picker', fake_start)
+
+        rv = client.post('/api/restore/pick', json={})
+        assert rv.status_code == 500
+        assert rv.json['error'] == 'picker: launch: boom launch'

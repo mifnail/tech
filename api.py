@@ -1538,7 +1538,8 @@ def _find_latest_backup_bytes() -> tuple[bytes, str]:
 # threading.Event, and the API handler waits on that event while the user picks.
 _REQUEST_CODE = 4242
 _RESULT_OK = -1  # android.app.Activity.RESULT_OK is -1
-_file_pick = {'event': threading.Event(), 'bytes': None, 'name': None, 'code': -1}
+_file_pick = {'event': threading.Event(), 'bytes': None, 'name': None,
+              'code': -1, 'error': None, 'stage': None}
 _picker_bound = False
 
 
@@ -1563,17 +1564,85 @@ def _resolve_display_name(resolver, uri):
     return None
 
 
+def _drain_istream(stream) -> bytes:
+    """Read a pyjnius InputStream fully. Best-effort, never raises.
+
+    Prefers chunked reads into a Java byte[]; falls back to a bounded
+    single-byte read() loop when the pyjnius array helper is unavailable.
+    Returns b'' when nothing could be read so the caller can fall back.
+    """
+    try:
+        try:
+            from jnius import jarray
+        except Exception:
+            import jnius as _jnius
+            jarray = _jnius.jarray
+    except Exception:
+        jarray = None
+    if jarray is not None:
+        try:
+            buf = jarray('b')([0] * 65536)
+            out = bytearray()
+            while True:
+                n = stream.read(buf)
+                if n is None or n <= 0:
+                    break
+                out.extend(buf[:n])
+            return bytes(out)
+        except Exception:
+            return b''
+    # No array helper: bounded single-byte loop.
+    out = bytearray()
+    try:
+        while len(out) < 50 * 1024 * 1024:
+            b = stream.read()
+            if b is None or b < 0:
+                break
+            out.append(b)
+    except Exception:
+        pass
+    return bytes(out)
+
+
+def _read_picked_uri(uri) -> bytes:
+    """Read bytes from a picked content URI.
+
+    Tries openInputStream (looped read) first, then falls back to the proven
+    openFileDescriptor + _drain_pfd path. Raises on total failure.
+    """
+    resolver = _android_resolver()
+    try:
+        stream = resolver.openInputStream(uri)
+        if stream is not None:
+            try:
+                data = _drain_istream(stream)
+            finally:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            if data:
+                return data
+    except Exception:
+        pass
+    pfd = resolver.openFileDescriptor(uri, 'r')
+    return _drain_pfd(pfd)
+
+
 def _on_pick_result(code, result_code, intent):
     """activity_bind(on_activity_result=...): runs on the Android UI thread."""
     try:
         if code != _REQUEST_CODE:
             return
         _file_pick['code'] = code
+        _file_pick['stage'] = 'result'
         if result_code != _RESULT_OK:
+            # User cancelled — no error text; the handler returns 404.
             _file_pick['event'].set()
             return
         uri = intent.getData() if intent is not None else None
         if uri is None:
+            _file_pick['error'] = 'no data URI in result'
             _file_pick['event'].set()
             return
         try:
@@ -1585,58 +1654,62 @@ def _on_pick_result(code, result_code, intent):
         except Exception:
             pass
         try:
-            pfd = _android_resolver().openFileDescriptor(uri, 'r')
-            _file_pick['bytes'] = _drain_pfd(pfd)
-        except Exception:
+            _file_pick['bytes'] = _read_picked_uri(uri)
+        except Exception as e:
+            _file_pick['stage'] = 'read'
+            _file_pick['error'] = str(e)
             _file_pick['bytes'] = b''
         _file_pick['event'].set()
-    except Exception:
+    except Exception as e:
+        _file_pick['stage'] = 'result'
+        _file_pick['error'] = str(e)
         _file_pick['event'].set()
 
 
 def _start_picker():
-    """Launch ACTION_OPEN_DOCUMENT on Android (UI thread). Returns True if shown.
+    """Launch ACTION_OPEN_DOCUMENT on Android. Returns True if shown, None on desktop.
 
-    On non-Android returns None immediately; the caller decides how to react.
+    Binding the activity-result listener and starting the activity MUST happen
+    on the Android main/UI thread, so both are wrapped in run_on_ui_thread.
+    The listener is bound only once (guarded by the module-level _picker_bound).
     """
     if not _is_android():
         return None
-    global _picker_bound
-    from android.activity import bind as activity_bind
     from android.runnable import run_on_ui_thread
-    from jnius import autoclass, cast
+    from jnius import autoclass
 
-    Intent = autoclass('android.content.Intent')
-    String = autoclass('java.lang.String')
-
-    def _do_start():
+    def _ui():
+        # Runs on the Android main/UI thread.
+        global _picker_bound
+        if not _picker_bound:
+            try:
+                from android.activity import bind as activity_bind
+                activity_bind(on_activity_result=_on_pick_result)
+                _picker_bound = True
+            except Exception as e:
+                _file_pick['stage'] = 'bind'
+                _file_pick['error'] = str(e)
+                _file_pick['event'].set()
+                return
         try:
+            Intent = autoclass('android.content.Intent')
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             mActivity = PythonActivity.mActivity
             intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             intent.setType('*/*')
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            chooser = Intent.createChooser(
-                intent, cast('java.lang.CharSequence', String('Выберите файл базы')))
-            mActivity.startActivityForResult(chooser, _REQUEST_CODE)
-        except Exception:
-            # Launch failed — unblock the waiting handler.
+            mActivity.startActivityForResult(intent, _REQUEST_CODE)
+        except Exception as e:
+            _file_pick['stage'] = 'launch'
+            _file_pick['error'] = str(e)
             _file_pick['event'].set()
 
-    if not _picker_bound:
-        try:
-            activity_bind(on_activity_result=_on_pick_result)
-            _picker_bound = True
-        except Exception:
-            pass
-    _file_pick['code'] = -1
-    _file_pick['bytes'] = None
-    _file_pick['name'] = None
-    _file_pick['event'].clear()
     try:
-        run_on_ui_thread(_do_start)()
-    except Exception:
+        run_on_ui_thread(_ui)()
+    except Exception as e:
+        _file_pick['stage'] = 'launch'
+        _file_pick['error'] = str(e)
         _file_pick['event'].set()
     return True
 
@@ -1722,6 +1795,35 @@ def restore_named():
     return jsonify({'ok': True, 'name': name})
 
 
+@backup_bp.route('/restore/pick/diag', methods=['GET'])
+def restore_pick_diag():
+    """Report picker prerequisites without opening the picker (Android only)."""
+    if not _is_android():
+        return jsonify({'android': False})
+    report = {'android': True, 'bind': False, 'ui_thread': False,
+              'activity': False, 'picker_bound': bool(_picker_bound)}
+    errors = {}
+    try:
+        from android.activity import bind as _bind  # noqa: F401
+        report['bind'] = True
+    except Exception as e:
+        errors['bind'] = str(e)
+    try:
+        from android.runnable import run_on_ui_thread as _rui  # noqa: F401
+        report['ui_thread'] = True
+    except Exception as e:
+        errors['ui_thread'] = str(e)
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        report['activity'] = PythonActivity.mActivity is not None
+    except Exception as e:
+        errors['activity'] = str(e)
+    if errors:
+        report['errors'] = errors
+    return jsonify(report)
+
+
 @backup_bp.route('/restore/pick', methods=['POST'])
 def restore_pick():
     """Restore a DB file the user picks via the native Android document picker.
@@ -1734,12 +1836,19 @@ def restore_pick():
     _file_pick['code'] = -1
     _file_pick['bytes'] = None
     _file_pick['name'] = None
+    _file_pick['error'] = None
+    _file_pick['stage'] = None
     _file_pick['event'].clear()
     _start_picker()
     _file_pick['event'].wait(120)
     data = _file_pick['bytes']
     name = _file_pick['name']
+    stage = _file_pick['stage']
+    err = _file_pick['error']
     if not data:
+        if err:
+            msg = f'picker: {stage}: {err}' if stage else f'picker: {err}'
+            return jsonify({'error': msg}), 500
         return jsonify({'error': 'Выбор файла отменён или файл не найден'}), 404
     try:
         _restore_from_bytes(data)

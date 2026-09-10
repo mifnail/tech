@@ -760,6 +760,7 @@ App.Pages.settings = async function() {
   html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.confirmRestoreLatest()">Восстановить последнюю копию</button>`;
   html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.confirmRestoreList()">Восстановить из копии…</button>`;
   html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.restoreByPicker()">Выбрать файл (Android)</button>`;
+  html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.restorePickDiag()">Диагностика</button>`;
   html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
   html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
   html += `</div>`;
@@ -954,8 +955,29 @@ App.Pages.restoreByPicker = async function() {
     App.UI.notify('Восстановлено из ' + (r.name || 'выбранного файла'));
     App.Pages.settings();
   } catch (e) {
-    App.UI.notify(e.error || 'Ошибка восстановления');
+    const msg = (e && e.error) ? e.error : ((e && e.message) ? e.message : 'Ошибка восстановления');
+    App.UI.notify(msg);
   }
+};
+
+App.Pages.restorePickDiag = async function() {
+  let r;
+  try {
+    r = await App.API.get('/api/restore/pick/diag');
+  } catch (e) {
+    App.UI.notify((e && e.error) || 'Ошибка диагностики');
+    return;
+  }
+  const rows = Object.keys(r).map(k => {
+    let v = r[k];
+    if (v && typeof v === 'object') v = JSON.stringify(v);
+    return `<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;margin:4px 0"><span>${App.UI.escHtml(k)}</span><b>${App.UI.escHtml(String(v))}</b></div>`;
+  }).join('');
+  App.UI.showPopup(`
+    <h2>Диагностика выбора файла</h2>
+    <div style="margin-bottom:12px">${rows}</div>
+    <button class="btn btn-muted" onclick="App.UI.closePopup()">Закрыть</button>
+  `);
 };
 
 App.Pages.unbindBot = async function(studentId) {
