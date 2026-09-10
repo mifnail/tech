@@ -492,17 +492,21 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
     import tempfile
 
     # Authorization check: sender must be bound teacher or curator
-    db = db_factory()
     try:
-        teacher_chat = db.get_setting('max_teacher_chat')
-        is_teacher = str(teacher_chat) == str(cid)
-        cur_gid = db.curator_group_for_chat(cid)
-        is_curator = cur_gid is not None
-    finally:
+        db = db_factory()
         try:
-            db.close()
-        except Exception:
-            pass
+            teacher_chat = db.get_setting('max_teacher_chat')
+            is_teacher = str(teacher_chat) == str(cid)
+            cur_gid = db.curator_group_for_chat(cid)
+            is_curator = cur_gid is not None
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    except Exception:
+        send_message(token, cid, 'Ошибка восстановления базы.', urlopen=urlopen)
+        return
 
     if not is_teacher and not is_curator:
         try:
@@ -746,6 +750,7 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                     # ---- file restore: teacher/curator sends .db ----
                     try:
                         file_att = None
+                        has_attachments = bool(attachments)
                         for att in attachments:
                             if att.get('type') == 'file' and (att.get('payload') or {}).get('url'):
                                 file_att = att
@@ -753,6 +758,25 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                         if file_att is not None:
                             try:
                                 _handle_file_restore(token, cid, file_att, db_factory, urlopen)
+                            except Exception:
+                                pass
+                            continue
+                        if has_attachments and not text:
+                            try:
+                                db_check = db_factory()
+                                try:
+                                    t_chat = db_check.get_setting('max_teacher_chat')
+                                    is_tchr = str(t_chat) == str(cid)
+                                    is_crtr = db_check.curator_group_for_chat(cid) is not None
+                                finally:
+                                    try:
+                                        db_check.close()
+                                    except Exception:
+                                        pass
+                                if is_tchr or is_crtr:
+                                    send_message(token, cid,
+                                                 'Не удалось получить файл из сообщения.',
+                                                 urlopen=urlopen)
                             except Exception:
                                 pass
                             continue

@@ -1198,6 +1198,36 @@ class TestFileRestoreViaBot:
                 except OSError:
                     pass
 
+    def test_db_factory_raises_sends_error_reply(self, db, monkeypatch):
+        """db_factory() raising produces error reply, not silence."""
+        sent = []
+        def fake_send(token, chat_id, text, urlopen=None):
+            sent.append(text)
+            return {'ok': True}
+        monkeypatch.setattr(maxbot, 'send_message', fake_send)
+
+        def broken_factory():
+            raise RuntimeError('db is broken')
+
+        att = {'type': 'file', 'payload': {'url': 'https://example.com/test.db'}}
+        maxbot._handle_file_restore('tok', 111, att, broken_factory)
+        assert any('Ошибка восстановления базы.' in s for s in sent)
+
+    def test_teacher_attachment_without_url_gets_reply(self, db, monkeypatch):
+        """Teacher sends attachment with no url → explicit reply, not silence."""
+        db.set_setting('max_teacher_chat', '111')
+        sent = []
+        monkeypatch.setattr(maxbot, 'send_message',
+                            lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True})
+        # _handle_file_restore would get an attachment with no url in payload
+        att = {'type': 'file', 'payload': {}}
+        maxbot._handle_file_restore('tok', 111, att, lambda: db)
+        # With no url, _handle_file_restore returns silently before reaching any
+        # send_message — but the polling-level handler catches this case.
+        # For _handle_file_restore directly, no url means silent return.
+        # The polling-level fix sends the reply. Verify via the polling path.
+        assert sent == []  # _handle_file_restore itself is silent for missing url
+
     def test_run_polling_skips_text_processing_for_file(self, db):
         """run_polling processes file attachment without calling process_text."""
         db.set_setting('max_teacher_chat', '111')
@@ -1290,4 +1320,113 @@ class TestFileRestoreViaBot:
             assert not file_seen[0]
         finally:
             maxbot._handle_file_restore = real_handle
+            db.close = orig_close
+
+    def test_run_polling_teacher_attachment_no_url_gets_reply(self, db):
+        """Teacher sends attachment without url → explicit reply, not silence."""
+        db.set_setting('max_teacher_chat', '111')
+        orig_close = db.close
+        db.close = lambda: None
+        stop = threading.Event()
+        sent = []
+        real_handle = maxbot._handle_file_restore
+        # Spy: record calls but don't process
+        handle_calls = []
+        def spy_handle(token, cid, file_att, db_factory, urlopen=None):
+            handle_calls.append(file_att)
+        maxbot._handle_file_restore = spy_handle
+        real_send = maxbot.send_message
+        maxbot.send_message = lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True}
+        try:
+            # Attachment with type=file but no url in payload
+            updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
+                'body': {'text': ''},
+                'recipient': {'chat_id': 111},
+                'attachments': [{'type': 'file', 'payload': {}}],
+            }}], 'marker': 1}
+            responses = iter([
+                ('json', updates_resp),
+                ('json', {'ok': True}),
+            ])
+            def fake(req, timeout=None, **kw):
+                try:
+                    kind, payload = next(responses)
+                except StopIteration:
+                    stop.set()
+                    return FakeResp(json.dumps({'updates': [], 'marker': 99}).encode())
+                raw_body = getattr(req, 'data', None)
+                body_data = None
+                if raw_body:
+                    try:
+                        body_data = json.loads(raw_body)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        body_data = raw_body
+                if kind == 'json':
+                    return FakeResp(json.dumps(payload).encode())
+                raise AssertionError
+            t = threading.Thread(target=maxbot.run_polling,
+                                  args=('tok', lambda: db, stop, fake))
+            t.start()
+            t.join(timeout=5)
+            assert not t.is_alive()
+            # _handle_file_restore NOT called (no url → doesn't match file_att)
+            assert len(handle_calls) == 0
+            # But teacher/curator gets an explicit reply
+            assert any('Не удалось получить файл из сообщения.' in s for s in sent)
+        finally:
+            maxbot._handle_file_restore = real_handle
+            maxbot.send_message = real_send
+            db.close = orig_close
+
+    def test_run_polling_student_attachment_no_url_stays_silent(self, db):
+        """Student sends attachment without url → silent (bind prompt flow)."""
+        _, _, st = _seed(db)
+        db.bind_max(111, st)
+        orig_close = db.close
+        db.close = lambda: None
+        stop = threading.Event()
+        sent = []
+        real_handle = maxbot._handle_file_restore
+        handle_calls = []
+        def spy_handle(token, cid, file_att, db_factory, urlopen=None):
+            handle_calls.append(file_att)
+        maxbot._handle_file_restore = spy_handle
+        real_send = maxbot.send_message
+        maxbot.send_message = lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True}
+        try:
+            updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
+                'body': {'text': ''},
+                'recipient': {'chat_id': 111},
+                'attachments': [{'type': 'file', 'payload': {}}],
+            }}], 'marker': 1}
+            responses = iter([
+                ('json', updates_resp),
+            ])
+            def fake(req, timeout=None, **kw):
+                try:
+                    kind, payload = next(responses)
+                except StopIteration:
+                    stop.set()
+                    return FakeResp(json.dumps({'updates': [], 'marker': 99}).encode())
+                raw_body = getattr(req, 'data', None)
+                body_data = None
+                if raw_body:
+                    try:
+                        body_data = json.loads(raw_body)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        body_data = raw_body
+                if kind == 'json':
+                    return FakeResp(json.dumps(payload).encode())
+                raise AssertionError
+            t = threading.Thread(target=maxbot.run_polling,
+                                  args=('tok', lambda: db, stop, fake))
+            t.start()
+            t.join(timeout=5)
+            assert not t.is_alive()
+            assert len(handle_calls) == 0
+            # Student gets no explicit "no file" reply — silent, text=None continue
+            assert not any('Не удалось получить файл' in s for s in sent)
+        finally:
+            maxbot._handle_file_restore = real_handle
+            maxbot.send_message = real_send
             db.close = orig_close
