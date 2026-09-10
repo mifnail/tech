@@ -1701,17 +1701,77 @@ def _on_pick_result(code, result_code, intent):
         _file_pick['event'].set()
 
 
-def _start_picker():
-    """Launch ACTION_OPEN_DOCUMENT on Android. Returns True if shown, None on desktop.
+_activity_source_name = None
 
-    Binding the activity-result listener and starting the activity MUST happen
-    on the Android main/UI thread, so both are wrapped in run_on_ui_thread.
-    The listener is bound only once (guarded by the module-level _picker_bound).
+
+def _activity_source():
+    """Name of the source that last supplied the picker activity, or None."""
+    return _activity_source_name
+
+
+def _get_picker_activity():
+    """Return an Android Activity usable for the picker, or None.
+
+    Records which source worked (readable via _activity_source()). Tries
+    org.kivy.android.PythonActivity first (app-local class; unavailable in some
+    webview bootstraps), then the C-extension android.mActivity.
+    """
+    global _activity_source_name
+    _activity_source_name = None
+    try:
+        from jnius import autoclass  # noqa — Android only
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        act = PythonActivity.mActivity
+        if act is not None:
+            _activity_source_name = 'PythonActivity'
+            return act
+    except Exception:
+        pass
+    try:
+        from android import mActivity as _mActivity  # noqa — Android only
+        if _mActivity is not None:
+            _activity_source_name = 'android.mActivity'
+            return _mActivity
+    except Exception:
+        pass
+    return None
+
+
+def _picker_available() -> bool:
+    """True when the native picker can run: imports work and an activity is reachable."""
+    try:
+        from android.activity import bind as _bind  # noqa: F401
+        from android.runnable import run_on_ui_thread as _rui  # noqa: F401
+    except Exception:
+        return False
+    return _get_picker_activity() is not None
+
+
+def _start_picker():
+    """Launch ACTION_OPEN_DOCUMENT on Android. Never raises.
+
+    Returns 'started' when the intent was dispatched, 'unavailable' when the
+    picker prerequisites are missing (imports/activity). On failure the stage
+    and error are recorded on the coordinator and the event is set so the
+    waiting handler returns promptly instead of hanging.
     """
     if not _is_android():
-        return None
-    from android.runnable import run_on_ui_thread
-    from jnius import autoclass
+        return 'unavailable'
+    try:
+        from android.runnable import run_on_ui_thread
+        from jnius import autoclass
+    except Exception as e:
+        _file_pick['stage'] = 'bind'
+        _file_pick['error'] = str(e)
+        _file_pick['event'].set()
+        return 'unavailable'
+
+    activity = _get_picker_activity()
+    if activity is None:
+        _file_pick['stage'] = 'bind'
+        _file_pick['error'] = 'activity unavailable (PythonActivity/android.mActivity)'
+        _file_pick['event'].set()
+        return 'unavailable'
 
     def _ui():
         # Runs on the Android main/UI thread.
@@ -1728,13 +1788,11 @@ def _start_picker():
                 return
         try:
             Intent = autoclass('android.content.Intent')
-            PythonActivity = autoclass('org.kivy.android.PythonActivity')
-            mActivity = PythonActivity.mActivity
             intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             intent.setType('*/*')
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            mActivity.startActivityForResult(intent, _REQUEST_CODE)
+            activity.startActivityForResult(intent, _REQUEST_CODE)
         except Exception as e:
             _file_pick['stage'] = 'launch'
             _file_pick['error'] = str(e)
@@ -1746,7 +1804,8 @@ def _start_picker():
         _file_pick['stage'] = 'launch'
         _file_pick['error'] = str(e)
         _file_pick['event'].set()
-    return True
+        return 'unavailable'
+    return 'started'
 
 
 backup_bp = Blueprint('backup', __name__, url_prefix='/api')
@@ -1864,6 +1923,8 @@ def restore_pick_diag():
         report['activity'] = PythonActivity.mActivity is not None
     except Exception as e:
         errors['activity'] = str(e)
+    report['picker_available'] = _picker_available()
+    report['activity_source'] = _activity_source()
     if errors:
         report['errors'] = errors
     return jsonify(report)
@@ -1922,42 +1983,57 @@ def restore_pick():
 
     The Flask handler launches the picker and waits for the UI-thread callback
     to hand back a content URI; bytes are then read HERE (never on the UI
-    thread) before restoring.
+    thread) before restoring. This route ALWAYS returns JSON — it never raises,
+    so the WebView can't receive an HTML error page.
     """
-    if not _is_android():
-        return jsonify({'error': 'Доступно только на Android'}), 400
-    _file_pick['code'] = -1
-    _file_pick['uri'] = None
-    _file_pick['name'] = None
-    _file_pick['error'] = None
-    _file_pick['stage'] = None
-    _file_pick['event'].clear()
-    _start_picker()
-    if not _file_pick['event'].wait(_PICK_TIMEOUT):
-        return jsonify({'error': 'picker: timeout: нет ответа от выбора файла'}), 504
-    uri = _file_pick['uri']
-    name = _file_pick['name']
-    stage = _file_pick['stage']
-    err = _file_pick['error']
-    if uri is None:
-        if err:
-            msg = f'picker: {stage}: {err}' if stage else f'picker: {err}'
-            return jsonify({'error': msg}), 500
-        return jsonify({'error': 'Выбор файла отменён'}), 404
-    # Read bytes in THIS Flask thread (never on the UI thread).
     try:
-        data = _read_picked_uri(uri)
+        if not _is_android():
+            return jsonify({'error': 'Доступно только на Android'}), 400
+        if not _picker_available():
+            return jsonify({
+                'error': 'Нативный выбор файла недоступен на этом устройстве — используйте «Восстановить из копии…»',
+                'picker': False,
+            }), 503
+        _file_pick['code'] = -1
+        _file_pick['uri'] = None
+        _file_pick['name'] = None
+        _file_pick['error'] = None
+        _file_pick['stage'] = None
+        _file_pick['event'].clear()
+        try:
+            _start_picker()
+        except Exception as e:
+            _file_pick['stage'] = 'launch'
+            _file_pick['error'] = str(e)
+            _file_pick['event'].set()
+        if not _file_pick['event'].wait(_PICK_TIMEOUT):
+            return jsonify({'error': 'picker: timeout: нет ответа от выбора файла'}), 504
+        uri = _file_pick['uri']
+        name = _file_pick['name']
+        stage = _file_pick['stage']
+        err = _file_pick['error']
+        if uri is None:
+            if err:
+                msg = f'picker: {stage}: {err}' if stage else f'picker: {err}'
+                return jsonify({'error': msg}), 500
+            return jsonify({'error': 'Выбор файла отменён'}), 404
+        # Read bytes in THIS Flask thread (never on the UI thread).
+        try:
+            data = _read_picked_uri(uri)
+        except Exception as e:
+            return jsonify({'error': f'picker: read: {e}'}), 500
+        if not data:
+            return jsonify({'error': 'Выбор файла отменён или файл пуст'}), 404
+        try:
+            _restore_from_bytes(data)
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+        except Exception as e:
+            return jsonify({'error': f'restore failed: {e}'}), 500
+        return jsonify({'ok': True, 'name': name})
     except Exception as e:
-        return jsonify({'error': f'picker: read: {e}'}), 500
-    if not data:
-        return jsonify({'error': 'Выбор файла отменён или файл пуст'}), 404
-    try:
-        _restore_from_bytes(data)
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
-    except Exception as e:
-        return jsonify({'error': f'restore failed: {e}'}), 500
-    return jsonify({'ok': True, 'name': name})
+        # Final safety net: never let the WebView see an HTML error page.
+        return jsonify({'error': f'picker: {e}'}), 500
 
 
 app.register_blueprint(backup_bp)

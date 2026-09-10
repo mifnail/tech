@@ -602,6 +602,7 @@ class TestRestorePick:
             monkeypatch.setattr(_api_module, '_save_to_downloads_full',
                                 lambda data, fn, mt: ('/bak', None))
             monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+            monkeypatch.setattr(_api_module, '_picker_available', lambda: True)
             monkeypatch.setattr(_api_module, '_restore_from_bytes',
                                 lambda data: captured.update(data=data))
             monkeypatch.setattr(_api_module, '_read_picked_uri', lambda uri: valid_data)
@@ -627,6 +628,7 @@ class TestRestorePick:
     def test_restore_pick_timeout_504(self, client, monkeypatch):
         """No callback before the timeout returns 504."""
         monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+        monkeypatch.setattr(_api_module, '_picker_available', lambda: True)
         monkeypatch.setattr(_api_module, '_PICK_TIMEOUT', 0)
         monkeypatch.setattr(_api_module, '_start_picker', lambda: None)
 
@@ -637,6 +639,7 @@ class TestRestorePick:
     def test_restore_pick_cancelled_404(self, client, monkeypatch):
         """A cancelled pick (no URI, no error) returns 404."""
         monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+        monkeypatch.setattr(_api_module, '_picker_available', lambda: True)
 
         def fake_start():
             _api_module._file_pick['stage'] = 'result'
@@ -650,6 +653,7 @@ class TestRestorePick:
     def test_restore_pick_read_error_500(self, client, monkeypatch):
         """A byte-read failure in the handler is surfaced with stage='read'."""
         monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+        monkeypatch.setattr(_api_module, '_picker_available', lambda: True)
 
         def fake_start():
             _api_module._file_pick['uri'] = object()
@@ -674,6 +678,7 @@ class TestRestorePick:
     def test_restore_pick_surfaces_error(self, client, monkeypatch):
         """The handler returns 500 with the exact stage + error text."""
         monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+        monkeypatch.setattr(_api_module, '_picker_available', lambda: True)
 
         def fake_start():
             _api_module._file_pick['stage'] = 'launch'
@@ -684,6 +689,42 @@ class TestRestorePick:
         rv = client.post('/api/restore/pick', json={})
         assert rv.status_code == 500
         assert rv.json['error'] == 'picker: launch: boom launch'
+
+    def test_restore_pick_unavailable_503(self, client, monkeypatch):
+        """When the picker is unavailable the route returns 503 JSON."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+        monkeypatch.setattr(_api_module, '_picker_available', lambda: False)
+        rv = client.post('/api/restore/pick', json={})
+        assert rv.status_code == 503
+        assert rv.json['picker'] is False
+        assert 'недоступен' in rv.json['error']
+
+    def test_restore_pick_start_raises_returns_json(self, client, monkeypatch):
+        """A raising _start_picker becomes a JSON 500, never HTML."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+        monkeypatch.setattr(_api_module, '_picker_available', lambda: True)
+
+        def boom():
+            raise RuntimeError('kaboom')
+        monkeypatch.setattr(_api_module, '_start_picker', boom)
+
+        rv = client.post('/api/restore/pick', json={})
+        assert rv.status_code == 500
+        assert rv.json['error'] == 'picker: launch: kaboom'
+        assert rv.content_type.startswith('application/json')
+
+    def test_restore_pick_diag_android_shape(self, client, monkeypatch):
+        """Android-path diag exposes picker_available + activity_source."""
+        monkeypatch.setattr(_api_module, '_is_android', lambda: True)
+        rv = client.get('/api/restore/pick/diag')
+        assert rv.status_code == 200
+        body = rv.json
+        for key in ('android', 'bind', 'ui_thread', 'activity',
+                    'picker_bound', 'picker_available', 'activity_source'):
+            assert key in body, key
+        assert body['android'] is True
+        # No android/jnius modules on desktop, so the picker is unavailable.
+        assert body['picker_available'] is False
 
 
 class TestLatestExcludesAutobackup:

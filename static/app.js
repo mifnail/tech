@@ -21,9 +21,18 @@ App.API = {
       headers: body ? { 'Content-Type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : undefined
     });
-    if (res.ok) return res.json();
-    const err = await res.json();
-    throw err;
+    // Read the body exactly once and never call res.json(): an HTML error page
+    // would otherwise throw "unexpected token '<'" straight into the UI.
+    const text = await res.text();
+    let data = null;
+    let isJson = false;
+    try { data = text ? JSON.parse(text) : null; isJson = true; } catch (e) { isJson = false; }
+    if (res.ok) {
+      if (!isJson) throw { error: 'Сервер вернул не-JSON (' + res.status + ')' };
+      return data;
+    }
+    if (isJson && data) throw data;
+    throw { error: 'HTTP ' + res.status };
   },
   get(path) { return this.request('GET', path); },
   post(path, body) { return this.request('POST', path, body); },
@@ -728,7 +737,12 @@ App.Pages.settings = async function() {
   let mx = { has_token: false, enabled: false };
   try { mx = await App.API.get('/api/settings/maxbot'); } catch (e) {}
   let android = false;
-  try { const d = await App.API.get('/api/restore/pick/diag'); android = !!(d && d.android); } catch (e) {}
+  let pickerAvailable = false;
+  try {
+    const d = await App.API.get('/api/restore/pick/diag');
+    android = !!(d && d.android);
+    pickerAvailable = !!(d && d.picker_available);
+  } catch (e) {}
   let allFiles = true;
   if (android) {
     try { const a = await App.API.get('/api/restore/access'); allFiles = !!(a && a.granted); } catch (e) {}
@@ -766,7 +780,11 @@ App.Pages.settings = async function() {
   html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.confirmRestoreLatest()">Восстановить последнюю копию</button>`;
   html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.confirmRestoreList()">Восстановить из копии…</button>`;
   if (android) {
-    html += `<button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="App.Pages.restoreByPicker()">Выбрать файл (Android)</button>`;
+    if (pickerAvailable) {
+      html += `<button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="App.Pages.restoreByPicker()">Выбрать файл (Android)</button>`;
+    } else {
+      html += `<div style="font-size:12px;color:var(--color-text-muted);margin-top:6px">Нативный выбор файла недоступен на этом устройстве</div>`;
+    }
     if (!allFiles) {
       html += `<div style="margin-top:8px;padding:8px 10px;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:rgba(245,158,11,0.08)">
         <div style="font-size:12px;color:var(--color-text-muted)">Для поиска всех копий нужно разрешить доступ ко всем файлам</div>
