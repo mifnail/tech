@@ -1,4 +1,4 @@
-"""main.py — TeachHelper4 (LessonTracker)
+"""main.py — Учет занятий
 Desktop:  python main.py
 Prod:     python main.py --prod
 Android:  p4a webview bootstrap

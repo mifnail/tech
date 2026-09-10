@@ -453,35 +453,6 @@ def _get_marker(db) -> int | None:
 _MAX_FILE_RESTORE_CAP = 50 * 1024 * 1024  # 50 MB
 
 
-def _validate_sqlite_bytes_local(data: bytes) -> None:
-    """Validate raw bytes look like a SQLite DB with required tables.
-
-    Local copy — avoids importing api (circular). Raises ValueError on bad input.
-    """
-    if len(data) < 16:
-        raise ValueError('file too small to be SQLite')
-    if data[:16] != b'SQLite format 3\x00':
-        raise ValueError('not a SQLite file')
-    required = {'groups', 'students', 'subjects', 'schedule', 'lessons', 'grades'}
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
-    try:
-        tmp.write(data)
-        tmp.close()
-        conn = sqlite3.connect(tmp.name)
-        try:
-            rows = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-            found = {r[0] for r in rows}
-            missing = required - found
-            if missing:
-                raise ValueError(f'missing tables: {", ".join(sorted(missing))}')
-        finally:
-            conn.close()
-    finally:
-        os.unlink(tmp.name)
-
-
 def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlopen=None):
     """Handle .db file sent by teacher/curator in bot chat.
 
@@ -565,41 +536,21 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
             pass
         return
 
-    # Validate SQLite + required tables
+    # Validate SQLite + required tables (delegates to api)
     try:
-        _validate_sqlite_bytes_local(data)
+        import api as _api
+        _api._validate_sqlite_bytes(data, require_schedule=True)
     except ValueError as e:
         try:
-            send_message(token, cid, 'Файл не похож на базу TeachHelper.', urlopen=urlopen)
+            send_message(token, cid, 'Файл не похож на базу «Учет занятий».', urlopen=urlopen)
         except Exception:
             pass
         return
 
-    # Restore: use api._restore_from_bytes via lazy import
+    # Restore: delegate to api._restore_from_bytes (includes backup + atomic replace)
     try:
-        try:
-            import api as _api
-            _api._restore_from_bytes(data)
-        except Exception:
-            # Fallback: checkpoint + atomic replace + sidecar cleanup
-            from database import DB_PATH
-            try:
-                d = Database()
-                try:
-                    d.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-                finally:
-                    d.close()
-            except Exception:
-                pass
-            tmp_path = DB_PATH + '.tmp_restore'
-            with open(tmp_path, 'wb') as f:
-                f.write(data)
-            os.replace(tmp_path, DB_PATH)
-            for sidecar in (DB_PATH + '-wal', DB_PATH + '-shm'):
-                try:
-                    os.unlink(sidecar)
-                except OSError:
-                    pass
+        import api as _api
+        _api._restore_from_bytes(data)
     except Exception:
         try:
             send_message(token, cid, 'Ошибка восстановления базы.', urlopen=urlopen)

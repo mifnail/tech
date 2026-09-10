@@ -745,10 +745,6 @@ App.Pages.settings = async function() {
     android = !!(d && d.android);
     pickerAvailable = !!(d && d.picker_available);
   } catch (e) {}
-  let allFiles = true;
-  if (android) {
-    try { const a = await App.API.get('/api/restore/access'); allFiles = !!(a && a.granted); } catch (e) {}
-  }
   let html = App.Nav.render();
   html += `<h1>Настройки</h1>`;
   html += `<div class="card"><div class="card-title">Telegram-бот «Мои оценки»</div>`;
@@ -779,7 +775,6 @@ App.Pages.settings = async function() {
   html += `<div class="card"><div class="card-title">Бэкап</div>`;
   html += `<div class="card-sub" style="margin-bottom:8px">Создать резервную копию или восстановить данные.</div>`;
   html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.doBackup()">Выгрузить копию</button>`;
-  html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.confirmRestoreLatest()">Восстановить последнюю копию</button>`;
   html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.confirmRestoreList()">Восстановить из копии…</button>`;
   if (android) {
     if (pickerAvailable) {
@@ -787,20 +782,13 @@ App.Pages.settings = async function() {
     } else {
       html += `<div style="font-size:12px;color:var(--color-text-muted);margin-top:6px">Нативный выбор файла недоступен на этом устройстве</div>`;
     }
-    if (!allFiles) {
-      html += `<div style="margin-top:8px;padding:8px 10px;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:rgba(245,158,11,0.08)">
-        <div style="font-size:12px;color:var(--color-text-muted)">Для поиска всех копий нужно разрешить доступ ко всем файлам</div>
-        <button class="btn btn-muted btn-sm" style="margin-top:6px" onclick="App.Pages.requestAllFilesAccess()">Разрешить доступ</button>
-      </div>`;
-    }
   } else {
     html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
     html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
   }
-  html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.restorePickDiag()">Диагностика</button>`;
   html += `</div>`;
   html += `<div class="card" style="opacity:0.85"><div class="card-title">Поддержать проект</div>`;
-  html += `<div class="card-sub" style="margin-bottom:8px">Если TeachHelper экономит вам время — можно сказать спасибо ☕</div>`;
+  html += `<div class="card-sub" style="margin-bottom:8px">Если «Учет занятий» экономит вам время — можно сказать спасибо ☕</div>`;
   html += `<button class="btn btn-muted btn-sm" onclick="window.open('https://boosty.to/mifnail/donate', '_blank')">Поддержать</button>`;
   html += `</div>`;
   html += `<div style="font-size:11px;color:var(--color-text-muted);text-align:center;margin-top:4px">сборка ${App.UI.escHtml(appVer) || '?'}</div>`;
@@ -917,41 +905,6 @@ App.Pages.confirmRestore = async function() {
   }
 };
 
-App.Pages.confirmRestoreLatest = async function() {
-  App.UI.showPopup(`
-    <h2>Восстановить последнюю копию?</h2>
-    <p style="margin-bottom:12px">Текущая база данных будет заменена последним бэкапом из «Загрузок». Все несохранённые изменения будут потеряны.</p>
-    <div class="grid-2">
-      <button class="btn btn-danger" onclick="App.Pages.restoreLatest()">Да, заменить</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
-    </div>
-  `);
-};
-
-App.Pages._restoreMsg = function(e) {
-  const raw = (e && e.error) ? e.error : ((e && e.message) ? e.message : '');
-  let msg;
-  if (!raw) msg = 'Ошибка восстановления';
-  else if (raw.indexOf('no backup files found') >= 0) msg = 'Резервные копии не найдены';
-  else if (raw.indexOf('no backup file') >= 0) msg = 'Файл копии не найден';
-  else if (raw.indexOf('no file') >= 0) msg = 'Файл не выбран';
-  else msg = raw;
-  return msg + ' — попробуйте выбор файла';
-};
-
-App.Pages.restoreLatest = async function() {
-  App.UI.closePopup();
-  App.Loading.show();
-  try {
-    const r = await App.API.post('/api/restore/latest');
-    App.UI.notify('Данные восстановлены из ' + (r.name || 'последнего бэкапа'));
-    App.Pages.settings();
-  } catch (e) {
-    App.UI.notify(App.Pages._restoreMsg(e));
-    App.Pages.settings();
-  }
-};
-
 App.Pages.confirmRestoreList = async function() {
   let r;
   try {
@@ -1017,48 +970,6 @@ App.Pages.restoreByPicker = async function() {
   } catch (e) {
     const msg = (e && e.error) ? e.error : ((e && e.message) ? e.message : 'Ошибка восстановления');
     App.UI.notify(msg);
-  }
-};
-
-App.Pages.restorePickDiag = async function() {
-  let r;
-  try {
-    r = await App.API.get('/api/restore/pick/diag');
-  } catch (e) {
-    App.UI.notify((e && e.error) || 'Ошибка диагностики');
-    return;
-  }
-  const rows = Object.keys(r).map(k => {
-    let v = r[k];
-    if (v && typeof v === 'object') v = JSON.stringify(v);
-    return `<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;margin:4px 0"><span>${App.UI.escHtml(k)}</span><b>${App.UI.escHtml(String(v))}</b></div>`;
-  }).join('');
-  App.UI.showPopup(`
-    <h2>Диагностика выбора файла</h2>
-    <div style="margin-bottom:12px">${rows}</div>
-    <button class="btn btn-muted" onclick="App.UI.closePopup()">Закрыть</button>
-  `);
-};
-
-App.Pages.requestAllFilesAccess = async function() {
-  try {
-    const r = await App.API.post('/api/restore/request-access', {});
-    if (r && r.granted) {
-      App.UI.notify('Доступ ко всем файлам разрешён');
-      App.Pages.settings();
-      return;
-    }
-    App.UI.notify('Включите «Доступ ко всем файлам» и вернитесь в приложение');
-    const recheck = () => {
-      if (document.hidden) return;
-      window.removeEventListener('focus', recheck);
-      document.removeEventListener('visibilitychange', recheck);
-      if (location.hash.split('?')[0] === '#settings') App.Pages.settings();
-    };
-    window.addEventListener('focus', recheck);
-    document.addEventListener('visibilitychange', recheck);
-  } catch (e) {
-    App.UI.notify((e && e.error) || 'Не удалось открыть настройки');
   }
 };
 

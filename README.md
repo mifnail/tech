@@ -1,4 +1,4 @@
-# TeachHelper4 — журнал преподавателя (LessonTracker)
+# Учет занятий — журнал преподавателя
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Privacy](https://img.shields.io/badge/Политика-приватности-green.svg)](https://mifnail.github.io/tech/PRIVACY.md)
