@@ -8,8 +8,11 @@ Polling идёт в daemon-потоке рядом с Flask — входящие
 from __future__ import annotations
 
 import json
+import os
 import random
+import sqlite3
 import string
+import tempfile
 import threading
 import time
 import urllib.error
@@ -446,6 +449,155 @@ def _get_marker(db) -> int | None:
         return None
 
 
+_MAX_FILE_RESTORE_CAP = 50 * 1024 * 1024  # 50 MB
+
+
+def _validate_sqlite_bytes_local(data: bytes) -> None:
+    """Validate raw bytes look like a SQLite DB with required tables.
+
+    Local copy — avoids importing api (circular). Raises ValueError on bad input.
+    """
+    if len(data) < 16:
+        raise ValueError('file too small to be SQLite')
+    if data[:16] != b'SQLite format 3\x00':
+        raise ValueError('not a SQLite file')
+    required = {'groups', 'students', 'subjects', 'schedule', 'lessons', 'grades'}
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+    try:
+        tmp.write(data)
+        tmp.close()
+        conn = sqlite3.connect(tmp.name)
+        try:
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            found = {r[0] for r in rows}
+            missing = required - found
+            if missing:
+                raise ValueError(f'missing tables: {", ".join(sorted(missing))}')
+        finally:
+            conn.close()
+    finally:
+        os.unlink(tmp.name)
+
+
+def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlopen=None):
+    """Handle .db file sent by teacher/curator in bot chat.
+
+    Downloads the file, validates, and restores the DB. Always best-effort
+    (never crashes polling).
+    """
+    import os
+    import sqlite3
+    import tempfile
+
+    # Authorization check: sender must be bound teacher or curator
+    db = db_factory()
+    try:
+        teacher_chat = db.get_setting('max_teacher_chat')
+        is_teacher = str(teacher_chat) == str(cid)
+        cur_gid = db.curator_group_for_chat(cid)
+        is_curator = cur_gid is not None
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    if not is_teacher and not is_curator:
+        try:
+            send_message(token, cid,
+                         'Файлы принимает только преподаватель/куратор.',
+                         urlopen=urlopen)
+        except Exception:
+            pass
+        return
+
+    # Download file bytes
+    file_url = (file_att.get('payload') or {}).get('url')
+    if not file_url:
+        return
+    try:
+        req = urllib.request.Request(file_url)
+        resp = open_url_with_fallback(req, urlopen=urlopen, timeout=60)
+        with resp:
+            data = resp.read()
+    except Exception:
+        try:
+            send_message(token, cid, 'Не удалось загрузить файл.', urlopen=urlopen)
+        except Exception:
+            pass
+        return
+
+    if len(data) > _MAX_FILE_RESTORE_CAP:
+        try:
+            send_message(token, cid, 'Файл слишком большой (макс. 50 МБ).', urlopen=urlopen)
+        except Exception:
+            pass
+        return
+
+    # Validate SQLite + required tables
+    try:
+        _validate_sqlite_bytes_local(data)
+    except ValueError as e:
+        try:
+            send_message(token, cid, 'Файл не похож на базу TeachHelper.', urlopen=urlopen)
+        except Exception:
+            pass
+        return
+
+    # Restore: use api._restore_from_bytes via lazy import
+    try:
+        try:
+            import api as _api
+            _api._restore_from_bytes(data)
+        except Exception:
+            # Fallback: checkpoint + atomic replace + sidecar cleanup
+            from database import DB_PATH
+            try:
+                d = Database()
+                try:
+                    d.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                finally:
+                    d.close()
+            except Exception:
+                pass
+            tmp_path = DB_PATH + '.tmp_restore'
+            with open(tmp_path, 'wb') as f:
+                f.write(data)
+            os.replace(tmp_path, DB_PATH)
+            for sidecar in (DB_PATH + '-wal', DB_PATH + '-shm'):
+                try:
+                    os.unlink(sidecar)
+                except OSError:
+                    pass
+    except Exception:
+        try:
+            send_message(token, cid, 'Ошибка восстановления базы.', urlopen=urlopen)
+        except Exception:
+            pass
+        return
+
+    # Report success with counts
+    try:
+        db2 = Database()
+        try:
+            n_students = db2.conn.execute("SELECT COUNT(*) FROM students").fetchone()[0]
+            n_grades = db2.conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0]
+        finally:
+            db2.close()
+        # Extract filename from URL (best-effort)
+        fname = file_url.rsplit('/', 1)[-1] if '/' in file_url else 'файл'
+        send_message(token, cid,
+                     f'База восстановлена из {fname}: {n_students} студентов, {n_grades} оценок',
+                     urlopen=urlopen)
+    except Exception:
+        try:
+            send_message(token, cid, 'База восстановлена.', urlopen=urlopen)
+        except Exception:
+            pass
+
+
 def _handle_vedomost(token: str, chat_id: int, db_factory, urlopen=None):
     """Отправить xlsx-файлы ведомости по предметам (после /vedomost)."""
     from report_export import export_student_grades_xlsx
@@ -586,11 +738,27 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                     text = body.get('text')
                     recipient = msg.get('recipient') or {}
                     cid = recipient.get('chat_id')
-                    if text is None or cid is None:
-                        continue
+                    attachments = msg.get('attachments') or []
                     try:
                         cid = int(cid)
                     except (TypeError, ValueError):
+                        continue
+                    # ---- file restore: teacher/curator sends .db ----
+                    try:
+                        file_att = None
+                        for att in attachments:
+                            if att.get('type') == 'file' and (att.get('payload') or {}).get('url'):
+                                file_att = att
+                                break
+                        if file_att is not None:
+                            try:
+                                _handle_file_restore(token, cid, file_att, db_factory, urlopen)
+                            except Exception:
+                                pass
+                            continue
+                    except Exception:
+                        pass
+                    if text is None or cid is None:
                         continue
                     db = db_factory()
                     teacher_notify = None

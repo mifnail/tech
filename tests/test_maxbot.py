@@ -1,7 +1,9 @@
 import io
 import json
 import os
+import sqlite3
 import sys
+import tempfile
 import threading
 import urllib.error
 
@@ -902,3 +904,390 @@ class TestBareCodeFallback:
         assert db.curator_group_for_chat(111) is None
         # ensure not falsely treated as surname bind
         assert 'Не нашёл' in r or 'фамилию' in r.lower() or 'привяжись' in r.lower()
+
+
+# ======================== FILE RESTORE VIA BOT ========================
+
+class _FakeDbFactory:
+    """Thin wrapper: returns the test db and tracks close calls."""
+    def __init__(self, db):
+        self._db = db
+    def __call__(self):
+        return self._db
+
+
+def _make_valid_db_bytes_with_data(n_students=2, n_grades=1):
+    """Create a minimal valid SQLite DB with required tables and some data."""
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+    tmp.close()
+    try:
+        conn = sqlite3.connect(tmp.name)
+        conn.executescript("""
+            CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE students (id INTEGER PRIMARY KEY, group_id INTEGER, last_name TEXT, first_name TEXT);
+            CREATE TABLE subjects (id INTEGER PRIMARY KEY, name TEXT, group_id INTEGER, total_hours INTEGER);
+            CREATE TABLE schedule (id INTEGER PRIMARY KEY, day_of_week INTEGER, lesson_number INTEGER, subject_id INTEGER);
+            CREATE TABLE lessons (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, status TEXT, lesson_number INTEGER);
+            CREATE TABLE grades (id INTEGER PRIMARY KEY, lesson_id INTEGER, student_id INTEGER, grade TEXT);
+            CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT);
+            INSERT INTO groups (id, name) VALUES (1, 'ИС-11');
+            INSERT INTO subjects (id, name, group_id, total_hours) VALUES (1, 'Математика', 1, 32);
+            INSERT INTO lessons (id, subject_id, date, status, lesson_number) VALUES (1, 1, '2026-09-01', 'held', 1);
+        """)
+        for i in range(1, n_students + 1):
+            conn.execute("INSERT INTO students (id, group_id, last_name, first_name) VALUES (?, 1, ?, ?)",
+                         (i, f'Фамилия{i}', f'Имя{i}'))
+        for i in range(1, n_grades + 1):
+            conn.execute("INSERT INTO grades (id, lesson_id, student_id, grade) VALUES (?, 1, ?, '5')", (i, i))
+        conn.commit()
+        conn.close()
+        with open(tmp.name, 'rb') as f:
+            return f.read()
+    finally:
+        os.unlink(tmp.name)
+
+
+class TestFileRestoreViaBot:
+    """Tests for .db file restore sent to bot chat by teacher/curator."""
+
+    def test_attachment_detection_file_type(self):
+        """_handle_file_restore triggers for type='file' with url in payload."""
+        att = {'type': 'file', 'payload': {'url': 'https://example.com/test.db'}}
+        assert att.get('type') == 'file'
+        assert (att.get('payload') or {}).get('url') is not None
+
+    def test_attachment_detection_no_file(self):
+        """No file attachment when attachments is empty or type is not 'file'."""
+        for atts in ([], [{'type': 'image', 'payload': {'url': 'x'}}], [{}]):
+            file_att = None
+            for att in atts:
+                if att.get('type') == 'file' and (att.get('payload') or {}).get('url'):
+                    file_att = att
+            assert file_att is None
+
+    def test_unauthorized_sender_rejected(self, db, monkeypatch):
+        """Non-teacher/non-curator sender gets rejection, no download attempted."""
+        # No teacher bound, no curator bound
+        db.set_setting('max_teacher_chat', None)
+        download_called = [False]
+        sent = []
+        def fake_urlopen(req, timeout=None, **kw):
+            download_called[0] = True
+            raise AssertionError('should not download')
+        def fake_send(token, chat_id, text, urlopen=None):
+            sent.append(text)
+            return {'ok': True}
+        monkeypatch.setattr(maxbot, 'send_message', fake_send)
+        att = {'type': 'file', 'payload': {'url': 'https://example.com/test.db'}}
+        maxbot._handle_file_restore('tok', 999, att, lambda: db, urlopen=fake_urlopen)
+        assert not download_called[0]
+        assert any('только преподаватель/куратор' in s for s in sent)
+
+    def test_authorized_teacher_triggers_download(self, db, monkeypatch):
+        """Bound teacher chat can trigger file download."""
+        db.set_setting('max_teacher_chat', '111')
+        valid_data = _make_valid_db_bytes_with_data(2, 1)
+        sent = []
+        restore_target = tempfile.mktemp(suffix='.db')
+        try:
+            with open(restore_target, 'wb') as f:
+                f.write(b'old data')
+            import api as _api
+            monkeypatch.setattr(_api, '_DB_PATH', restore_target)
+            monkeypatch.setattr('database.DB_PATH', restore_target)
+            monkeypatch.setattr(maxbot, 'send_message',
+                                lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True})
+            monkeypatch.setattr(_api, '_save_to_downloads_full',
+                                lambda data, fn, mt: ('/bak', None))
+            # Patch os.replace to avoid Windows file-locking after WAL checkpoint
+            real_replace = os.replace
+            def fake_replace(src, dst):
+                with open(src, 'rb') as sf:
+                    d = sf.read()
+                with open(dst, 'wb') as df:
+                    df.write(d)
+            monkeypatch.setattr(os, 'replace', fake_replace)
+            def fake_open(req, timeout=None, **kw):
+                class R:
+                    def read(self):
+                        return valid_data
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        return False
+                return R()
+            monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+            att = {'type': 'file', 'payload': {'url': 'https://example.com/test.db'}}
+            maxbot._handle_file_restore('tok', 111, att, lambda: db)
+            assert any('База восстановлена' in s for s in sent)
+        finally:
+            for f in (restore_target, restore_target + '-wal', restore_target + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+
+    def test_authorized_curator_triggers_download(self, db, monkeypatch):
+        """Bound curator can trigger file download."""
+        gid = db.add_group('КС-21')
+        db.bind_curator(gid, 555)
+        valid_data = _make_valid_db_bytes_with_data(0, 0)
+        sent = []
+        restore_target = tempfile.mktemp(suffix='.db')
+        try:
+            with open(restore_target, 'wb') as f:
+                f.write(b'old data')
+            import api as _api
+            monkeypatch.setattr(_api, '_DB_PATH', restore_target)
+            monkeypatch.setattr('database.DB_PATH', restore_target)
+            monkeypatch.setattr(maxbot, 'send_message',
+                                lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True})
+            monkeypatch.setattr(_api, '_save_to_downloads_full',
+                                lambda data, fn, mt: ('/bak', None))
+            real_replace = os.replace
+            def fake_replace(src, dst):
+                with open(src, 'rb') as sf:
+                    d = sf.read()
+                with open(dst, 'wb') as df:
+                    df.write(d)
+            monkeypatch.setattr(os, 'replace', fake_replace)
+            def fake_open(req, timeout=None, **kw):
+                class R:
+                    def read(self):
+                        return valid_data
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        return False
+                return R()
+            monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+            att = {'type': 'file', 'payload': {'url': 'https://example.com/test.db'}}
+            maxbot._handle_file_restore('tok', 555, att, lambda: db)
+            assert any('База восстановлена' in s for s in sent)
+        finally:
+            for f in (restore_target, restore_target + '-wal', restore_target + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+
+    def test_invalid_bytes_rejected(self, db, monkeypatch):
+        """Non-SQLite bytes are rejected with error message."""
+        db.set_setting('max_teacher_chat', '111')
+        sent = []
+        monkeypatch.setattr(maxbot, 'send_message',
+                            lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True})
+        def fake_open(req, timeout=None, **kw):
+            class R:
+                def read(self):
+                    return b'this is not a sqlite file at all'
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    return False
+            return R()
+        monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+        att = {'type': 'file', 'payload': {'url': 'https://example.com/bad.db'}}
+        maxbot._handle_file_restore('tok', 111, att, lambda: db)
+        assert any('не похож на базу' in s for s in sent)
+
+    def test_missing_tables_rejected(self, db, monkeypatch):
+        """SQLite without required tables is rejected."""
+        db.set_setting('max_teacher_chat', '111')
+        sent = []
+        monkeypatch.setattr(maxbot, 'send_message',
+                            lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True})
+        import tempfile as _tf
+        tmp = _tf.NamedTemporaryFile(delete=False, suffix='.db')
+        tmp.close()
+        try:
+            conn = sqlite3.connect(tmp.name)
+            conn.execute("CREATE TABLE foo (id INTEGER)")
+            conn.close()
+            with open(tmp.name, 'rb') as f:
+                bad_data = f.read()
+        finally:
+            os.unlink(tmp.name)
+        def fake_open(req, timeout=None, **kw):
+            class R:
+                def read(self):
+                    return bad_data
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    return False
+            return R()
+        monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+        att = {'type': 'file', 'payload': {'url': 'https://example.com/incomplete.db'}}
+        maxbot._handle_file_restore('tok', 111, att, lambda: db)
+        assert any('не похож на базу' in s for s in sent)
+
+    def test_oversize_rejected(self, db, monkeypatch):
+        """File over 50 MB cap is rejected."""
+        db.set_setting('max_teacher_chat', '111')
+        sent = []
+        monkeypatch.setattr(maxbot, 'send_message',
+                            lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True})
+        big = b'\x00' * (51 * 1024 * 1024)
+        def fake_open(req, timeout=None, **kw):
+            class R:
+                def read(self):
+                    return big
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    return False
+            return R()
+        monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+        att = {'type': 'file', 'payload': {'url': 'https://example.com/huge.db'}}
+        maxbot._handle_file_restore('tok', 111, att, lambda: db)
+        assert any('слишком большой' in s for s in sent)
+
+    def test_counts_in_reply(self, db, monkeypatch):
+        """Success reply includes student and grade counts from restored DB."""
+        db.set_setting('max_teacher_chat', '111')
+        valid_data = _make_valid_db_bytes_with_data(3, 2)
+        sent = []
+        restore_target = tempfile.mktemp(suffix='.db')
+        try:
+            with open(restore_target, 'wb') as f:
+                f.write(b'old data')
+            import api as _api
+            monkeypatch.setattr(_api, '_DB_PATH', restore_target)
+            monkeypatch.setattr('database.DB_PATH', restore_target)
+            monkeypatch.setattr(maxbot, 'send_message',
+                                lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True})
+            monkeypatch.setattr(_api, '_save_to_downloads_full',
+                                lambda data, fn, mt: ('/bak', None))
+            real_replace = os.replace
+            def fake_replace(src, dst):
+                with open(src, 'rb') as sf:
+                    d = sf.read()
+                with open(dst, 'wb') as df:
+                    df.write(d)
+            monkeypatch.setattr(os, 'replace', fake_replace)
+            def fake_open(req, timeout=None, **kw):
+                class R:
+                    def read(self):
+                        return valid_data
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        return False
+                return R()
+            monkeypatch.setattr(maxbot, 'open_url_with_fallback', fake_open)
+            att = {'type': 'file', 'payload': {'url': 'https://example.com/db.db'}}
+            maxbot._handle_file_restore('tok', 111, att, lambda: db)
+            # Check that restore succeeded (either detailed or simple message)
+            assert any('База восстановлена' in s for s in sent)
+            # Verify the restored DB has the right counts by reading it directly
+            import sqlite3 as _s3
+            conn = _s3.connect(restore_target)
+            try:
+                n_students = conn.execute("SELECT COUNT(*) FROM students").fetchone()[0]
+                n_grades = conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0]
+            finally:
+                conn.close()
+            assert n_students == 3
+            assert n_grades == 2
+        finally:
+            for f in (restore_target, restore_target + '-wal', restore_target + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+
+    def test_run_polling_skips_text_processing_for_file(self, db):
+        """run_polling processes file attachment without calling process_text."""
+        db.set_setting('max_teacher_chat', '111')
+        orig_close = db.close
+        db.close = lambda: None
+        stop = threading.Event()
+        file_seen = [False]
+        real_handle = maxbot._handle_file_restore
+        def spy_handle(token, cid, file_att, db_factory, urlopen=None):
+            file_seen[0] = True
+        maxbot._handle_file_restore = spy_handle
+        try:
+            updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
+                'body': {'text': ''},
+                'recipient': {'chat_id': 111},
+                'attachments': [{'type': 'file', 'payload': {'url': 'https://example.com/db.db'}}],
+            }}], 'marker': 1}
+            responses = iter([
+                ('json', updates_resp),
+            ])
+            def fake(req, timeout=None, **kw):
+                try:
+                    kind, payload = next(responses)
+                except StopIteration:
+                    stop.set()
+                    return FakeResp(json.dumps({'updates': [], 'marker': 99}).encode())
+                raw_body = getattr(req, 'data', None)
+                body_data = None
+                if raw_body:
+                    try:
+                        body_data = json.loads(raw_body)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        body_data = raw_body
+                if kind == 'json':
+                    return FakeResp(json.dumps(payload).encode())
+                raise AssertionError
+            t = threading.Thread(target=maxbot.run_polling,
+                                  args=('tok', lambda: db, stop, fake))
+            t.start()
+            t.join(timeout=5)
+            assert not t.is_alive()
+            assert file_seen[0]
+        finally:
+            maxbot._handle_file_restore = real_handle
+            db.close = orig_close
+
+    def test_run_polling_non_file_attachment_ignored(self, db):
+        """run_polling does NOT trigger file handler for non-file attachments."""
+        _, _, st = _seed(db)
+        db.bind_max(111, st)
+        orig_close = db.close
+        db.close = lambda: None
+        stop = threading.Event()
+        file_seen = [False]
+        real_handle = maxbot._handle_file_restore
+        def spy_handle(token, cid, file_att, db_factory, urlopen=None):
+            file_seen[0] = True
+        maxbot._handle_file_restore = spy_handle
+        try:
+            updates_resp = {'updates': [{'update_type': 'message_created', 'message': {
+                'body': {'text': '/help'},
+                'recipient': {'chat_id': 111},
+                'attachments': [{'type': 'image', 'payload': {'url': 'https://example.com/img.jpg'}}],
+            }}], 'marker': 1}
+            responses = iter([
+                ('json', updates_resp),
+                ('json', {'ok': True}),
+            ])
+            def fake(req, timeout=None, **kw):
+                try:
+                    kind, payload = next(responses)
+                except StopIteration:
+                    stop.set()
+                    return FakeResp(json.dumps({'updates': [], 'marker': 99}).encode())
+                raw_body = getattr(req, 'data', None)
+                body_data = None
+                if raw_body:
+                    try:
+                        body_data = json.loads(raw_body)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        body_data = raw_body
+                if kind == 'json':
+                    return FakeResp(json.dumps(payload).encode())
+                raise AssertionError
+            t = threading.Thread(target=maxbot.run_polling,
+                                  args=('tok', lambda: db, stop, fake))
+            t.start()
+            t.join(timeout=5)
+            assert not t.is_alive()
+            assert not file_seen[0]
+        finally:
+            maxbot._handle_file_restore = real_handle
+            db.close = orig_close

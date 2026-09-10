@@ -1836,6 +1836,41 @@ def backup_db():
     return jsonify({'ok': True, 'path': path})
 
 
+@backup_bp.route('/backup/share', methods=['POST'])
+def backup_share():
+    """Save backup to Downloads and open native share sheet.
+
+    Response: {ok, path, shared: True/False, [error]}
+    On desktop where uri is None, shared is False but file is still saved.
+    """
+    # Checkpoint WAL first
+    try:
+        _ck = get_db()
+        try:
+            _ck.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        finally:
+            _ck.close()
+    except Exception:
+        pass
+    try:
+        with open(_DB_PATH, 'rb') as f:
+            data = f.read()
+    except Exception as e:
+        return jsonify({'error': f'read db failed: {e}'}), 500
+    filename = f'teachhelper_{date.today().isoformat()}.db'
+    try:
+        path, uri = _save_to_downloads_full(data, filename, 'application/x-sqlite3')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    if uri is None:
+        return jsonify({'ok': True, 'path': path, 'shared': False})
+    try:
+        _share_file(uri, 'application/x-sqlite3', filename)
+    except Exception as e:
+        return jsonify({'ok': True, 'path': path, 'shared': False, 'error': str(e)})
+    return jsonify({'ok': True, 'path': path, 'shared': True})
+
+
 @backup_bp.route('/restore', methods=['POST'])
 def restore_db():
     uploaded = request.files.get('file')

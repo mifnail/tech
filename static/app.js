@@ -858,9 +858,21 @@ App.Pages.unbindMaxTeacher = async function() {
 
 App.Pages.doBackup = async function() {
   try {
-    const r = await App.API.post('/api/backup');
-    App.UI.notify('Бэкап создан: ' + (r.path || 'OK'));
-  } catch (e) { App.UI.notify(e.error || 'Ошибка'); }
+    const r = await App.API.post('/api/backup/share');
+    if (r.shared) {
+      App.UI.notify('Бэкап создан и отправлен: ' + (r.path || 'OK'));
+    } else if (r.path) {
+      App.UI.notify('Бэкап сохранён: ' + r.path);
+    } else {
+      App.UI.notify('Бэкап создан');
+    }
+  } catch (e) {
+    // Fallback: plain POST /api/backup (desktop where share unavailable)
+    try {
+      const r = await App.API.post('/api/backup');
+      App.UI.notify('Бэкап сохранён: ' + (r.path || 'OK'));
+    } catch (e2) { App.UI.notify(e2.error || e.error || 'Ошибка'); }
+  }
 };
 
 App.Pages.doRestore = async function() {

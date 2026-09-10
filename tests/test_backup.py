@@ -786,3 +786,74 @@ class TestAllFilesAccess:
         rv = client.post('/api/restore/request-access', json={})
         assert rv.status_code == 400
         assert rv.json['error'] == 'Доступно только на Android'
+
+
+class TestBackupShare:
+    """Tests for POST /api/backup/share."""
+
+    def test_share_saves_and_returns_shared_true(self, client, monkeypatch):
+        """On Android with URI, saves file and returns shared=True."""
+        captured = {}
+        def fake_save(data, filename, mimetype):
+            captured['data'] = data
+            captured['filename'] = filename
+            return '/fake/path/' + filename, 'content://media/123'
+        monkeypatch.setattr(_api_module, '_save_to_downloads_full', fake_save)
+        share_called = [False]
+        def fake_share(uri, mime, label):
+            share_called[0] = True
+            assert uri == 'content://media/123'
+            assert mime == 'application/x-sqlite3'
+        monkeypatch.setattr(_api_module, '_share_file', fake_share)
+
+        rv = client.post('/api/backup/share')
+        assert rv.status_code == 200
+        body = rv.json
+        assert body['ok'] is True
+        assert body['shared'] is True
+        assert body['path'] == '/fake/path/teachhelper_2026-09-10.db'
+        assert captured['data'][:16] == b'SQLite format 3\x00'
+        assert 'teachhelper_' in captured['filename']
+        assert share_called[0]
+
+    def test_share_no_uri_returns_shared_false(self, client, monkeypatch):
+        """On desktop (uri=None), saves file but shared=False."""
+        def fake_save(data, filename, mimetype):
+            return '/fake/path/' + filename, None
+        monkeypatch.setattr(_api_module, '_save_to_downloads_full', fake_save)
+
+        rv = client.post('/api/backup/share')
+        assert rv.status_code == 200
+        body = rv.json
+        assert body['ok'] is True
+        assert body['shared'] is False
+        assert 'path' in body
+
+    def test_share_exception_returns_shared_false(self, client, monkeypatch):
+        """When share fails, still returns ok with shared=False and error."""
+        def fake_save(data, filename, mimetype):
+            return '/fake/path/' + filename, 'content://media/456'
+        monkeypatch.setattr(_api_module, '_save_to_downloads_full', fake_save)
+        def fake_share(uri, mime, label):
+            raise RuntimeError('share failed')
+        monkeypatch.setattr(_api_module, '_share_file', fake_share)
+
+        rv = client.post('/api/backup/share')
+        assert rv.status_code == 200
+        body = rv.json
+        assert body['ok'] is True
+        assert body['shared'] is False
+        assert 'error' in body
+        assert 'share failed' in body['error']
+
+    def test_share_read_error(self, client, monkeypatch):
+        """Handles DB read error gracefully."""
+        real_open = open
+        def bad_open(path, *args, **kwargs):
+            if isinstance(path, str) and path == _api_module._DB_PATH and args and args[0] == 'rb':
+                raise PermissionError('nope')
+            return real_open(path, *args, **kwargs)
+        monkeypatch.setattr('builtins.open', bad_open)
+        rv = client.post('/api/backup/share')
+        assert rv.status_code == 500
+        assert 'error' in rv.json
