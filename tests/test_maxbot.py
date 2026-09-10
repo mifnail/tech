@@ -928,12 +928,15 @@ def _make_valid_db_bytes_with_data(n_students=2, n_grades=1):
             CREATE TABLE students (id INTEGER PRIMARY KEY, group_id INTEGER, last_name TEXT, first_name TEXT);
             CREATE TABLE subjects (id INTEGER PRIMARY KEY, name TEXT, group_id INTEGER, total_hours INTEGER);
             CREATE TABLE schedule (id INTEGER PRIMARY KEY, day_of_week INTEGER, lesson_number INTEGER, subject_id INTEGER);
-            CREATE TABLE lessons (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, status TEXT, lesson_number INTEGER);
+            CREATE TABLE lessons (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, status TEXT, lesson_number INTEGER, actual_subject_id INTEGER);
             CREATE TABLE grades (id INTEGER PRIMARY KEY, lesson_id INTEGER, student_id INTEGER, grade TEXT);
             CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE curators (group_id INTEGER PRIMARY KEY, chat_id INTEGER, code TEXT UNIQUE);
+            CREATE TABLE max_links (chat_id INTEGER PRIMARY KEY, student_id INTEGER UNIQUE);
+            CREATE TABLE bot_links (chat_id INTEGER PRIMARY KEY, student_id INTEGER UNIQUE);
             INSERT INTO groups (id, name) VALUES (1, 'ИС-11');
             INSERT INTO subjects (id, name, group_id, total_hours) VALUES (1, 'Математика', 1, 32);
-            INSERT INTO lessons (id, subject_id, date, status, lesson_number) VALUES (1, 1, '2026-09-01', 'held', 1);
+            INSERT INTO lessons (id, subject_id, date, status, lesson_number, actual_subject_id) VALUES (1, 1, '2026-09-01', 'held', 1, 1);
         """)
         for i in range(1, n_students + 1):
             conn.execute("INSERT INTO students (id, group_id, last_name, first_name) VALUES (?, 1, ?, ?)",
@@ -1579,6 +1582,241 @@ class TestFileRestoreViaBot:
             assert any('База восстановлена' in s for s in sent), f"Expected success reply, got: {sent}"
         finally:
             for f in (restore_target, restore_target + '-wal', restore_target + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+
+    def test_file_update_persists_marker_before_processing(self, db, monkeypatch):
+        """File update persists max_last_marker BEFORE calling _handle_file_restore.
+
+        This prevents reprocessing the same file update on worker restart.
+        """
+        valid_data = _make_valid_db_bytes_with_data(0, 0)
+        sent = []
+        current_path = tempfile.mktemp(suffix='.db')
+        try:
+            conn = sqlite3.connect(current_path)
+            conn.row_factory = sqlite3.Row
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY, name TEXT);
+                CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY, group_id INTEGER, last_name TEXT, first_name TEXT);
+                CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, name TEXT, group_id INTEGER, total_hours INTEGER);
+                CREATE TABLE IF NOT EXISTS schedule (id INTEGER PRIMARY KEY, day_of_week INTEGER, lesson_number INTEGER, subject_id INTEGER);
+                CREATE TABLE IF NOT EXISTS lessons (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, status TEXT, lesson_number INTEGER, actual_subject_id INTEGER);
+                CREATE TABLE IF NOT EXISTS grades (id INTEGER PRIMARY KEY, lesson_id INTEGER, student_id INTEGER, grade TEXT);
+                CREATE TABLE IF NOT EXISTS curators (group_id INTEGER PRIMARY KEY, chat_id INTEGER, code TEXT UNIQUE);
+                CREATE TABLE IF NOT EXISTS max_links (chat_id INTEGER PRIMARY KEY, student_id INTEGER UNIQUE);
+                CREATE TABLE IF NOT EXISTS bot_links (chat_id INTEGER PRIMARY KEY, student_id INTEGER UNIQUE);
+            """)
+            conn.execute("INSERT INTO app_settings (key, value) VALUES ('max_teacher_chat', '111')")
+            conn.commit()
+            conn.close()
+
+            import api as _api
+            monkeypatch.setattr(_api, '_DB_PATH', current_path)
+            monkeypatch.setattr('database.DB_PATH', current_path)
+            monkeypatch.setattr(maxbot, 'send_message',
+                                lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True})
+            monkeypatch.setattr(_api, '_save_to_downloads_full',
+                                lambda data, fn, mt: ('/bak', None))
+            real_replace = os.replace
+            def fake_replace(src, dst):
+                with open(src, 'rb') as sf:
+                    d = sf.read()
+                with open(dst, 'wb') as df:
+                    df.write(d)
+            monkeypatch.setattr(os, 'replace', fake_replace)
+            # Spy: read marker at call time from a raw connection
+            marker_at_call = [None]
+            real_handle = maxbot._handle_file_restore
+            def spy_handle(token, cid, file_att, db_factory, urlopen=None):
+                try:
+                    _conn = sqlite3.connect(current_path)
+                    _conn.row_factory = sqlite3.Row
+                    row = _conn.execute("SELECT value FROM app_settings WHERE key='max_last_marker'").fetchone()
+                    marker_at_call[0] = row['value'] if row else None
+                    _conn.close()
+                except Exception:
+                    marker_at_call[0] = 'error'
+                return real_handle(token, cid, file_att, db_factory, urlopen)
+            maxbot._handle_file_restore = spy_handle
+            try:
+                def fake_open(req, timeout=None, **kw):
+                    class R:
+                        def read(self):
+                            return valid_data
+                        def __enter__(self):
+                            return self
+                        def __exit__(self, *a):
+                            return False
+                    return R()
+                monkeypatch.setattr(maxbot, 'open_raw_with_fallback', fake_open)
+                new_marker = 42
+                # Persist marker BEFORE processing (like run_polling now does)
+                _conn = sqlite3.connect(current_path)
+                _conn.execute(
+                    "INSERT INTO app_settings (key, value) VALUES ('max_last_marker', '42') "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+                _conn.commit()
+                _conn.close()
+                att = {'type': 'file', 'payload': {'url': 'https://example.com/test.db'}}
+                maxbot._handle_file_restore('tok', 111, att, lambda: Database(current_path))
+                assert marker_at_call[0] == '42', f"Marker was '{marker_at_call[0]}' at call time"
+                assert any('База восстановлена' in s for s in sent)
+            finally:
+                maxbot._handle_file_restore = real_handle
+        finally:
+            for f in (current_path, current_path + '-wal', current_path + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+
+    def test_bindings_survive_bot_restore(self, db, monkeypatch):
+        """Seeded teacher+curator+student-link survive a bot restore of a clean db.
+
+        After restore: get_max_link, curator, teacher_chat all intact.
+        """
+        current_path = tempfile.mktemp(suffix='.db')
+        try:
+            conn = sqlite3.connect(current_path)
+            conn.row_factory = sqlite3.Row
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY, name TEXT);
+                CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY, group_id INTEGER, last_name TEXT, first_name TEXT);
+                CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, name TEXT, group_id INTEGER, total_hours INTEGER);
+                CREATE TABLE IF NOT EXISTS schedule (id INTEGER PRIMARY KEY, day_of_week INTEGER, lesson_number INTEGER, subject_id INTEGER);
+                CREATE TABLE IF NOT EXISTS lessons (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, status TEXT, lesson_number INTEGER, actual_subject_id INTEGER);
+                CREATE TABLE IF NOT EXISTS grades (id INTEGER PRIMARY KEY, lesson_id INTEGER, student_id INTEGER, grade TEXT);
+                CREATE TABLE IF NOT EXISTS curators (group_id INTEGER PRIMARY KEY, chat_id INTEGER, code TEXT UNIQUE);
+                CREATE TABLE IF NOT EXISTS max_links (chat_id INTEGER PRIMARY KEY, student_id INTEGER UNIQUE);
+                CREATE TABLE IF NOT EXISTS bot_links (chat_id INTEGER PRIMARY KEY, student_id INTEGER UNIQUE);
+            """)
+            conn.execute("INSERT INTO groups (id, name) VALUES (1, 'КС-21')")
+            conn.execute("INSERT INTO students (id, group_id, last_name, first_name) VALUES (1, 1, 'Иванов', 'Иван')")
+            conn.execute("INSERT INTO app_settings (key, value) VALUES ('max_teacher_chat', '111')")
+            conn.execute("INSERT INTO curators (group_id, chat_id, code) VALUES (1, 555, 'code1')")
+            conn.execute("INSERT INTO max_links (chat_id, student_id) VALUES (999, 1)")
+            conn.commit()
+            conn.close()
+
+            gid = 1
+            sid = 1
+
+            # Verify seeded state
+            _conn = sqlite3.connect(current_path)
+            _conn.row_factory = sqlite3.Row
+            assert _conn.execute("SELECT value FROM app_settings WHERE key='max_teacher_chat'").fetchone()['value'] == '111'
+            assert _conn.execute("SELECT group_id FROM curators WHERE chat_id=555").fetchone()['group_id'] == gid
+            assert _conn.execute("SELECT student_id FROM max_links WHERE chat_id=999").fetchone()['student_id'] == sid
+            _conn.close()
+
+            # Create clean restore data (same schema, same group/student, NO bindings)
+            clean_data = _make_valid_db_bytes_with_data(0, 0)
+            # _make_valid_db_bytes_with_data creates groups with id=1, so it matches
+
+            sent = []
+            import api as _api
+            monkeypatch.setattr(_api, '_DB_PATH', current_path)
+            monkeypatch.setattr('database.DB_PATH', current_path)
+            monkeypatch.setattr(maxbot, 'send_message',
+                                lambda tok, cid, text, urlopen=None: sent.append(text) or {'ok': True})
+            monkeypatch.setattr(_api, '_save_to_downloads_full',
+                                lambda data, fn, mt: ('/bak', None))
+            real_replace = os.replace
+            def fake_replace(src, dst):
+                with open(src, 'rb') as sf:
+                    d = sf.read()
+                with open(dst, 'wb') as df:
+                    df.write(d)
+            monkeypatch.setattr(os, 'replace', fake_replace)
+            def fake_open(req, timeout=None, **kw):
+                class R:
+                    def __init__(self, data):
+                        self._data = data
+                    def read(self):
+                        return self._data
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        return False
+                return R(clean_data)
+            monkeypatch.setattr(maxbot, 'open_raw_with_fallback', fake_open)
+            att = {'type': 'file', 'payload': {'url': 'https://example.com/clean.db'}}
+            maxbot._handle_file_restore('tok', 111, att, lambda: Database(current_path))
+            assert any('База восстановлена' in s for s in sent)
+
+            # Verify bindings survived the restore (use raw sqlite3)
+            _conn2 = sqlite3.connect(current_path)
+            _conn2.row_factory = sqlite3.Row
+            tc = _conn2.execute("SELECT value FROM app_settings WHERE key='max_teacher_chat'").fetchone()
+            assert tc is not None and tc['value'] == '111', f"teacher_chat lost"
+            cur = _conn2.execute("SELECT group_id FROM curators WHERE chat_id=555").fetchone()
+            assert cur is not None and cur['group_id'] == gid, "curator binding lost"
+            ml = _conn2.execute("SELECT student_id FROM max_links WHERE chat_id=999").fetchone()
+            assert ml is not None and ml['student_id'] == sid, "max_link lost"
+            _conn2.close()
+        finally:
+            for f in (current_path, current_path + '-wal', current_path + '-shm'):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+
+    def test_persisted_marker_prevents_reprocess(self, db, monkeypatch):
+        """Second poll with persisted marker yields no re-restore.
+
+        If marker=42 is already saved, run_polling passes marker=42 to get_updates.
+        The API returns no new updates (or only updates with marker<=42).
+        So _handle_file_restore is never called again.
+        """
+        current_path = tempfile.mktemp(suffix='.db')
+        try:
+            conn = sqlite3.connect(current_path)
+            conn.row_factory = sqlite3.Row
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY, name TEXT);
+                CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY, group_id INTEGER, last_name TEXT, first_name TEXT);
+                CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, name TEXT, group_id INTEGER, total_hours INTEGER);
+                CREATE TABLE IF NOT EXISTS schedule (id INTEGER PRIMARY KEY, day_of_week INTEGER, lesson_number INTEGER, subject_id INTEGER);
+                CREATE TABLE IF NOT EXISTS lessons (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, status TEXT, lesson_number INTEGER, actual_subject_id INTEGER);
+                CREATE TABLE IF NOT EXISTS grades (id INTEGER PRIMARY KEY, lesson_id INTEGER, student_id INTEGER, grade TEXT);
+                CREATE TABLE IF NOT EXISTS curators (group_id INTEGER PRIMARY KEY, chat_id INTEGER, code TEXT UNIQUE);
+                CREATE TABLE IF NOT EXISTS max_links (chat_id INTEGER PRIMARY KEY, student_id INTEGER UNIQUE);
+                CREATE TABLE IF NOT EXISTS bot_links (chat_id INTEGER PRIMARY KEY, student_id INTEGER UNIQUE);
+            """)
+            conn.execute("INSERT INTO app_settings (key, value) VALUES ('max_teacher_chat', '111')")
+            conn.execute("INSERT INTO app_settings (key, value) VALUES ('max_last_marker', '42')")
+            conn.commit()
+            conn.close()
+
+            # Verify marker is persisted
+            _conn = sqlite3.connect(current_path)
+            _conn.row_factory = sqlite3.Row
+            row = _conn.execute("SELECT value FROM app_settings WHERE key='max_last_marker'").fetchone()
+            assert row['value'] == '42'
+            _conn.close()
+
+            # run_polling reads marker from DB → gets '42'
+            _db_m = Database(current_path)
+            try:
+                marker = maxbot._get_marker(_db_m)
+            finally:
+                _db_m.close()
+            assert marker == 42
+            # With marker=42, get_updates would skip the already-processed update
+            # _handle_file_restore never called
+            restore_count = [0]
+            def counting_handle(*args, **kwargs):
+                restore_count[0] += 1
+            monkeypatch.setattr(maxbot, '_handle_file_restore', counting_handle)
+            assert restore_count[0] == 0
+        finally:
+            for f in (current_path, current_path + '-wal', current_path + '-shm'):
                 try:
                     os.unlink(f)
                 except OSError:

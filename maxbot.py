@@ -491,8 +491,12 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
     import os
     import sqlite3
     import tempfile
+    from database import Database
 
-    # Authorization check: sender must be bound teacher or curator
+    # Authorization check + snapshot bindings (single db open)
+    _snap = {}
+    is_teacher = False
+    is_curator = False
     try:
         db = db_factory()
         try:
@@ -500,6 +504,26 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
             is_teacher = str(teacher_chat) == str(cid)
             cur_gid = db.curator_group_for_chat(cid)
             is_curator = cur_gid is not None
+            # Snapshot bindings BEFORE restore (best-effort)
+            _snap['teacher_chat'] = teacher_chat
+            try:
+                _snap['curators'] = [dict(r) for r in db.conn.execute(
+                    "SELECT group_id, chat_id, code FROM curators WHERE chat_id IS NOT NULL"
+                ).fetchall()]
+            except Exception:
+                _snap['curators'] = []
+            try:
+                _snap['max_links'] = [dict(r) for r in db.conn.execute(
+                    "SELECT chat_id, student_id FROM max_links"
+                ).fetchall()]
+            except Exception:
+                _snap['max_links'] = []
+            try:
+                _snap['bot_links'] = [dict(r) for r in db.conn.execute(
+                    "SELECT chat_id, student_id FROM bot_links"
+                ).fetchall()]
+            except Exception:
+                _snap['bot_links'] = []
         finally:
             try:
                 db.close()
@@ -582,6 +606,44 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
         except Exception:
             pass
         return
+
+    # Re-apply bindings after restore (best-effort, fresh connection to restored DB)
+    if _snap:
+        try:
+            _db_r = Database()
+            try:
+                for _link in _snap.get('max_links', []):
+                    try:
+                        _db_r.conn.execute(
+                            "INSERT OR REPLACE INTO max_links (chat_id, student_id) VALUES (?, ?)",
+                            (_link['chat_id'], _link['student_id']))
+                    except Exception:
+                        pass
+                for _cur in _snap.get('curators', []):
+                    try:
+                        _db_r.conn.execute(
+                            "INSERT OR REPLACE INTO curators (group_id, chat_id, code) VALUES (?, ?, ?)",
+                            (_cur['group_id'], _cur['chat_id'], _cur['code']))
+                    except Exception:
+                        pass
+                for _bl in _snap.get('bot_links', []):
+                    try:
+                        _db_r.conn.execute(
+                            "INSERT OR REPLACE INTO bot_links (chat_id, student_id) VALUES (?, ?)",
+                            (_bl['chat_id'], _bl['student_id']))
+                    except Exception:
+                        pass
+                _tc = _snap.get('teacher_chat')
+                if _tc is not None:
+                    _db_r.set_setting('max_teacher_chat', _tc)
+                _db_r.conn.commit()
+            finally:
+                try:
+                    _db_r.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     # Report success with counts
     try:
@@ -757,6 +819,18 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                                 file_att = att
                                 break
                         if file_att is not None:
+                            # Persist marker BEFORE processing (at-most-once)
+                            try:
+                                db_m = db_factory()
+                                try:
+                                    db_m.set_setting('max_last_marker', str(new_marker))
+                                finally:
+                                    try:
+                                        db_m.close()
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
                             try:
                                 _handle_file_restore(token, cid, file_att, db_factory, urlopen)
                             except Exception:
