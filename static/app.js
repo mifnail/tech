@@ -1038,9 +1038,11 @@ App.Pages.analytics = async function() {
   for (let gi = 0; gi < gbs.length; gi++) {
     const gb = gbs[gi];
     const gm = gb.grades || {};
-    for (const lk in gm) {
-      gradesByLesson[lk] = gm[lk];
-      for (const sk in gm[lk]) allVals.push(gm[lk][sk]);
+    for (const sk in gm) {
+      for (const lk in gm[sk]) {
+        (gradesByLesson[lk] = gradesByLesson[lk] || {})[sk] = gm[sk][lk];
+        allVals.push(gm[sk][lk]);
+      }
     }
     for (const l of gb.lessons || []) allLessons.push({ id: l.id, date: l.date });
   }
@@ -1084,7 +1086,7 @@ App.Pages.analytics = async function() {
       if (!stMap[s.id]) stMap[s.id] = { id: s.id, last: s.last_name, first: s.first_name, avgSum: 0, avgCnt: 0, abs: 0 };
       let sVals = [], sAbs = 0;
       for (const l of gb.lessons || []) {
-        const gr = (gb.grades || {})[l.id] ? (gb.grades[l.id][s.id]) : null;
+        const gr = (gb.grades || {})[s.id] ? (gb.grades[s.id][l.id]) : null;
         if (gr) {
           const n = numOf(gr);
           if (n != null) sVals.push(n);
