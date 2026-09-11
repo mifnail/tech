@@ -18,7 +18,7 @@
      blur/glass → плоские поверхности, тени ≤2 уровней;
      blob/noise/bg-grid/shimmer/float → удалены (дорого для WebView, не transform/opacity);
      spring-анимации → transform/opacity 120–250мс + prefers-reduced-motion;
-     тёмная тема — только через prefers-color-scheme, контраст AA.
+     тёмная тема — через html[data-theme="concept"] (тоггл в Настройках), контраст AA.
    Замороженные DOM-контракты (id/классы/onclick) — НЕ переименовывать.
    ========================================================================== */
 
@@ -86,49 +86,6 @@
 
   --ease: cubic-bezier(.2, .8, .3, 1);
   --dur: .18s;
-}
-
-/* Тёмная тема — семантические токены + неоновые GRADE_META как в концепте */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #06080c;
-    --surface: #0c0f16;
-    --surface-2: #161b27;
-    --text: #e8ecf4;
-    --text-2: #9aa5b8;
-    --text-3: #7e89a3;
-    --line: #202839;
-    --accent: #7c8cff;
-    --accent-press: #93a0ff;
-    --accent-soft: #232c55;
-    --accent-contrast: #0c111c;
-    --ok-soft: #123526;
-    --warn-soft: #3a2c10;
-    --bad-soft: #3f1c1a;
-    --g5: #3ddc97;
-    --g4: #a6e04a;
-    --g3: #f5b93f;
-    --g2: #f2627a;
-    --g0: #8b96ab;
-    --gabsent: #f2627a;
-    --tint-5: rgba(61, 220, 151, .13);
-    --tint-4: rgba(166, 224, 74, .12);
-    --tint-3: rgba(245, 185, 63, .12);
-    --tint-2: rgba(242, 98, 122, .13);
-    --tint-0: rgba(139, 150, 171, .14);
-    --tint-absent: rgba(242, 98, 122, .13);
-    --hue-0: #7c8cff;
-    --hue-1: #a78bfa;
-    --hue-2: #5cd6f0;
-    --hue-3: #3ddc97;
-    --hue-4: #f5b93f;
-    --hue-5: #f2627a;
-    --w-every: #8b96ab;
-    --w-odd: #5cd6f0;
-    --w-even: #a78bfa;
-    --sh-1: none;
-    --sh-2: 0 10px 30px rgba(0, 0, 0, .5);
-  }
 }
 
 /* ----- 2. Base ----- */
@@ -708,10 +665,6 @@ input.switch:checked::after { transform: translateX(18px); }
   animation: notifIn .22s var(--ease);
 }
 
-@media (prefers-color-scheme: dark) {
-  .notif { background: #1b2436; border: 1px solid var(--line); }
-}
-
 /* Загрузка */
 .loading { text-align: center; padding: 56px 0; color: var(--text-2); font-size: 13px; }
 
@@ -946,3 +899,126 @@ input.switch:checked::after { transform: translateX(18px); }
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   .spinner { animation-duration: .8s !important; }
 }
+
+/* ==========================================================================
+   8. Concept theme — тёмный порт React-концепта (code-and-design-review).
+   Включается html[data-theme="concept"]: тоггл в Настройках, localStorage
+   'theme', одноразовая OS-эвристика в index.html. Палитра — @theme-токены
+   прототипа (ink/panel/mint/limey/ambr/rose/iris/viol/cyn) + ui.tsx, только
+   цвета. Deny-лист соблюдён: без blur/glass, внешних шрифтов/URL,
+   noise/bg-grid/shimmer, blob/float, springs, glow-теней, drag-sheet.
+   Анимации — только transform/opacity ≤250мс (наследуются из базовой темы).
+   ========================================================================== */
+
+/* Токены: тёмная база, неоновый индиго-акцент, семантика ok/warn/bad,
+   grade-тинты rgba (как в прототипе). */
+html[data-theme="concept"] {
+  --bg: #06080c;
+  --surface: #0c0f16;
+  --surface-2: #161b27;
+  --text: #e8ecf4;
+  --text-2: #9aa5b8;
+  --text-3: #7e89a3;
+  --line: #202839;
+
+  --accent: #7c8cff;
+  --accent-press: #93a0ff;
+  --accent-soft: #232c55;
+  --accent-contrast: #0c111c;
+
+  --ok: #3ddc97;
+  --ok-soft: #123526;
+  --warn: #f5b93f;
+  --warn-soft: #3a2c10;
+  --bad: #f2627a;
+  --bad-soft: #3f1c1a;
+  --info: #5cd6f0;
+
+  --g5: #3ddc97;
+  --g4: #a6e04a;
+  --g3: #f5b93f;
+  --g2: #f2627a;
+  --g0: #8b96ab;
+  --gabsent: #f2627a;
+  --tint-5: rgba(61, 220, 151, .13);
+  --tint-4: rgba(166, 224, 74, .12);
+  --tint-3: rgba(245, 185, 63, .12);
+  --tint-2: rgba(242, 98, 122, .13);
+  --tint-0: rgba(139, 150, 171, .14);
+  --tint-absent: rgba(242, 98, 122, .13);
+
+  --hue-0: #7c8cff;
+  --hue-1: #a78bfa;
+  --hue-2: #5cd6f0;
+  --hue-3: #3ddc97;
+  --hue-4: #f5b93f;
+  --hue-5: #f2627a;
+
+  --w-every: #8b96ab;
+  --w-odd: #5cd6f0;
+  --w-even: #a78bfa;
+
+  --sh-1: none;
+  --sh-2: 0 10px 30px rgba(0, 0, 0, .5);
+}
+
+/* Точечные дельты компонентов — только переопределения существующих классов. */
+
+/* Пилюля активного таба (концепт TabBar) */
+html[data-theme="concept"] .nav a.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: var(--r-pill);
+}
+
+/* Карточки: hairline-бордер поверх тёмной поверхности, без тени */
+html[data-theme="concept"] .card {
+  border-color: rgba(255, 255, 255, .08);
+  box-shadow: none;
+}
+
+/* Кнопки: неоновые заливки с тёмным текстом (AA), muted — полупрозрачная */
+html[data-theme="concept"] .btn-primary {
+  background: linear-gradient(160deg, #8ea2ff, #7c8cff);
+  color: #0c111c;
+}
+html[data-theme="concept"] .btn-success { background: var(--ok); color: #0a0d13; }
+html[data-theme="concept"] .btn-danger { background: var(--bad); color: #0a0d13; }
+html[data-theme="concept"] .btn-warning { background: var(--warn); color: #0a0d13; }
+html[data-theme="concept"] .btn-muted {
+  background: rgba(255, 255, 255, .06);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08);
+}
+html[data-theme="concept"] .pick-btn.btn-success { box-shadow: inset 0 0 0 1.5px rgba(10, 13, 19, .25); }
+
+/* Бейджи и плашки оценок: кольцо чуть ярче (неон) */
+html[data-theme="concept"] .badge-held,
+html[data-theme="concept"] .badge-cancelled {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 28%, transparent);
+}
+html[data-theme="concept"] .grade-5 { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--g5) 45%, transparent); }
+html[data-theme="concept"] .grade-4 { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--g4) 45%, transparent); }
+html[data-theme="concept"] .grade-3 { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--g3) 45%, transparent); }
+html[data-theme="concept"] .grade-2 { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--g2) 45%, transparent); }
+html[data-theme="concept"] .grade-0,
+html[data-theme="concept"] .grade-present { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--g0) 45%, transparent); }
+html[data-theme="concept"] .grade-absent { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--gabsent) 60%, transparent); }
+
+/* Ведомость: hairline под шапкой */
+html[data-theme="concept"] .vtab th { border-bottom: 1px solid var(--line); }
+
+/* Календарь: полупрозрачные ячейки */
+html[data-theme="concept"] .cal-cell { background: rgba(255, 255, 255, .05); }
+
+/* Попап: ручка ярче */
+html[data-theme="concept"] .popup-content::before { background: rgba(255, 255, 255, .18); }
+
+/* Тост: тёмная карточка с hairline (как glass-deep прототипа) */
+html[data-theme="concept"] .notif {
+  background: #1b2436;
+  border: 1px solid var(--line);
+}
+
+/* Свитч: белый ползунок на неоновом треке (концепт Toggle) */
+html[data-theme="concept"] input.switch::after { background: #fff; }

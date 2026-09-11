@@ -78,6 +78,38 @@ App.CountUp = {
   }
 };
 
+/* ===== 1c. Тема light/concept ===== */
+App.Theme = {
+  KEY: 'theme',
+  _meta() {
+    return document.querySelector('meta[name="theme-color"]');
+  },
+  current() {
+    return document.documentElement.getAttribute('data-theme') === 'concept' ? 'concept' : 'light';
+  },
+  apply(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const m = this._meta();
+    if (m) m.setAttribute('content', theme === 'concept' ? '#7c8cff' : '#4353e8');
+  },
+  // Старт: если localStorage пуст — одноразовая OS-эвристика (как в index.html).
+  init() {
+    let t = null;
+    try { t = localStorage.getItem(this.KEY); } catch (e) {}
+    if (t !== 'light' && t !== 'concept') {
+      t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'concept' : 'light';
+      try { localStorage.setItem(this.KEY, t); } catch (e) {}
+    }
+    this.apply(t);
+  },
+  // Тоггл из Настроек: без ре-рендера страницы.
+  toggle() {
+    const next = this.current() === 'concept' ? 'light' : 'concept';
+    try { localStorage.setItem(this.KEY, next); } catch (e) {}
+    this.apply(next);
+  }
+};
+
 /* ===== 2. UI-примитивы ===== */
 App.UI = {
   _notifTimer: null,
@@ -1246,6 +1278,12 @@ App.Pages.settings = async function() {
   let html = App.Nav.render();
   html += `<h1>Настройки</h1>`;
   html += `<div class="card"><div class="fx" style="gap:12px">
+    <div class="set-ico" style="background:color-mix(in srgb, var(--accent) 12%, transparent);color:var(--accent)">${App.UI.icon('cog', 'ic-lg')}</div>
+    <div class="fg1"><div class="card-title">Внешний вид</div></div>
+  </div>
+  <label class="fxb mt8" style="gap:8px;font-size:14px"><span>Тёмная тема (концепт)</span><input id="set-theme" class="switch" type="checkbox" ${App.Theme.current() === 'concept' ? 'checked' : ''} onchange="App.Theme.toggle()"></label>
+  </div>`;
+  html += `<div class="card"><div class="fx" style="gap:12px">
     <div class="set-ico" style="background:color-mix(in srgb, var(--accent) 12%, transparent);color:var(--accent)">${App.UI.icon('send', 'ic-lg')}</div>
     <div class="fg1"><div class="card-title">Telegram-бот «Мои оценки»</div></div>
   </div>`;
@@ -1981,4 +2019,5 @@ App.Pages.editSubject = async function(subjectId) {
 };
 
 /* ===== 9. INIT ===== */
+App.Theme.init();
 App.Router.init();

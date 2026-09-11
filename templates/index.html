@@ -7,6 +7,21 @@
   <meta name="color-scheme" content="light dark">
   <title>Учёт занятий</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%234353e8'/%3E%3Cpath d='m7 12.5 3.5 3.5L17 9' stroke='white' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script>
+    /* Тема light/concept: синхронно до CSS, без внешних URL и слушателей.
+       localStorage['theme'] → иначе одноразовая OS-эвристика. */
+    (function() {
+      var t = null;
+      try { t = localStorage.getItem('theme'); } catch (e) {}
+      if (t !== 'light' && t !== 'concept') {
+        t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'concept' : 'light';
+        try { localStorage.setItem('theme', t); } catch (e) {}
+      }
+      document.documentElement.setAttribute('data-theme', t);
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute('content', t === 'concept' ? '#7c8cff' : '#4353e8');
+    })();
+  </script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
