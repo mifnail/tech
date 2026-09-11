@@ -61,6 +61,23 @@ App.Loading = {
   }
 };
 
+/* ===== 1b. CountUp: rAF-твин чисел (только для нового экрана Analytics) ===== */
+App.CountUp = {
+  _r: window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  run(el, target, dec) {
+    if (!el) return;
+    dec = dec || 0;
+    var f = function(v) { return v.toFixed(dec).replace('.', ','); };
+    if (this._r) { el.textContent = f(target); return; }
+    var t0 = performance.now();
+    (function step(t) {
+      var k = Math.min(1, (t - t0) / 600);
+      el.textContent = f(target * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(step);
+    })(t0);
+  }
+};
+
 /* ===== 2. UI-примитивы ===== */
 App.UI = {
   _notifTimer: null,
@@ -371,6 +388,7 @@ App.Nav = {
     const pages = [
       { hash: '#home', label: 'Главная', icon: 'home' },
       { hash: '#schedule', label: 'Расписание', icon: 'cal' },
+      { hash: '#analytics', label: 'Аналитика', icon: 'chart' },
       { hash: '#settings', label: 'Настройки', icon: 'cog' }
     ];
     const active = location.hash.split('?')[0] || '#home';
@@ -476,6 +494,7 @@ App.Router = {
     else if (hash.startsWith('#subject/')) App.Pages.subject(hash.split('/')[1]);
     else if (hash.startsWith('#lesson/')) App.Pages.lesson(hash.split('/')[1]);
     else if (hash.startsWith('#students/')) App.Pages.students(hash.split('/')[1]);
+    else if (hash.startsWith('#analytics')) App.Pages.analytics();
     else if (hash.startsWith('#settings')) App.Pages.settings();
     else App.Pages.home();
   }
@@ -974,6 +993,235 @@ App.Pages = {
       App.UI.notify('Код куратора скопирован');
     } catch (e) { App.UI.notify(code); }
   },
+};
+
+/* ----- Аналитика (read-only, порт React-прототипа Analytics.tsx) ----- */
+
+App.Pages.analytics = async function() {
+  App.Loading.show();
+  let subjects = [];
+  try { subjects = await App.API.get('/api/subjects'); } catch (e) { subjects = []; }
+
+  // Пустой кейс: иконка + фраза + действие.
+  if (!subjects.length) {
+    let html = App.Nav.render();
+    html += `<h1>Аналитика</h1>`;
+    html += `<div class="card txc" style="padding:28px 16px">
+      <div class="set-ico" style="margin:0 auto;background:var(--accent-soft);color:var(--accent)">${App.UI.icon('chart', 'ic-lg')}</div>
+      <div class="card-title mt8">Пока нет данных для аналитики</div>
+      <div class="card-sub">Создайте предмет и проведите первое занятие</div>
+      <button class="btn btn-primary btn-sm mt8" onclick="App.Pages.showAddSubject()">${App.UI.icon('plus')} Создать предмет</button>
+    </div>`;
+    App._root().innerHTML = html;
+    return;
+  }
+
+  // N+1 gradebook-запросов приемлемо (предметов мало).
+  let gbs = [];
+  try {
+    gbs = await Promise.all(subjects.map(s => App.API.get(`/api/subjects/${s.id}/gradebook`)));
+  } catch (e) { gbs = []; }
+
+  // ---- Расчёт на клиенте (порт useMemo из Analytics.tsx) ----
+  const numOf = g => (g === '5' ? 5 : g === '4' ? 4 : g === '3' ? 3 : g === '2' ? 2 : null);
+  const avgOf = vals => {
+    let sum = 0, cnt = 0;
+    for (const v of vals) { const n = numOf(v); if (n != null) { sum += n; cnt++; } }
+    return cnt ? sum / cnt : null;
+  };
+  const fmtAvg = a => (a == null ? '—' : (Math.round(a * 10) / 10).toString().replace('.', ','));
+
+  // Все занятия (gradebook уже исключает cancelled/replaced) + все оценки.
+  const allLessons = [];
+  const gradesByLesson = {};
+  let allVals = [];
+  for (let gi = 0; gi < gbs.length; gi++) {
+    const gb = gbs[gi];
+    const gm = gb.grades || {};
+    for (const lk in gm) {
+      gradesByLesson[lk] = gm[lk];
+      for (const sk in gm[lk]) allVals.push(gm[lk][sk]);
+    }
+    for (const l of gb.lessons || []) allLessons.push({ id: l.id, date: l.date });
+  }
+  allLessons.sort((a, b) => a.date.localeCompare(b.date));
+
+  const avg = avgOf(allVals);
+  let present = 0, marked = 0;
+  for (const g of allVals) if (g) { marked++; if (g !== 'absent') present++; }
+  const att = marked ? Math.round(present / marked * 100) : 0;
+
+  // Динамика среднего по занятиям: scheduled без оценок отсеиваем фильтром n>0.
+  const series = [];
+  for (const l of allLessons) {
+    const vals = Object.values(gradesByLesson[l.id] || {});
+    const n = vals.filter(Boolean).length;
+    const la = avgOf(vals);
+    if (n > 0 && la != null) series.push(la);
+  }
+  const last3 = series.slice(-3);
+  const delta = last3.length >= 2 ? last3[last3.length - 1] - last3[0] : 0;
+
+  // Тепловая полоса активности за 14 дней.
+  const byDay = {};
+  for (const l of allLessons) {
+    const n = Object.keys(gradesByLesson[l.id] || {}).length;
+    if (n > 0) byDay[l.date] = (byDay[l.date] || 0) + n;
+  }
+  let maxDay = 1;
+  for (const k in byDay) if (byDay[k] > maxDay) maxDay = byDay[k];
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    days.push({ d, v: byDay[k] ? byDay[k] / maxDay : 0 });
+  }
+
+  // Доски почёта и риска по всем предметам (среднее по предметам + прогулы).
+  const stMap = {};
+  for (const gb of gbs) {
+    for (const s of gb.students || []) {
+      if (!stMap[s.id]) stMap[s.id] = { id: s.id, last: s.last_name, first: s.first_name, avgSum: 0, avgCnt: 0, abs: 0 };
+      let sVals = [], sAbs = 0;
+      for (const l of gb.lessons || []) {
+        const gr = (gb.grades || {})[l.id] ? (gb.grades[l.id][s.id]) : null;
+        if (gr) {
+          const n = numOf(gr);
+          if (n != null) sVals.push(n);
+          if (gr === 'absent') sAbs++;
+        }
+      }
+      const sAvg = sVals.length ? sVals.reduce((a, b) => a + b, 0) / sVals.length : null;
+      if (sAvg != null) { stMap[s.id].avgSum += sAvg; stMap[s.id].avgCnt++; }
+      stMap[s.id].abs += sAbs;
+    }
+  }
+  const board = [];
+  for (const id in stMap) {
+    const b = stMap[id];
+    if (b.avgCnt > 0) board.push({ id: b.id, name: `${b.last} ${(b.first || '')[0]}.`, avg: b.avgSum / b.avgCnt, abs: b.abs });
+  }
+  const top = board.slice().sort((a, b) => b.avg - a.avg).slice(0, 3);
+  const risk = board.filter(b => b.avg < 3.4 || b.abs >= 3).sort((a, b) => a.avg - b.avg).slice(0, 3);
+
+  // ---- Рендер ----
+  const avgColor = avg == null ? 'var(--text-3)' : avg >= 4 ? 'var(--g5)' : avg >= 3 ? 'var(--g3)' : 'var(--g2)';
+  const up = delta >= 0;
+  const deltaColor = up ? 'var(--g5)' : 'var(--g2)';
+  const deltaTxt = (up ? '+' : '') + (Math.round(delta * 100) / 100).toString().replace('.', ',');
+  const ringSize = 92, ringStroke = 8;
+  const ringR = (ringSize - ringStroke) / 2;
+  const ringC = 2 * Math.PI * ringR;
+  const ringOff = (ringC * (100 - Math.min(100, Math.max(0, att))) / 100).toFixed(1);
+
+  let html = App.Nav.render();
+  html += `<h1>Аналитика</h1>`;
+
+  // Hero-карточка: ProgressRing посещаемости + CountUp-числа + AreaChart + delta.
+  html += `<div class="card">
+    <div class="fx" style="gap:14px">
+      <div class="ring" style="width:${ringSize}px;height:${ringSize}px">
+        <svg width="${ringSize}" height="${ringSize}" viewBox="0 0 ${ringSize} ${ringSize}">
+          <circle class="ring-track" cx="${ringSize / 2}" cy="${ringSize / 2}" r="${ringR}" fill="none" stroke-width="${ringStroke}"/>
+          <circle cx="${ringSize / 2}" cy="${ringSize / 2}" r="${ringR}" fill="none" stroke="var(--g5)" stroke-width="${ringStroke}" stroke-linecap="round" stroke-dasharray="${ringC.toFixed(1)}" stroke-dashoffset="${ringOff}"/>
+        </svg>
+        <div class="ring-label" style="flex-direction:column;line-height:1.2">
+          <div><span id="an-att" style="font-size:19px;font-weight:800">0</span><span class="ts3" style="font-size:11px">%</span></div>
+          <div style="font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)">посещ.</div>
+        </div>
+      </div>
+      <div class="fg1">
+        <div class="fx" style="gap:8px;align-items:baseline">
+          <span id="an-avg" style="font-size:34px;font-weight:800;line-height:1;color:${avgColor}">—</span>
+          <span style="font-size:12px;font-weight:700;color:${deltaColor}">${up ? '&#9650;' : '&#9660;'} ${deltaTxt}</span>
+        </div>
+        <div class="ts" style="margin-top:2px">средний балл по всем предметам</div>
+        <div class="ts"><span id="an-marked" style="font-weight:700">0</span> оценок за период</div>
+      </div>
+    </div>
+    <div class="ts mt8 mb8" style="font-weight:800;text-transform:uppercase;letter-spacing:.06em;font-size:10px">динамика среднего балла</div>
+    ${App.UI.spark(series, 'var(--g5)')}
+  </div>`;
+
+  // Тепловая полоса активности за 14 дней.
+  html += `<div class="card">
+    <div class="fx" style="gap:8px;margin-bottom:12px">
+      ${App.UI.icon('chart')}
+      <span class="ts" style="font-weight:800">активность · 14 дней</span>
+    </div>
+    <div class="an-heat">`;
+  for (const d of days) {
+    const bg = d.v > 0
+      ? `linear-gradient(180deg, color-mix(in srgb, var(--g3) ${Math.round(25 + d.v * 65)}%, transparent), color-mix(in srgb, var(--g3) ${Math.round(10 + d.v * 25)}%, transparent))`
+      : 'var(--surface-2)';
+    html += `<div class="an-heat-cell" style="background:${bg}" title="${d.d.getDate()}.${d.d.getMonth() + 1}"></div>`;
+  }
+  html += `</div>
+    <div class="fxb" style="margin-top:6px"><span class="ts3" style="font-family:var(--font-mono)">-14д</span><span class="ts3" style="font-family:var(--font-mono)">сегодня</span></div>
+  </div>`;
+
+  // По предметам: Bar + held/студенты.
+  html += `<h2>По предметам</h2>`;
+  for (let pi = 0; pi < gbs.length; pi++) {
+    const gb = gbs[pi];
+    const subj = subjects[pi];
+    let psAvg = gb.summary ? parseFloat(gb.summary.average_grade) : null;
+    if (!psAvg) psAvg = null;
+    const psPct = psAvg != null ? (psAvg / 5) * 100 : 0;
+    const pHeld = (gb.lessons || []).length;
+    const pStudents = (gb.students || []).length;
+    const pHue = App.UI.hueFor(subj.id);
+    html += `<div class="card">
+      <div class="fxb">
+        <div class="card-title">${App.UI.escHtml(subj.name)}</div>
+        <div style="font-family:var(--font-mono);font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;color:${pHue}">${fmtAvg(psAvg)}</div>
+      </div>
+      <div class="bar"><div class="bar-fill" style="transform:scaleX(${(psPct / 100).toFixed(3)});background:${pHue}"></div></div>
+      <div class="fxb mt4"><span class="ts3">${pHeld} занятий</span><span class="ts3">${pStudents} студентов</span></div>
+    </div>`;
+  }
+
+  // Тренды: Лидеры top-3 и Зона риска.
+  html += `<h2>Тренды по студентам</h2><div class="grid-2">`;
+  html += `<div class="card">
+    <div class="fx" style="gap:6px;margin-bottom:10px;color:var(--g5)">
+      ${App.UI.icon('check')}<span class="ts" style="font-weight:800">Лидеры</span>
+    </div>`;
+  if (top.length) {
+    for (let ti = 0; ti < top.length; ti++) {
+      html += `<div class="fx" style="gap:8px;padding:6px 0">
+        <span class="ts3" style="width:12px;font-family:var(--font-mono)">${ti + 1}</span>
+        <span class="fg1 w600" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.escHtml(top[ti].name)}</span>
+        <span style="font-family:var(--font-mono);font-size:12px;font-weight:800;color:var(--g5);font-variant-numeric:tabular-nums">${fmtAvg(top[ti].avg)}</span>
+      </div>`;
+    }
+  } else {
+    html += `<div class="ts3" style="padding:8px 0">нет данных</div>`;
+  }
+  html += `</div>`;
+  html += `<div class="card">
+    <div class="fx" style="gap:6px;margin-bottom:10px;color:var(--g2)">
+      ${App.UI.icon('alert')}<span class="ts" style="font-weight:800">Зона риска</span>
+    </div>`;
+  if (risk.length) {
+    for (const r of risk) {
+      html += `<div class="fx" style="gap:8px;padding:6px 0">
+        <span class="fg1 w600" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.escHtml(r.name)}</span>
+        <span class="ts3" style="font-size:9.5px;font-family:var(--font-mono)">${r.abs}пр</span>
+        <span style="font-family:var(--font-mono);font-size:12px;font-weight:800;color:var(--g2);font-variant-numeric:tabular-nums">${fmtAvg(r.avg)}</span>
+      </div>`;
+    }
+  } else {
+    html += `<div class="ts3" style="padding:8px 0">все в порядке</div>`;
+  }
+  html += `</div></div>`;
+
+  App._root().innerHTML = html;
+
+  // CountUp: hero-числа (посещаемость, средний балл, оценок за период).
+  App.CountUp.run(document.getElementById('an-att'), att);
+  if (avg != null) App.CountUp.run(document.getElementById('an-avg'), avg, 1);
+  App.CountUp.run(document.getElementById('an-marked'), marked);
 };
 
 /* ----- Диалоги и действия (вызываются из inline onclick) ----- */

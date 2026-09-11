@@ -899,7 +899,11 @@ input.switch:checked::after { transform: translateX(18px); }
 /* Баннер обновления */
 .upd { border-left: 3px solid var(--accent); }
 
-/* ----- 6. Utilities (для разметки из JS) ----- */
+/* ----- 6. Аналитика (read-only экран, порт Analytics.tsx) ----- */
+.an-heat { display: flex; gap: 6px; }
+.an-heat-cell { flex: 1; height: 36px; border-radius: 8px; }
+
+/* ----- 7. Utilities (для разметки из JS) ----- */
 .fx  { display: flex; align-items: center; }
 .fxb { display: flex; align-items: center; justify-content: space-between; }
 .fg1 { flex: 1; min-width: 0; }
