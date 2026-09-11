@@ -108,13 +108,8 @@ def export_report_pdf(date: str, db: Optional[Database] = None) -> bytes:
 # ──────────────────────────────── Excel ────────────────────────────────
 
 
-def _build_xlsx(title: str, headers: list[str], rows: list[list[str]]) -> bytes:
-    if not HAS_OPENPYXL:
-        raise RuntimeError(f"openpyxl not installed ({_OPENPYXL_IMPORT_ERROR})")
-    wb = Workbook()
-    ws = wb.active
-    safe = title.replace(':', ' -').replace('\\', ' ').replace('/', ' ').replace('?', '').replace('*', '').replace('[', '(').replace(']', ')')
-    ws.title = safe[:31]
+def _fill_sheet(ws, title: str, headers: list[str], rows: list[list[str]]) -> None:
+    """Заполняет лист: заголовок, шапка, строки, ширины колонок (общий стиль)."""
     ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=14)
     header_row = 3
     for ci, h in enumerate(headers, 1):
@@ -132,14 +127,23 @@ def _build_xlsx(title: str, headers: list[str], rows: list[list[str]]) -> bytes:
     for col in ws.columns:
         max_len = max(len(str(c.value or '')) for c in col) + 2
         ws.column_dimensions[col[0].column_letter].width = min(max_len, 30)
+
+
+def _build_xlsx(title: str, headers: list[str], rows: list[list[str]]) -> bytes:
+    if not HAS_OPENPYXL:
+        raise RuntimeError(f"openpyxl not installed ({_OPENPYXL_IMPORT_ERROR})")
+    wb = Workbook()
+    ws = wb.active
+    safe = title.replace(':', ' -').replace('\\', ' ').replace('/', ' ').replace('?', '').replace('*', '').replace('[', '(').replace(']', ')')
+    ws.title = safe[:31]
+    _fill_sheet(ws, title, headers, rows)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-def export_grades_xlsx(subject_id: int, db: Optional[Database] = None) -> bytes:
-    """Gradebook as Excel, returns bytes. Заголовки: номер + дата."""
-    db = _ensure_db(db)
+def _gradebook_table(subject_id: int, db: Database) -> tuple[str, list[str], list[list[str]]]:
+    """Собирает (название предмета, заголовки, строки) ведомости по предмету."""
     summary = db.subject_summary(subject_id)
     subj_name = dict(summary)['name'] if summary else f'Предмет #{subject_id}'
     students, lessons, grades = db.subject_gradebook(subject_id)
@@ -155,7 +159,50 @@ def export_grades_xlsx(subject_id: int, db: Optional[Database] = None) -> bytes:
         for l in lessons:
             row.append(grades.get(str(s['id']), {}).get(str(l['id']), ''))
         rows.append(row)
+    return subj_name, headers, rows
+
+
+def export_grades_xlsx(subject_id: int, db: Optional[Database] = None) -> bytes:
+    """Gradebook as Excel, returns bytes. Заголовки: номер + дата."""
+    db = _ensure_db(db)
+    subj_name, headers, rows = _gradebook_table(subject_id, db)
     return _build_xlsx(f'Ведомость: {subj_name}', headers, rows)
+
+
+def _unique_sheet_name(wb, base: str) -> str:
+    """Санитизация имени листа (как в _build_xlsx) + дедупликация суффиксом ' (N)'."""
+    safe = base.replace(':', ' -').replace('\\', ' ').replace('/', ' ').replace('?', '').replace('*', '').replace('[', '(').replace(']', ')')
+    used = {ws.title for ws in wb.worksheets}
+    if safe[:31] not in used:
+        return safe[:31]
+    i = 2
+    while True:
+        suffix = f' ({i})'
+        cand = safe[:31 - len(suffix)] + suffix
+        if cand not in used:
+            return cand
+        i += 1
+
+
+def export_general_xlsx(db: Optional[Database] = None) -> bytes:
+    """Общий отчёт по всем предметам: один лист на предмет (та же таблица, что ведомость)."""
+    if not HAS_OPENPYXL:
+        raise RuntimeError(f"openpyxl not installed ({_OPENPYXL_IMPORT_ERROR})")
+    db = _ensure_db(db)
+    wb = Workbook()
+    wb.remove(wb.active)
+    subjects = db.list_subjects()
+    if not subjects:
+        ws = wb.create_sheet('Отчёт')
+        ws.cell(row=1, column=1, value='Нет предметов для отчёта').font = Font(bold=True, size=12)
+    else:
+        for subj in subjects:
+            subj_name, headers, rows = _gradebook_table(subj['id'], db)
+            ws = wb.create_sheet(_unique_sheet_name(wb, subj_name))
+            _fill_sheet(ws, f'Ведомость: {subj_name}', headers, rows)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def export_student_grades_xlsx(subject_id: int, student_id: int, db: Optional[Database] = None) -> bytes:

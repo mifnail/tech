@@ -15,7 +15,7 @@ import sys
 
 import sqlite3
 
-from report_export import export_grades_xlsx, export_report_xlsx
+from report_export import export_grades_xlsx, export_report_xlsx, export_general_xlsx
 
 # Server-side debounce for grade-push via MAX bot.
 # Each tap on a grade cell resets a 10 s timer; only the settled grade
@@ -1267,6 +1267,39 @@ def share_report(date: str):
     except RuntimeError as e:
         return _missing_deps_response(e)
     return _save_and_share(data, f'report_{date}.xlsx')
+
+
+@export_bp.route('/general.xlsx')
+def download_general():
+    try:
+        data = export_general_xlsx(get_db())
+        return send_file(io.BytesIO(data),
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                         as_attachment=True, download_name='general.xlsx')
+    except RuntimeError as e:
+        return _missing_deps_response(e)
+
+
+@export_bp.route('/general/to-downloads', methods=['POST'])
+def save_general_to_downloads():
+    try:
+        data = export_general_xlsx(get_db())
+    except RuntimeError as e:
+        return _missing_deps_response(e)
+    try:
+        where = _save_to_downloads(data, 'general.xlsx', XLSX_MIME)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True, 'path': where})
+
+
+@export_bp.route('/general/share', methods=['POST'])
+def share_general():
+    try:
+        data = export_general_xlsx(get_db())
+    except RuntimeError as e:
+        return _missing_deps_response(e)
+    return _save_and_share(data, 'general.xlsx')
 
 
 app.register_blueprint(export_bp)

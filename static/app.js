@@ -226,7 +226,7 @@ App.Download = {
   _lastName: '',
 
   async as(name, url) {
-    const m = url.match(/\/api\/export\/(grades\/\d+|report\/[0-9-]+)\.xlsx$/);
+    const m = url.match(/\/api\/export\/(grades\/\d+|report\/[0-9-]+|general)\.xlsx$/);
     if (m && !(navigator.share && navigator.canShare)) {
       // APK без Web Share: сохранить в Загрузки и сразу открыть шторку.
       try {
@@ -639,7 +639,7 @@ App.Pages = {
       <button class="btn btn-muted fg1" onclick="App.Pages.showAddGroup()">${App.UI.icon('plus')} Группа</button>
     </div>
     <h2>Экспорт</h2><div class="grid-2">
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.shareReport('${today.date}')">Поделиться отчётом</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.shareGeneral()">Поделиться отчётом</button>
     </div>`;
     App._root().innerHTML = html;
     App.Update.checkBanner();
@@ -1519,6 +1519,13 @@ App.Pages.shareGrades = async function(subjectId) {
 App.Pages.shareReport = async function(dateStr) {
   try {
     const r = await App.API.post(`/api/export/report/${dateStr}/share`);
+    App.UI.notify(r.shared === false ? ('Файл сохранён, шторка не открылась: ' + (r.error || '')) : 'Шторка открыта');
+  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
+};
+
+App.Pages.shareGeneral = async function() {
+  try {
+    const r = await App.API.post(`/api/export/general/share`);
     App.UI.notify(r.shared === false ? ('Файл сохранён, шторка не открылась: ' + (r.error || '')) : 'Шторка открыта');
   } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
 };
