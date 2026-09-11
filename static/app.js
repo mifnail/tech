@@ -515,8 +515,6 @@ App.Pages = {
           <div class="card-title">${App.UI.escHtml(s.name)}</div>
           <div class="card-sub">${App.UI.escHtml(s.group_name)} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
         </div>
-        <button class="btn btn-muted btn-sm ibtn" aria-label="Редактировать" onclick="event.stopPropagation();App.Pages.showEditSubject(${s.id}, '${App.UI.escJs(s.name)}', ${s.total_hours})">${App.UI.icon('edit')}</button>
-        <button class="btn btn-danger btn-sm ibtn" aria-label="Удалить" onclick="event.stopPropagation();App.Pages.confirmDeleteSubject(${s.id}, '${App.UI.escJs(s.name)}')">${App.UI.icon('x')}</button>
       </div>
     </div>`;
   },
@@ -629,10 +627,6 @@ App.Pages = {
         html += `<div class="card interactive txc" onclick="location='#students/${g.id}'">
           <div class="stu-ava" style="margin:0 auto 8px">${App.UI.icon('users')}</div>
           <div class="card-title">${App.UI.escHtml(g.name)}</div>
-          <div class="g4 mt4" style="justify-content:center">
-            <button class="btn btn-muted btn-sm ibtn" aria-label="Редактировать" onclick="event.stopPropagation();App.Pages.showEditGroup(${g.id}, '${App.UI.escJs(g.name)}')">${App.UI.icon('edit')}</button>
-            <button class="btn btn-danger btn-sm ibtn" aria-label="Удалить" onclick="event.stopPropagation();App.Pages.confirmDeleteGroup(${g.id}, '${App.UI.escJs(g.name)}')">${App.UI.icon('x')}</button>
-          </div>
         </div>`;
       }
       html += `</div>`;
@@ -682,9 +676,10 @@ App.Pages = {
       }).filter(v => v != null);
       const spark = App.UI.spark(trend, hue);
       if (spark) html += `<div class="ts mt8 mb8" style="font-weight:700;text-transform:uppercase;letter-spacing:.06em;font-size:10px">Динамика среднего балла</div>${spark}`;
-      html += `<div class="grid-2 mt8">
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.shareGrades(${subjectId})">Поделиться</button>
-        <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
+      html += `<div class="g8 mt8">
+        <button class="btn btn-muted btn-sm fg1" onclick="App.Pages.shareGrades(${subjectId})">Ведомость</button>
+        <button class="btn btn-muted btn-sm fg1" onclick="App.Pages.showEditSubject(${subjectId}, '${App.UI.escJs(s.name)}', ${s.total_hours})">Редактировать</button>
+        <button class="btn btn-danger btn-sm fg1" onclick="App.Pages.confirmDeleteSubject(${subjectId}, '${App.UI.escJs(s.name)}')">Удалить</button>
       </div></div>`;
     }
 
@@ -952,7 +947,11 @@ App.Pages = {
     if (!students.length) html += `<div class="card-sub txc" style="padding:12px">В группе пока нет студентов</div>`;
     html += `<div class="card-sub txc" id="stu-empty" style="display:none;padding:12px"></div>`;
     html += `</div>`;
-    html += `<button class="btn btn-muted btn-sm" onclick="history.back()">Назад</button>`;
+    html += `<div class="g8 mt8">
+      <button class="btn btn-muted btn-sm" onclick="history.back()">Назад</button>
+      <button class="btn btn-muted btn-sm fg1" onclick="App.Pages.showEditGroup(${groupId}, '${App.UI.escJs(group ? group.name : '')}')">Изменить</button>
+      <button class="btn btn-danger btn-sm" onclick="App.Pages.confirmDeleteGroup(${groupId}, '${App.UI.escJs(group ? group.name : '')}')">Удалить</button>
+    </div>`;
     App._root().innerHTML = html;
     App.Pages._stuApplyFilter();
     const si = document.getElementById('stu-search');
@@ -1930,7 +1929,9 @@ App.Pages.deleteSubject = async function(subjectId) {
     await App.API._delete(`/api/subjects/${subjectId}`);
     App.UI.closePopup();
     App.UI.notify('Предмет удалён');
-    App.Router.handle();
+    // если были на странице предмета — уходим на главную, иначе просто обновляем
+    if (location.hash.startsWith('#subject/')) location.hash = '#home';
+    else App.Router.handle();
   } catch (e) {
     App.UI.notify(e.error || 'Ошибка удаления предмета');
   }
