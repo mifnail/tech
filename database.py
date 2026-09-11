@@ -1,14 +1,13 @@
 from __future__ import annotations
 import sqlite3
 import os
-import shutil
 from typing import Optional, Sequence, Any
 
 # ─────────────────────── DB path resolution ───────────────────────
 # Desktop: lessons.db рядом со скриптом (как раньше).
 # Android: ANDROID_PRIVATE/files/lessons.db (переживает обновления APK).
-# При первом запуске на Android копируем lessons.db из APK (bundle)
-# в persistent storage, чтобы данные не терялись.
+# Первый запуск всегда создаёт СВЕЖУЮ пустую БД через init_schema()
+# (bundled lessons.db из APK больше НЕ копируется — в нём чужие токены).
 
 def _is_android() -> bool:
     return bool(os.environ.get('ANDROID_PRIVATE') or os.environ.get('ANDROID_ARGUMENT'))
@@ -26,13 +25,7 @@ def _persistent_db_path() -> str:
 
 def _resolve_db_path() -> str:
     if _is_android():
-        persistent = _persistent_db_path()
-        bundled = _bundled_db_path()
-        if not os.path.exists(persistent):
-            # Первый запуск — копируем bundled DB (если есть) в persistent
-            if os.path.exists(bundled):
-                shutil.copy2(bundled, persistent)
-        return persistent
+        return _persistent_db_path()
     # Desktop — рядом со скриптом
     return os.path.join(os.path.dirname(__file__), 'lessons.db')
 

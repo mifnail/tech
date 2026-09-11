@@ -654,3 +654,40 @@ class TestReports:
         sid = db.add_subject('Математика', 32, gid)
         lid = db.add_lesson(sid, '2026-09-01', sid, 'held')
         assert db.attendance_count(lid) == 0
+
+# ======================== FIRST-RUN DB INIT ========================
+
+class TestFirstRunFreshDb:
+    def test_first_run_creates_fresh_db_without_copying_bundle(self, tmp_path, monkeypatch):
+        """First run on Android must create a fresh empty DB via init_schema(),
+        never copy the bundled lessons.db (which may ship the author's tokens)."""
+        import database as _dbmod
+
+        # Fake bundled DB with a marker row (simulates author's lessons.db with data)
+        bundle_dir = tmp_path / 'bundle'
+        bundle_dir.mkdir()
+        bundle_path = bundle_dir / 'lessons.db'
+        bundle_db = Database(str(bundle_path))
+        bundle_db.add_group('BUNDLE_MARKER')
+        bundle_db.set_setting('max_bot_token', 'leaked-token')
+        bundle_db.close()
+
+        # Point the module's bundle lookup at the fake bundle
+        monkeypatch.setattr(_dbmod, '_bundled_db_path', lambda: str(bundle_path))
+
+        # Simulate Android first run
+        android_private = tmp_path / 'android_private'
+        android_private.mkdir()
+        monkeypatch.setenv('ANDROID_PRIVATE', str(android_private))
+
+        resolved = _dbmod._resolve_db_path()
+        assert resolved == str(android_private / 'files' / 'lessons.db')
+
+        # Fresh DB init on the resolved path — no bundle data copied
+        fresh = Database(resolved)
+        assert fresh.list_groups() == []
+        assert fresh.get_setting('max_bot_token') is None
+        fresh.close()
+
+        # Bundle file itself was never touched
+        assert os.path.exists(str(bundle_path))

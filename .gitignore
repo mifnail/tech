@@ -7,3 +7,5 @@ bin/
 lessons.db-journal
 lessons.db-wal
 lessons.db-shm
+lessons.db
+*.db
