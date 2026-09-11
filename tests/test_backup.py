@@ -3,6 +3,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+from datetime import date
 
 import pytest
 
@@ -125,7 +126,7 @@ class TestRestore:
                 'file': (io.BytesIO(b'not sqlite at all'), 'bad.db')
             }, content_type='multipart/form-data')
             assert rv.status_code == 400
-            assert 'not a SQLite' in rv.json['error']
+            assert 'file too small' in rv.json['error']
             with open(restore_target, 'rb') as f:
                 assert f.read() == b'original data'
         finally:
@@ -285,7 +286,7 @@ class TestRestoreLatest:
 
             rv = client.post('/api/restore/latest')
             assert rv.status_code == 400
-            assert 'not a SQLite' in rv.json['error']
+            assert 'file too small' in rv.json['error']
             with open(restore_target, 'rb') as f:
                 assert f.read() == b'original data'
         finally:
@@ -811,7 +812,7 @@ class TestBackupShare:
         body = rv.json
         assert body['ok'] is True
         assert body['shared'] is True
-        assert body['path'] == '/fake/path/teachhelper_2026-09-10.db'
+        assert body['path'] == f"/fake/path/teachhelper_{date.today().isoformat()}.db"
         assert captured['data'][:16] == b'SQLite format 3\x00'
         assert 'teachhelper_' in captured['filename']
         assert share_called[0]

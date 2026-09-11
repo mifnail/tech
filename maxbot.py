@@ -542,7 +542,7 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
         _api._validate_sqlite_bytes(data, require_schedule=True)
     except ValueError as e:
         try:
-            send_message(token, cid, 'Файл не похож на базу «Учет занятий».', urlopen=urlopen)
+            send_message(token, cid, 'Это не файл базы. Пришлите .db из Загрузок (обычно teachhelper_…db).', urlopen=urlopen)
         except Exception:
             pass
         return

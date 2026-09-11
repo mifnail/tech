@@ -1093,7 +1093,7 @@ class TestFileRestoreViaBot:
         monkeypatch.setattr(maxbot, 'open_raw_with_fallback', fake_open)
         att = {'type': 'file', 'payload': {'url': 'https://example.com/bad.db'}}
         maxbot._handle_file_restore('tok', 111, att, lambda: db)
-        assert any('не похож на базу' in s for s in sent)
+        assert any('не файл базы' in s for s in sent)
 
     def test_missing_tables_rejected(self, db, monkeypatch):
         """SQLite without required tables is rejected."""
@@ -1124,7 +1124,7 @@ class TestFileRestoreViaBot:
         monkeypatch.setattr(maxbot, 'open_raw_with_fallback', fake_open)
         att = {'type': 'file', 'payload': {'url': 'https://example.com/incomplete.db'}}
         maxbot._handle_file_restore('tok', 111, att, lambda: db)
-        assert any('не похож на базу' in s for s in sent)
+        assert any('не файл базы' in s for s in sent)
 
     def test_oversize_rejected(self, db, monkeypatch):
         """File over 50 MB cap is rejected."""

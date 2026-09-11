@@ -1287,7 +1287,7 @@ def _validate_sqlite_bytes(data: bytes, require_schedule: bool = False) -> None:
     When *require_schedule* is True the ``schedule`` table is also required
     (used by the MAX-bot restore path).
     """
-    if len(data) < 16:
+    if len(data) < 100:
         raise ValueError('file too small to be SQLite')
     if data[:16] != b'SQLite format 3\x00':
         raise ValueError('not a SQLite file')
@@ -1298,17 +1298,29 @@ def _validate_sqlite_bytes(data: bytes, require_schedule: bool = False) -> None:
     try:
         tmp.write(data)
         tmp.close()
-        conn = sqlite3.connect(tmp.name)
         try:
-            rows = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-            found = {r[0] for r in rows}
-            missing = required - found
-            if missing:
-                raise ValueError(f'missing tables: {", ".join(sorted(missing))}')
-        finally:
-            conn.close()
+            conn = sqlite3.connect(tmp.name)
+            try:
+                rows = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+                found = {r[0] for r in rows}
+                missing = required - found
+                if missing:
+                    raise ValueError(f'missing tables: {", ".join(sorted(missing))}')
+                # integrity check
+                try:
+                    quick = conn.execute("PRAGMA quick_check").fetchone()[0]
+                except Exception:
+                    quick = None
+                if quick != 'ok':
+                    raise ValueError('database integrity check failed')
+            finally:
+                conn.close()
+        except ValueError:
+            raise
+        except sqlite3.Error as e:
+            raise ValueError(f'invalid database: {e}') from e
     finally:
         os.unlink(tmp.name)
 
