@@ -26,7 +26,7 @@ GRADE_PUSH_DELAY = 10.0  # seconds
 # When a timer fires it is automatically removed.
 _pending: dict[tuple[int, int], threading.Timer] = {}
 
-CURATOR_PUSH_DELAY = 10.0  # TEMP DEBUG (revert to 180.0)
+CURATOR_PUSH_DELAY = 60.0  # grade-push debounce: 60s balances settle-window vs timer survival (was 180, debugged at 10)
 _pending_curator: dict[tuple[int, int], threading.Timer] = {}
 
 from flask import Flask, Blueprint, Response, request, jsonify, send_from_directory, send_file
