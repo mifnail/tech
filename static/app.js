@@ -730,12 +730,6 @@ App.Pages = {
 
 /* ===== Dialog / Action helpers (on window for onclick access) ===== */
 
-/* Публичная invite-ссылка на MAX-бота (статичная, не зависит от токена). */
-App.MAX_BOT_LINK = 'https://max.ru/se13375020_bot';
-
-/* Публичная invite-ссылка на Telegram-бота (фолбэк, когда токен не введён локально). */
-App.TG_BOT_LINK = 'https://t.me/Vtk64_bot';
-
 App.Pages._copyText = async function(text) {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -759,23 +753,15 @@ App.Pages._copyText = async function(text) {
   } catch (e) { return false; }
 };
 
-/* Тап по названию бота: скопировать invite-ссылку + открыть шторку «Поделиться». */
+/* Тап по названию Telegram-бота: скопировать invite-ссылку + открыть шторку «Поделиться». */
 App.Pages.shareBotLink = async function(kind) {
+  const title = 'Telegram-бот «Мои оценки»';
   let link = '';
-  let title = '';
-  if (kind === 'max') {
-    link = App.MAX_BOT_LINK;
-    title = 'MAX-бот «Мои оценки»';
-    if (!link) { App.UI.notify('MAX-бот не настроен'); return; }
-  } else {
-    title = 'Telegram-бот «Мои оценки»';
-    try {
-      const r = await App.API.get('/api/settings/bot/check');
-      if (r && r.ok !== false && r.username) link = 'https://t.me/' + r.username;
-    } catch (e) {}
-    if (!link) link = App.TG_BOT_LINK;
-    if (!link) { App.UI.notify('Telegram-бот не настроен'); return; }
-  }
+  try {
+    const r = await App.API.get('/api/settings/bot/check');
+    if (!r || r.ok === false || !r.username) { App.UI.notify('Telegram-бот не настроен'); return; }
+    link = 'https://t.me/' + r.username;
+  } catch (e) { App.UI.notify('Telegram-бот не настроен'); return; }
   await App.Pages._copyText(link);
   try {
     if (navigator.share) {
@@ -817,8 +803,8 @@ App.Pages.settings = async function() {
   </div>`;
   if (st.has_token) html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.dropBot()">Отключить</button>`;
   html += `</div>`;
-  html += `<div class="card"><div class="card-title" onclick="App.Pages.shareBotLink('max')" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px" title="Скопировать ссылку и поделиться">MAX-бот «Мои оценки» &#x1F517;</div>`;
-  html += `<div class="card-sub" onclick="App.Pages.shareBotLink('max')" style="cursor:pointer;margin-bottom:8px">Студенты смотрят оценки через MAX-бота. Токен: <a href="https://max.ru" target="_blank" onclick="event.stopPropagation()">MAX Platform</a><br><span style="font-size:12px">🔗 нажмите, чтобы скопировать ссылку и поделиться</span></div>`;
+  html += `<div class="card"><div class="card-title">MAX-бот «Мои оценки»</div>`;
+  html += `<div class="card-sub" style="margin-bottom:8px">Студенты смотрят оценки через MAX-бота. Токен: <a href="https://max.ru" target="_blank">MAX Platform</a></div>`;
   html += `<div style="font-size:12px;margin-bottom:4px">Статус: ${mx.has_token ? 'токен есть' : 'нет токена'}${mx.enabled ? ' · включён' : ''}</div>`;
   html += `<input id="set-mtoken" type="password" placeholder="Токен MAX-бота" autocomplete="off">`;
   html += `<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px"><input id="set-mlenabled" type="checkbox" ${mx.enabled ? 'checked' : ''} style="width:auto"> Включить бота</label>`;
