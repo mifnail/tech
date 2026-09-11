@@ -1638,7 +1638,7 @@ App.Pages._createLessonAt = async function(subjectId, lessonNumber, iso) {
 
 App.Pages.showLessonSubstitution = async function(lessonId) {
   const lesson = await App.API.get(`/api/lessons/${lessonId}`);
-  const subs = await App.API.get(`/api/subjects/${lesson.subject_id}/substitution-list`);
+  const subs = await App.API.get('/api/subjects');
   const opts = subs.map(s => `<option value="${s.id}">${App.UI.escHtml(s.name)}</option>`).join('');
   App.UI.showPopup(`
     <h2>Замена</h2>
