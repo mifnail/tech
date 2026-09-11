@@ -132,6 +132,72 @@ App.UI = {
 
   escJs(s) {
     return (s || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/\n/g,'\\n');
+  },
+
+  /* ----- Визуальная система концепта (только презентация, без логики) ----- */
+
+  // Hue предмета из палитры концепта (iris/viol/cyn/mint/ambr/rose) — по id.
+  hueFor(id) {
+    const hues = ['var(--hue-0)', 'var(--hue-1)', 'var(--hue-2)', 'var(--hue-3)', 'var(--hue-4)', 'var(--hue-5)'];
+    return hues[Math.abs(id || 0) % hues.length];
+  },
+
+  // Короткий бейдж предмета (концепт: цветной short-бейдж).
+  subjDot(name, id) {
+    const short = App.UI.escHtml((name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase());
+    return `<div class="subj-dot" style="--hue:${App.UI.hueFor(id)}">${short}</div>`;
+  },
+
+  // ProgressRing из концепта: статичный SVG без motion-библиотеки.
+  ring(pct, color, size, stroke) {
+    size = size || 64; stroke = stroke || 6;
+    const r = (size - stroke) / 2;
+    const c = 2 * Math.PI * r;
+    const p = Math.min(100, Math.max(0, pct || 0));
+    const off = (c * (100 - p) / 100).toFixed(1);
+    return `<div class="ring" style="width:${size}px;height:${size}px">` +
+      `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+      `<circle class="ring-track" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke-width="${stroke}"/>` +
+      `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off}"/>` +
+      `</svg><div class="ring-label">${Math.round(p)}<span class="ts3">%</span></div></div>`;
+  },
+
+  // AreaChart из концепта: плоский SVG-тренд (линия + заливка), без анимаций библиотек.
+  spark(points, color) {
+    const w = 320, h = 74, pad = 8;
+    let pts = (points || []).filter(v => v != null);
+    if (!pts.length) return '';
+    if (pts.length < 2) pts = [pts[0], pts[0]];
+    const min = Math.min(...pts) - 0.4, max = Math.max(...pts) + 0.4;
+    const step = (w - pad * 2) / (pts.length - 1);
+    const xy = pts.map((p, i) => [pad + i * step, h - pad - ((p - min) / (max - min)) * (h - pad * 2)]);
+    const line = xy.map(([x, y], i) => (i === 0 ? `M${x.toFixed(1)},${y.toFixed(1)}` : `L${x.toFixed(1)},${y.toFixed(1)}`)).join(' ');
+    const area = `${line} L${xy[xy.length - 1][0].toFixed(1)},${h} L${xy[0][0].toFixed(1)},${h} Z`;
+    const gid = 'sg' + Math.abs((points.length * 31 + Math.round(pts[0] * 10)) % 997);
+    const dots = xy.map(([x, y]) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="var(--surface)" stroke="${color}" stroke-width="2"/>`).join('');
+    return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">` +
+      `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">` +
+      `<stop offset="0%" stop-color="${color}" stop-opacity="0.35"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/>` +
+      `</linearGradient></defs><path d="${area}" fill="url(#${gid})"/>` +
+      `<path d="${line}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round"/>${dots}</svg>`;
+  },
+
+  // Distribution из концепта: полоса распределения оценок занятия.
+  dist(grades) {
+    const colors = { '5': 'var(--g5)', '4': 'var(--g4)', '3': 'var(--g3)', '2': 'var(--g2)', '0': 'var(--g0)', 'present': 'var(--g0)', 'absent': 'var(--gabsent)' };
+    const counts = {};
+    let total = 0;
+    for (const g of grades || []) {
+      const k = g === '0' ? 'present' : g;
+      if (!g && g !== 0) continue;
+      if (g == null || g === '') continue;
+      counts[k] = (counts[k] || 0) + 1;
+      total++;
+    }
+    if (!total) return '';
+    return `<div class="dist">` + ['5', '4', '3', '2', 'present', 'absent']
+      .filter(k => counts[k])
+      .map(k => `<i style="width:${(counts[k] / total * 100).toFixed(1)}%;background:${colors[k]}"></i>`).join('') + `</div>`;
   }
 };
 
@@ -303,14 +369,14 @@ App.Update = {
 App.Nav = {
   render() {
     const pages = [
-      { hash: '#home', label: 'Дом' },
-      { hash: '#schedule', label: 'Расп.' },
-      { hash: '#settings', label: 'Настр.' }
+      { hash: '#home', label: 'Главная', icon: 'home' },
+      { hash: '#schedule', label: 'Расписание', icon: 'cal' },
+      { hash: '#settings', label: 'Настройки', icon: 'cog' }
     ];
     const active = location.hash.split('?')[0] || '#home';
     return `<div class="nav">${
       pages.map(p =>
-        `<a href="${p.hash}" class="${active === p.hash ? 'active' : ''}">${p.label}</a>`
+        `<a href="${p.hash}" class="${active === p.hash ? 'active' : ''}">${App.UI.icon(p.icon)}<span>${p.label}</span></a>`
       ).join('')
     }</div>${this.showFab() ? `<button class="fab" onclick="App.Pages.showCreateLessonAny()" aria-label="Новое занятие">${App.UI.icon('plus', 'ic-lg')}</button>` : ''}`;
   },
@@ -349,6 +415,13 @@ App.Grades = {
     // Сервер — источник истины; POST успешен = значение записано.
     // Обновляем одну строку вместо полного ререндера страницы (2 GET + rebuild DOM на каждый тап).
     this._paintRow(lessonId, studentId, next);
+    // Живые статы: патчим #lstat из кэша без новых GET.
+    try {
+      if (App.state.lessonId == lessonId && App.state.lessonAtt) {
+        App.state.lessonAtt.attMap[studentId] = next;
+        this._paintStats();
+      }
+    } catch (e) {}
   },
 
   _paintRow(lessonId, studentId, grade) {
@@ -362,6 +435,28 @@ App.Grades = {
       b.className = 'att-badge grade-' + cc;
       b.textContent = (grade === null || grade === '') ? '—' : grade;
     }
+  },
+
+  _renderStats(students, attMap) {
+    const allGrades = students.map(s => attMap[s.id] != null ? attMap[s.id] : '');
+    const markedVals = allGrades.filter(g => g !== '' && g != null);
+    const numVals = markedVals.filter(g => g === '2' || g === '3' || g === '4' || g === '5').map(Number);
+    const lessonAvg = numVals.length ? (numVals.reduce((a, b) => a + b, 0) / numVals.length) : null;
+    const presentN = markedVals.filter(g => g !== 'absent').length;
+    const attPct = markedVals.length ? Math.round(presentN / markedVals.length * 100) : 0;
+    const avgColor = lessonAvg == null ? 'var(--text-3)' : lessonAvg >= 4 ? 'var(--g5)' : lessonAvg >= 3 ? 'var(--g3)' : 'var(--g2)';
+    return `<div class="lstat-grid">
+      <div><div class="lstat-num" style="color:${avgColor}">${lessonAvg != null ? lessonAvg.toFixed(1).replace('.', ',') : '—'}</div><div class="lstat-label">ср. балл</div></div>
+      <div><div class="lstat-num">${markedVals.length}<span class="ts3">/${students.length}</span></div><div class="lstat-label">отмечено</div></div>
+      <div><div class="lstat-num">${attPct}<span class="ts3">%</span></div><div class="lstat-label">посещаем.</div></div>
+    </div><div class="mt8">${App.UI.dist(markedVals)}</div>`;
+  },
+
+  _paintStats() {
+    const el = document.getElementById('lstat');
+    const s = App.state.lessonAtt;
+    if (!el || !s) return;
+    el.innerHTML = App.Pages._renderStats(s.students, s.attMap);
   }
 };
 
@@ -390,15 +485,16 @@ App.Router = {
 App.Pages = {
   _showToday: false,
 
-  // Карточка предмета (главная + списки): единый рендер.
+  // Карточка предмета (главная + списки): ProgressRing + hue-бейдж из концепта.
   _subjectCard(s) {
     const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
-    return `<div class="card interactive" onclick="location='#subject/${s.id}'">
-      <div class="fx">
+    const hue = App.UI.hueFor(s.id);
+    return `<div class="card hued interactive" style="--hue:${hue}" onclick="location='#subject/${s.id}'">
+      <div class="fx" style="gap:12px">
+        ${App.UI.ring(pct, hue)}
         <div class="fg1">
           <div class="card-title">${App.UI.escHtml(s.name)}</div>
           <div class="card-sub">${App.UI.escHtml(s.group_name)} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
-          <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
         </div>
         <button class="btn btn-muted btn-sm ibtn" aria-label="Редактировать" onclick="event.stopPropagation();App.Pages.showEditSubject(${s.id}, '${App.UI.escJs(s.name)}', ${s.total_hours})">${App.UI.icon('edit')}</button>
         <button class="btn btn-danger btn-sm ibtn" aria-label="Удалить" onclick="event.stopPropagation();App.Pages.confirmDeleteSubject(${s.id}, '${App.UI.escJs(s.name)}')">${App.UI.icon('x')}</button>
@@ -420,9 +516,13 @@ App.Pages = {
       for (const e of schedule) {
         const existing = lessons.filter(l => l.subject_id === e.subject_id
           && (l.lesson_number == null || e.lesson_number == null || l.lesson_number === e.lesson_number));
-        html += `<div class="card">
+        html += `<div class="card hued" style="--hue:${App.UI.hueFor(e.subject_id)}">
+          <div class="fx" style="gap:10px">
+          ${App.UI.subjDot(e.subject_name || '?', e.subject_id)}
+          <div class="fg1">
           <div class="card-title">Занятие ${e.lesson_number} · ${App.UI.escHtml(e.subject_name)}</div>
-          <div class="card-sub">${App.UI.escHtml(e.group_name)}</div>`;
+          <div class="card-sub">${App.UI.escHtml(e.group_name)}</div>
+          </div></div>`;
           for (const l of existing) {
             const m = this._lessonLinkRow(l);
             html += `<div class="fx mt4" style="gap:4px">
@@ -468,13 +568,25 @@ App.Pages = {
     ]);
 
     let html = App.Nav.render();
-    html += `<h1>Учёт занятий</h1>`;
+    html += `<div class="hero mb8">
+      <div>
+        <div class="hero-date">${App.UI.formatDate(today.date)}</div>
+        <h1 class="hero-title" style="margin:0">Учёт<br>занятий</h1>
+      </div>
+      <div class="hero-marks">
+        <div class="hero-marks-num">${today.lessons.length}</div>
+        <div class="hero-marks-label">занятий</div>
+      </div>
+    </div>`;
 
     html += `<div class="card interactive" onclick="App.Pages._showToday = !App.Pages._showToday; App.Pages.home()">
       <div class="fxb">
-        <div>
-          <div class="card-title">Сегодня (${App.UI.formatDate(today.date)})</div>
-          <div class="card-sub">${today.schedule.length} запланировано · ${today.lessons.length} занятий</div>
+        <div class="fx" style="gap:10px">
+          ${App.UI.subjDot('Сегодня', 2)}
+          <div>
+            <div class="card-title">Сегодня (${App.UI.formatDate(today.date)})</div>
+            <div class="card-sub">${today.schedule.length} запланировано · ${today.lessons.length} занятий</div>
+          </div>
         </div>
         ${App.UI.icon('chev', App.Pages._showToday ? 'r180' : '')}
       </div>
@@ -496,6 +608,7 @@ App.Pages = {
       html += `<h2>Группы</h2><div class="grid-2">`;
       for (const g of groups) {
         html += `<div class="card interactive txc" onclick="location='#students/${g.id}'">
+          <div class="stu-ava" style="margin:0 auto 8px">${App.UI.icon('users')}</div>
           <div class="card-title">${App.UI.escHtml(g.name)}</div>
           <div class="g4 mt4" style="justify-content:center">
             <button class="btn btn-muted btn-sm ibtn" aria-label="Редактировать" onclick="event.stopPropagation();App.Pages.showEditGroup(${g.id}, '${App.UI.escJs(g.name)}')">${App.UI.icon('edit')}</button>
@@ -530,15 +643,26 @@ App.Pages = {
     if (data.summary) {
       const s = data.summary;
       const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
+      const hue = App.UI.hueFor(subjectId);
       html += `<h1>${App.UI.escHtml(s.name)}</h1>`;
-      html += `<div class="card"><div class="grid-2">
+      html += `<div class="card hued" style="--hue:${hue}"><div class="grid-2">
         <div class="stat"><div class="stat-value">${s.held_lessons}</div><div class="stat-label">Проведено</div></div>
         <div class="stat"><div class="stat-value">${s.remaining}</div><div class="stat-label">Осталось</div></div>
         <div class="stat"><div class="stat-value">${s.average_grade || '-'}</div><div class="stat-label">Ср. балл</div></div>
         <div class="stat"><div class="stat-value">${s.total_students}</div><div class="stat-label">Студентов</div></div>
       </div>
-      <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+      <div class="bar"><div class="bar-fill" style="transform:scaleX(${(pct / 100).toFixed(3)});background:${hue}"></div></div>
       <div class="card-sub mt8">Группа: ${App.UI.escHtml(s.group_name)}</div>`;
+      // Динамика среднего балла по занятиям (концепт AreaChart, данные уже на клиенте).
+      const trend = (data.lessons || []).map(l => {
+        const vals = Object.values(data.grades || {})
+          .map(gm => (gm || {})[l.id])
+          .filter(g => g === '2' || g === '3' || g === '4' || g === '5')
+          .map(Number);
+        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+      }).filter(v => v != null);
+      const spark = App.UI.spark(trend, hue);
+      if (spark) html += `<div class="ts mt8 mb8" style="font-weight:700;text-transform:uppercase;letter-spacing:.06em;font-size:10px">Динамика среднего балла</div>${spark}`;
       html += `<div class="grid-2 mt8">
         <button class="btn btn-muted btn-sm" onclick="App.Pages.shareGrades(${subjectId})">Поделиться</button>
         <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
@@ -552,10 +676,27 @@ App.Pages = {
         const pct = maxAvg > 0 ? (a.average / maxAvg * 100) : 0;
         html += `<div class="mb8">
           <div class="ts" style="color:var(--text);font-size:13px">${App.UI.escHtml(a.last_name)} ${App.UI.escHtml(a.first_name)}</div>
-          <div class="chart-bar"><div class="chart-bar-fill" style="width:${pct}%">${a.average}</div></div>
+          <div class="chart-bar"><div class="chart-bar-fill" style="transform:scaleX(${(pct / 100).toFixed(3)})">${a.average}</div></div>
         </div>`;
       }
       html += `</div>`;
+    }
+
+    // Зона риска из концепта Gradebook: средний балл < 3.5 (данные avg уже загружены).
+    const debtors = (avg || []).filter(a => a.average != null && a.average < 3.5).sort((x, y) => x.average - y.average);
+    if (debtors.length) {
+      html += `<h2>Зона риска · ${debtors.length}</h2>`;
+      for (const d of debtors) {
+        const ini = `${App.UI.escHtml((d.last_name || '?')[0])}${App.UI.escHtml((d.first_name || '?')[0])}`;
+        html += `<div class="card"><div class="fx" style="gap:12px">
+          <div class="stu-ava risk-ava">${ini}</div>
+          <div class="fg1">
+            <div class="card-title">${App.UI.escHtml(d.last_name)} ${App.UI.escHtml(d.first_name)}</div>
+            <div class="card-sub">средний балл ${d.average}</div>
+          </div>
+          <div class="stat-value" style="color:var(--g2)">${d.average}</div>
+        </div></div>`;
+      }
     }
 
     html += `<h2>Все занятия</h2>`;
@@ -639,7 +780,14 @@ App.Pages = {
 
     const attMap = {};
     for (const a of data.attendance) attMap[a.student_id] = a.grade;
+    // Кэш для живой перерисовки статов без новых GET (см. _paintStats).
+    App.state.lessonId = lessonId;
+    App.state.lessonAtt = {students: data.students || [], attMap: attMap};
 
+    // Живые статы занятия из концепта Lesson (считаем на клиенте, без новых запросов).
+    html += `<div class="card mt8" id="lstat">${App.Pages._renderStats(data.students || [], attMap)}</div>`;
+
+    html += `<div class="hint">${App.UI.icon('swap')} тап слева — назад · тап справа — вперёд</div>`;
     html += `<div class="fxb mt4 mb8">`;
     html += `<h2 style="margin:0">Отметки (${(data.students || []).length})</h2>`;
     html += `</div>`;
@@ -659,19 +807,23 @@ App.Pages = {
     App._root().innerHTML = html;
   },
 
-  // Строка отметки студента — единый рендер (используется и после перебора).
+  // Строка отметки студента — плитка StudentTile из концепта (орб + имя).
   _attRow(lessonId, s, grade) {
     const cc = App.Grades.colorClass(grade);
     const label = (grade === null || grade === '') ? '—' : grade;
     const fullName = `${s.last_name} ${s.first_name || ''} ${s.middle_name || ''}`.trim();
-    const displayName = `${s.last_name} ${s.first_name ? s.first_name[0] + '.' : ''}`;
     return `<div id="att-${s.id}" class="att-row-2col ${grade ? 'marked' : ''} grade-tint-${cc.replace('0', 'present')}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}', event)" title="${App.UI.escHtml(fullName)}">
-      <div class="att-name">${App.UI.escHtml(displayName)}</div>
       <div class="att-badge grade-${cc}">${label}</div>
+      <div class="fg1" style="min-width:0">
+        <div class="att-name">${App.UI.escHtml(s.last_name)}</div>
+        <div class="ts3" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.escHtml(s.first_name || '')}</div>
+      </div>
     </div>`;
   },
 
   /* ----- Расписание ----- */
+  _schedFilter: 'all',
+
   async schedule() {
     App.Loading.show();
     const [schedule, subjects] = await Promise.all([
@@ -680,22 +832,36 @@ App.Pages = {
     ]);
     const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
     const weekTypes = ['Каждую', 'Нечетная', 'Четная'];
+    const weekCls = ['w-every', 'w-odd', 'w-even'];
+    const weekShort = ['каждую', 'нечёт', 'чёт'];
+    const filter = App.Pages._schedFilter || 'all';
+    const todayDow = new Date().getDay();
 
     let html = App.Nav.render();
     html += `<h1>Расписание</h1>`;
     html += `<button class="btn btn-primary btn-sm" onclick="App.Pages.showAddScheduleEntry()">${App.UI.icon('plus')} Добавить в расписание</button>`;
+    // Чипы чётности из концепта (только клиентская фильтрация, API тот же).
+    html += `<div class="chip-row mt8">` +
+      [['all', 'Все'], ['odd', 'Нечётная'], ['even', 'Чётная']].map(([f, label]) =>
+        `<button class="chip${filter === f ? ' active' : ''}" onclick="App.Pages._schedFilter='${f}';App.Pages.schedule()">${label}</button>`
+      ).join('') + `</div>`;
 
     for (const d of days) {
-      const entries = schedule.filter(e => e.day_of_week === days.indexOf(d) + 1);
+      let entries = schedule.filter(e => e.day_of_week === days.indexOf(d) + 1);
+      if (filter !== 'all') entries = entries.filter(e => e.week_type === 0 || (filter === 'odd' ? e.week_type === 1 : e.week_type === 2));
       if (!entries.length) continue;
-      html += `<h2>${d}</h2>`;
+      const isToday = (days.indexOf(d) + 1) === todayDow;
+      html += `<h2>${d}${isToday ? ' · сегодня' : ''}</h2>`;
       for (const e of entries) {
+        const subj = subjects.find(s => s.id === e.subject_id) || {};
         html += `<div class="card">
           <div class="row">
+            ${App.UI.subjDot(subj.name || '?', e.subject_id)}
             <div class="fg1">
-              <div class="card-title">Занятие ${e.lesson_number}</div>
-              <div class="card-sub">${App.UI.escHtml(e.subject_name)} · ${App.UI.escHtml(e.group_name)} · ${weekTypes[e.week_type] || 'Каждую'}</div>
+              <div class="card-title">Занятие ${e.lesson_number} · ${App.UI.escHtml(e.subject_name)}</div>
+              <div class="card-sub">${App.UI.escHtml(e.group_name)} ${isToday ? '<span class="pill-today">сегодня</span>' : ''}</div>
             </div>
+            <span class="week-badge ${weekCls[e.week_type] || 'w-every'}">${weekShort[e.week_type] || weekTypes[e.week_type] || 'Каждую'}</span>
             <button class="btn btn-muted btn-sm ibtn" aria-label="Редактировать" onclick="App.Pages.showEditScheduleEntry(${e.id}, ${JSON.stringify(e).replace(/"/g, '&quot;')})">${App.UI.icon('edit')}</button>
             <button class="btn btn-danger btn-sm ibtn" aria-label="Удалить" onclick="App.Pages.confirmDeleteScheduleEntry(${e.id})">${App.UI.icon('x')}</button>
           </div>
@@ -708,6 +874,8 @@ App.Pages = {
   },
 
   /* ----- Студенты группы ----- */
+  _stuQuery: {},
+
   async students(groupId) {
     App.Loading.show();
     const [students, groups] = await Promise.all([
@@ -730,14 +898,29 @@ App.Pages = {
       curator = c;
     } catch (e) {}
     const group = groups.find(g => g.id == groupId);
+    // Поиск из концепта: только клиентская фильтрация уже загруженного списка.
+    const q = (App.Pages._stuQuery[groupId] || '').trim().toLowerCase();
+    const visible = q ? students.filter(s => `${s.last_name} ${s.first_name} ${s.middle_name || ''}`.toLowerCase().includes(q)) : students;
+    const tgCount = students.filter(s => botBound[s.id]).length;
+    const maxCount = students.filter(s => maxBound[s.id]).length;
 
     let html = App.Nav.render();
     html += `<h1>${group ? App.UI.escHtml(group.name) : 'Студенты'}</h1>`;
-    html += `<div class="card"><div class="card-sub">Куратор: код ${App.UI.escHtml(curator.code) || '—'} · ${curator.bound ? 'привязан' : 'не привязан'}</div>${curator.bound ? `<button class="btn btn-muted btn-sm mt4" onclick="App.Pages.unbindGroupCurator(${groupId})">Отвязать</button>` : ''}</div>`;
+    html += `<div class="ts">${students.length} студентов · TG ${tgCount} · MAX ${maxCount}</div>`;
+    html += `<div class="card mt8"><div class="fx" style="gap:12px">
+      <div class="set-ico" style="background:color-mix(in srgb, var(--info) 12%, transparent);color:var(--info)">${App.UI.icon('shield', 'ic-lg')}</div>
+      <div class="fg1">
+        <div class="card-title">Куратор группы</div>
+        <div class="card-sub">${curator.bound ? 'привязан' : 'не привязан'}</div>
+        ${curator.code ? `<button class="cur-code" onclick="App.Pages.copyCuratorCode('${App.UI.escJs(curator.code)}')">${App.UI.icon('book')} ${App.UI.escHtml(curator.code)}</button>` : ''}
+      </div>${curator.bound ? `<button class="btn btn-muted btn-sm mt4" onclick="App.Pages.unbindGroupCurator(${groupId})">Отвязать</button>` : ''}</div></div>`;
     html += `<button class="btn btn-primary btn-sm" onclick="App.Pages.showAddStudents(${groupId})">${App.UI.icon('plus')} Добавить студентов</button>`;
-    html += `<div class="card">`;
+    html += `<div class="search">${App.UI.icon('search')}<input id="stu-search" placeholder="Поиск по фамилии, имени…" value="${App.UI.escHtml(App.Pages._stuQuery[groupId] || '')}" oninput="App.Pages._stuSearch(this.value)">${q ? `<button onclick="App.Pages._stuSearch('')">Сброс</button>` : ''}</div>`;
+    html += `<div class="card" id="stu-list">`;
     for (const s of students) {
+      const ini = `${App.UI.escHtml((s.last_name || '?')[0])}${App.UI.escHtml((s.first_name || '?')[0])}`;
       html += `<div class="row">
+        <div class="stu-ava">${ini}</div>
         <div class="fg1"><span class="w600">${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</span> ${App.UI.escHtml(s.middle_name || '')}${botBound[s.id] ? ` <span class="bind-ic" title="Привязан к Telegram-боту">${App.UI.icon('phone')}</span>` : ''}${maxBound[s.id] ? ` <span class="bind-ic max" title="Привязан к MAX">${App.UI.icon('send')}</span>` : ''}</div>
         <div class="g4">
         ${botBound[s.id] ? `<button class="btn btn-muted btn-sm" onclick="App.Pages.unbindBot(${s.id})">TG</button>` : ''}
@@ -747,10 +930,50 @@ App.Pages = {
         </div>
       </div>`;
     }
+    if (!students.length) html += `<div class="card-sub txc" style="padding:12px">В группе пока нет студентов</div>`;
+    html += `<div class="card-sub txc" id="stu-empty" style="display:none;padding:12px"></div>`;
     html += `</div>`;
     html += `<button class="btn btn-muted btn-sm" onclick="history.back()">Назад</button>`;
     App._root().innerHTML = html;
-  }
+    App.Pages._stuApplyFilter();
+    const si = document.getElementById('stu-search');
+    if (si && q) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
+  },
+
+  // Живой поиск без перезагрузки и запросов: фильтрация уже отрисованных строк.
+  _stuSearch(value) {
+    const si = document.getElementById('stu-search');
+    const list = si ? si.closest('#app').querySelector('#stu-list') : null;
+    const gid = location.hash.split('/')[1];
+    if (gid) App.Pages._stuQuery[gid] = value;
+    App.Pages._stuApplyFilter();
+  },
+
+  _stuApplyFilter() {
+    const si = document.getElementById('stu-search');
+    const list = document.getElementById('stu-list');
+    const empty = document.getElementById('stu-empty');
+    if (!si || !list) return;
+    const q = si.value.trim().toLowerCase();
+    let shown = 0;
+    for (const row of list.querySelectorAll('.row')) {
+      const hit = !q || (row.textContent || '').toLowerCase().includes(q);
+      row.style.display = hit ? '' : 'none';
+      if (hit) shown++;
+    }
+    if (empty) {
+      empty.style.display = shown ? 'none' : '';
+      empty.textContent = shown ? '' : `Никого не найдено по «${si.value}»`;
+    }
+  },
+
+  // Копирование кода куратора (концепт: mono-бейдж).
+  copyCuratorCode(code) {
+    try {
+      if (navigator.clipboard) navigator.clipboard.writeText(code).catch(() => {});
+      App.UI.notify('Код куратора скопирован');
+    } catch (e) { App.UI.notify(code); }
+  },
 };
 
 /* ----- Диалоги и действия (вызываются из inline onclick) ----- */
@@ -772,11 +995,14 @@ App.Pages.settings = async function() {
   } catch (e) {}
   let html = App.Nav.render();
   html += `<h1>Настройки</h1>`;
-  html += `<div class="card"><div class="card-title">Telegram-бот «Мои оценки»</div>`;
+  html += `<div class="card"><div class="fx" style="gap:12px">
+    <div class="set-ico" style="background:color-mix(in srgb, var(--accent) 12%, transparent);color:var(--accent)">${App.UI.icon('send', 'ic-lg')}</div>
+    <div class="fg1"><div class="card-title">Telegram-бот «Мои оценки»</div></div>
+  </div>`;
   html += `<div class="card-sub mb8">Студенты смотрят оценки через бота, пока приложение открыто. Токен: <a href="https://t.me/BotFather" target="_blank">BotFather → /newbot</a></div>`;
   html += `<div class="ts mb8">Статус: ${st.has_token ? 'токен есть' : 'нет токена'}${st.enabled ? ' · включён' : ''}</div>`;
   html += `<input id="set-btoken" type="password" placeholder="Токен бота" autocomplete="off">`;
-  html += `<label class="fx mt8" style="gap:8px;font-size:14px"><input id="set-benabled" type="checkbox" ${st.enabled ? 'checked' : ''}> Включить бота</label>`;
+  html += `<label class="fxb mt8" style="gap:8px;font-size:14px"><span>Включить бота</span><input id="set-benabled" class="switch" type="checkbox" ${st.enabled ? 'checked' : ''}></label>`;
   html += `<div class="ts mt4" style="color:var(--bad)">${App.UI.icon('alert')} Для госучреждений использование Telegram для ПД запрещено 41-ФЗ с 01.06.2025 — включайте только для частного использования с согласия студентов. Основной канал — MAX.</div>`;
   html += `<div class="grid-2 mt8">
     <button class="btn btn-primary btn-sm" onclick="App.Pages.saveBot()">Сохранить</button>
@@ -784,11 +1010,14 @@ App.Pages.settings = async function() {
   </div>`;
   if (st.has_token) html += `<button class="btn btn-danger btn-sm mt8" onclick="App.Pages.dropBot()">Отключить</button>`;
   html += `</div>`;
-  html += `<div class="card"><div class="card-title">MAX-бот «Мои оценки»</div>`;
+  html += `<div class="card"><div class="fx" style="gap:12px">
+    <div class="set-ico" style="background:color-mix(in srgb, var(--info) 12%, transparent);color:var(--info)">${App.UI.icon('shield', 'ic-lg')}</div>
+    <div class="fg1"><div class="card-title">MAX-бот «Мои оценки»</div></div>
+  </div>`;
   html += `<div class="card-sub mb8">Студенты смотрят оценки через MAX-бота. Токен: <a href="https://max.ru" target="_blank">MAX Platform</a></div>`;
   html += `<div class="ts mb8">Статус: ${mx.has_token ? 'токен есть' : 'нет токена'}${mx.enabled ? ' · включён' : ''}</div>`;
   html += `<input id="set-mtoken" type="password" placeholder="Токен MAX-бота" autocomplete="off">`;
-  html += `<label class="fx mt8" style="gap:8px;font-size:14px"><input id="set-mlenabled" type="checkbox" ${mx.enabled ? 'checked' : ''}> Включить бота</label>`;
+  html += `<label class="fxb mt8" style="gap:8px;font-size:14px"><span>Включить бота</span><input id="set-mlenabled" class="switch" type="checkbox" ${mx.enabled ? 'checked' : ''}></label>`;
   html += `<div class="grid-2 mt8">
     <button class="btn btn-primary btn-sm" onclick="App.Pages.saveMaxBot()">Сохранить</button>
     <button class="btn btn-muted btn-sm" onclick="App.Pages.checkMaxBot()">Проверить</button>
@@ -797,7 +1026,10 @@ App.Pages.settings = async function() {
   html += `<div class="ts mt8">Код преподавателя: ${mx.teacher_code || '—'} ${mx.teacher_bound ? '· привязан' : '· не привязан'}</div>`;
   if (mx.teacher_bound) html += `<button class="btn btn-muted btn-sm mt4" onclick="App.Pages.unbindMaxTeacher()">Отвязать преподавателя</button>`;
   html += `</div>`;
-  html += `<div class="card"><div class="card-title">Бэкап</div>`;
+  html += `<div class="card"><div class="fx" style="gap:12px">
+    <div class="set-ico" style="background:var(--ok-soft);color:var(--ok)">${App.UI.icon('download', 'ic-lg')}</div>
+    <div class="fg1"><div class="card-title">Бэкап</div></div>
+  </div>`;
   html += `<div class="card-sub mb8">Создать резервную копию или восстановить данные.</div>`;
   html += `<button class="btn btn-primary btn-sm mt8" onclick="App.Pages.doBackup()">Выгрузить копию</button>`;
   html += `<button class="btn btn-muted btn-sm mt4" onclick="App.Pages.confirmRestoreList()">Восстановить из копии…</button>`;
@@ -812,7 +1044,10 @@ App.Pages.settings = async function() {
     html += `<button class="btn btn-danger btn-sm mt4" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
   }
   html += `</div>`;
-  html += `<div class="card" style="opacity:0.85"><div class="card-title">Поддержать проект</div>`;
+  html += `<div class="card" style="opacity:0.85"><div class="fx" style="gap:12px">
+    <div class="set-ico" style="background:var(--bad-soft);color:var(--bad)">${App.UI.icon('coffee', 'ic-lg')}</div>
+    <div class="fg1"><div class="card-title">Поддержать проект</div></div>
+  </div>`;
   html += `<div class="card-sub mb8">Если «Учет занятий» экономит вам время — можно сказать спасибо ${App.UI.icon('coffee')}</div>`;
   html += `<button class="btn btn-muted btn-sm" onclick="window.open('https://boosty.to/mifnail/donate', '_blank')">Поддержать</button>`;
   html += `</div>`;
