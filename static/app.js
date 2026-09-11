@@ -474,7 +474,7 @@ App.Grades = {
     const el = document.getElementById('lstat');
     const s = App.state.lessonAtt;
     if (!el || !s) return;
-    el.innerHTML = App.Pages._renderStats(s.students, s.attMap);
+    el.innerHTML = App.Grades._renderStats(s.students, s.attMap);
   }
 };
 
@@ -799,7 +799,7 @@ App.Pages = {
     App.state.lessonAtt = {students: data.students || [], attMap: attMap};
 
     // Живые статы занятия из концепта Lesson (считаем на клиенте, без новых запросов).
-    html += `<div class="card mt8" id="lstat">${App.Pages._renderStats(data.students || [], attMap)}</div>`;
+    html += `<div class="card mt8" id="lstat">${App.Grades._renderStats(data.students || [], attMap)}</div>`;
 
     html += `<div class="hint">${App.UI.icon('swap')} тап слева — назад · тап справа — вперёд</div>`;
     html += `<div class="fxb mt4 mb8">`;
