@@ -122,13 +122,15 @@ App.UI = {
 
   // Унифицированный диалог подтверждения (тексты задаёт вызывающий код).
   confirm(opts) {
-    this._confirmFn = opts.onOk;
     this.showPopup(`<h2>${opts.title}</h2>
       ${opts.text ? `<p class="dlg-text">${opts.text}</p>` : ''}
       <div class="grid-2">
         <button class="btn ${opts.okClass || 'btn-danger'}" onclick="App.UI._confirmOk()">${opts.okLabel}</button>
         <button class="btn btn-muted" onclick="App.UI.closePopup()">${opts.cancelLabel || 'Отмена'}</button>
       </div>`);
+    // ВАЖНО: _confirmFn ставим ПОСЛЕ showPopup — showPopup вызывает closePopup(),
+    // который обнуляет _confirmFn, иначе кнопка OK молча ничего не делает.
+    this._confirmFn = opts.onOk;
   },
 
   _confirmOk() {
@@ -877,7 +879,6 @@ App.Pages = {
             </div>
             <span class="week-badge ${weekCls[e.week_type] || 'w-every'}">${weekShort[e.week_type] || weekTypes[e.week_type] || 'Каждую'}</span>
             <button class="btn btn-muted btn-sm ibtn" aria-label="Редактировать" onclick="App.Pages.showEditScheduleEntry(${e.id}, ${JSON.stringify(e).replace(/"/g, '&quot;')})">${App.UI.icon('edit')}</button>
-            <button class="btn btn-danger btn-sm ibtn" aria-label="Удалить" onclick="App.Pages.confirmDeleteScheduleEntry(${e.id})">${App.UI.icon('x')}</button>
           </div>
         </div>`;
       }
@@ -1802,25 +1803,6 @@ App.Pages.updateScheduleEntry = async function(id) {
   App.UI.notify('Расписание обновлено');
   App.UI.closePopup();
   App.Pages.schedule();
-};
-
-App.Pages.confirmDeleteScheduleEntry = function(id) {
-  App.UI.confirm({
-    title: 'Удалить запись расписания?',
-    okLabel: 'Удалить',
-    onOk: function() { App.Pages.deleteScheduleEntry(id); }
-  });
-};
-
-App.Pages.deleteScheduleEntry = async function(id) {
-  try {
-    await App.API._delete(`/api/schedule/${id}`);
-    App.UI.closePopup();
-    App.UI.notify('Запись удалена');
-    App.Pages.schedule();
-  } catch (e) {
-    App.UI.notify(e.error || 'Ошибка удаления');
-  }
 };
 
 /* ----- Студенты: диалоги ----- */
