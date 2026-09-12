@@ -6,7 +6,7 @@ import { useDB, useVersion, store } from "../lib/store";
 import { avgOf, formatAvg } from "../lib/grades";
 import { navigate } from "../lib/router";
 import { BigHeader, Screen, AvatarTile } from "../components/shell";
-import { Btn, Card, Chip, EmptyState, Field, IconBtn, Input, Sheet, useToast } from "../components/ui";
+import { Btn, Card, Chip, EmptyState, Field, IconBtn, Input, Select, Sheet, useToast } from "../components/ui";
 
 export default function GroupsScreen() {
   const db = useDB();
@@ -15,6 +15,10 @@ export default function GroupsScreen() {
   const [query, setQuery] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState("");
+  const [addSubjectOpen, setAddSubjectOpen] = useState(false);
+  const [subjectName, setSubjectName] = useState("");
+  const [subjectHours, setSubjectHours] = useState("");
+  const [subjectGroup, setSubjectGroup] = useState("");
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -25,8 +29,11 @@ export default function GroupsScreen() {
     });
     return list.map((g) => {
       const students = db.students.filter((s) => s.groupId === g.id);
+      const heldIds = new Set(
+        db.lessons.filter((l) => l.groupId === g.id && l.status === "held").map((l) => l.id),
+      );
       const values = db.grades
-        .filter((r) => students.some((s) => s.id === r.studentId) && r.present)
+        .filter((r) => students.some((s) => s.id === r.studentId) && r.present && heldIds.has(r.lessonId))
         .map((r) => r.value);
       return { g, students, avg: avgOf(values) };
     });
@@ -42,13 +49,35 @@ export default function GroupsScreen() {
     navigate("/group/" + g.id);
   };
 
+  const addSubject = () => {
+    if (!subjectName.trim() || !subjectGroup) return;
+    const gid = Number(subjectGroup);
+    const sid = store.addSubject(subjectName, gid, Number(subjectHours) || 0).id;
+    store.assignSubject(gid, sid);
+    setSubjectName("");
+    setSubjectHours("");
+    setSubjectGroup("");
+    setAddSubjectOpen(false);
+    toast("Предмет «" + subjectName.trim() + "» добавлен");
+  };
+
   return (
     <Screen className="pb-28">
       <BigHeader
         kicker="Журнал"
-        title="Группы"
+        title="Предметы/Группы"
         actions={<IconBtn icon={Plus} label="Новая группа" onClick={() => setAddOpen(true)} className="bg-surface border border-line" />}
       />
+
+      <Btn
+        size="lg"
+        variant="muted"
+        icon={Plus}
+        className="w-full mb-3"
+        onClick={() => setAddSubjectOpen(true)}
+      >
+        Добавить предмет
+      </Btn>
 
       <div className="relative mb-3">
         <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
@@ -103,6 +132,53 @@ export default function GroupsScreen() {
         <Btn size="lg" className="w-full mt-4" onClick={create} disabled={!name.trim()}>
           Создать группу
         </Btn>
+      </Sheet>
+
+      <Sheet open={addSubjectOpen} onClose={() => setAddSubjectOpen(false)} title="Новый предмет">
+        <div className="flex flex-col gap-4">
+          <Field label="Название предмета">
+            <Input
+              value={subjectName}
+              onChange={(e) => setSubjectName(e.target.value)}
+              placeholder="Например, Компьютерные сети"
+              autoFocus
+              onKeyDown={(e) => e.key === "Enter" && addSubject()}
+            />
+          </Field>
+          <Field label="Часов (всего)">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={subjectHours}
+              onChange={(e) => setSubjectHours(e.target.value)}
+              placeholder="Например, 72"
+            />
+          </Field>
+          <Field label="Группа">
+            <Select
+              value={subjectGroup}
+              onChange={(e) => setSubjectGroup(e.target.value)}
+            >
+              <option value="">— выберите группу —</option>
+              {db.groups.map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </Select>
+          </Field>
+          {db.groups.length === 0 && (
+            <div className="text-[12.5px] text-muted leading-snug">
+              Сначала создайте группу — предмет привязывается к группе.
+            </div>
+          )}
+          <Btn
+            size="lg"
+            onClick={addSubject}
+            disabled={!subjectName.trim() || !subjectGroup}
+          >
+            Добавить предмет
+          </Btn>
+        </div>
       </Sheet>
     </Screen>
   );

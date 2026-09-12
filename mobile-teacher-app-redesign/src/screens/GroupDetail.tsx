@@ -60,12 +60,22 @@ export default function GroupDetailScreen({ id }: { id: number }) {
 
   const data = useMemo(() => {
     if (!group) return null;
+    // Средние считаем только по проведённым занятиям (паритет с сервером).
+    const heldIds = new Set(db.lessons.filter((l) => l.status === "held").map((l) => l.id));
+    const studentIds = new Set(students.map((s) => s.id));
     const perStudent = students.map((s) => {
-      const recs = store.gradesOfStudent(s.id).filter((r) => r.present);
-      const values = recs.map((r) => r.value);
-      return { s, avg: avgOf(values), debtor: isDebtor(values) };
+      const recs = store.gradesOfStudent(s.id);
+      // Должник — по всем отмеченным оценкам (правило не трогаем).
+      const allVals = recs.filter((r) => r.present).map((r) => r.value);
+      const heldVals = recs.filter((r) => r.present && heldIds.has(r.lessonId)).map((r) => r.value);
+      return { s, avg: avgOf(heldVals), debtor: isDebtor(allVals) };
     });
-    const allAvg = avgOf(perStudent.map((p) => (p.avg === null ? null : p.avg)));
+    // Общий средний группы = mean ВСЕХ числовых записей (не mean-of-means).
+    const allAvg = avgOf(
+      db.grades
+        .filter((g) => heldIds.has(g.lessonId) && g.present && studentIds.has(g.studentId))
+        .map((g) => g.value),
+    );
     const debtors = perStudent.filter((p) => p.debtor).length;
     const subjects = group.subjectIds
       .map((sid) => {

@@ -1032,9 +1032,11 @@ export function useVersion(): number {
 
 export { store as default };
 
-/* Утилита для подсчёта среднего по занятию */
+/* Утилита для подсчёта среднего по занятию (только оценки 2–5) */
 export function lessonAvg(recs: GradeRec[]): number | null {
-  const vals = recs.filter((r) => r.present && r.value !== null).map((r) => r.value as number);
+  const vals = recs
+    .filter((r) => r.present && r.value !== null && r.value >= 2 && r.value <= 5)
+    .map((r) => r.value as number);
   if (!vals.length) return null;
   return vals.reduce((a, b) => a + b, 0) / vals.length;
 }
