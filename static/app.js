@@ -1,4 +1,15 @@
-/* Диагностика на устройстве: любая необработанная ошибка видна прямо в UI. */
+/* ==========================================================================
+   Учёт занятий — SPA-фронтенд (Vanilla JS, без сборки).
+   Структура файла (IIFE-разделы, единый глобал App — контракт inline onclick):
+     0. Диагностика ошибок        5. Nav      — навбар + FAB
+     1. App.API — fetch-хелпер    6. Grades   — перебор оценок
+     2. App.UI  — notify/popup    7. Router   — hash-роутер
+     3. App.Download — экспорт    8. Pages    — экраны и диалоги
+     4. App.Update — баннер APK   9. Init
+   ========================================================================== */
+
+/* Диагностика на устройстве: любая необработанная ошибка видна прямо в UI.
+   Инлайн-стили здесь намеренно — оверлей должен работать даже без style.css. */
 window.addEventListener('error', function(e) {
   try {
     if (document.querySelector('.err-overlay')) return;
@@ -11,9 +22,11 @@ window.addEventListener('error', function(e) {
 });
 
 const App = {
-  state: { lessonSubjectId: null }
+  state: { lessonSubjectId: null },
+  _root() { return this._el || (this._el = document.getElementById('app')); }
 };
 
+/* ===== 1. API-слой ===== */
 App.API = {
   async request(method, path, body) {
     const res = await fetch(path, {
@@ -42,19 +55,82 @@ App.API = {
 
 App.Loading = {
   show() {
-    const el = document.getElementById('app');
+    const el = App._root();
     if (!el) return;
     el.innerHTML = `<div class="loading"><div class="spinner"></div><div>Загрузка...</div></div>`;
   }
 };
 
+/* ===== 1b. CountUp: rAF-твин чисел (только для нового экрана Analytics) ===== */
+App.CountUp = {
+  _r: window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  run(el, target, dec) {
+    if (!el) return;
+    dec = dec || 0;
+    var f = function(v) { return v.toFixed(dec).replace('.', ','); };
+    if (this._r) { el.textContent = f(target); return; }
+    var t0 = performance.now();
+    (function step(t) {
+      var k = Math.min(1, (t - t0) / 600);
+      el.textContent = f(target * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(step);
+    })(t0);
+  }
+};
+
+/* ===== 1c. Тема light/concept ===== */
+App.Theme = {
+  KEY: 'theme',
+  _meta() {
+    return document.querySelector('meta[name="theme-color"]');
+  },
+  current() {
+    return document.documentElement.getAttribute('data-theme') === 'concept' ? 'concept' : 'light';
+  },
+  apply(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const m = this._meta();
+    if (m) m.setAttribute('content', theme === 'concept' ? '#7c8cff' : '#4353e8');
+  },
+  // Старт: если localStorage пуст — одноразовая OS-эвристика (как в index.html).
+  init() {
+    let t = null;
+    try { t = localStorage.getItem(this.KEY); } catch (e) {}
+    if (t !== 'light' && t !== 'concept') {
+      t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'concept' : 'light';
+      try { localStorage.setItem(this.KEY, t); } catch (e) {}
+    }
+    this.apply(t);
+  },
+  // Тоггл из Настроек: без ре-рендера страницы.
+  toggle() {
+    const next = this.current() === 'concept' ? 'light' : 'concept';
+    try { localStorage.setItem(this.KEY, next); } catch (e) {}
+    this.apply(next);
+  }
+};
+
+/* ===== 2. UI-примитивы ===== */
 App.UI = {
+  _notifTimer: null,
+  _confirmFn: null,
+  _escBound: null,
+
   notify(msg) {
     const n = document.getElementById('notif');
+    if (!n) return;
     n.textContent = msg;
     n.style.display = 'block';
-    setTimeout(() => n.style.display = 'none', 2500);
+    // Рестартуем таймер: раньше повторный вызов гасился чужим setTimeout.
+    if (this._notifTimer) clearTimeout(this._notifTimer);
+    this._notifTimer = setTimeout(() => { n.style.display = 'none'; }, 2500);
   },
+
+  // Иконка из инлайн-SVG спрайта index.html.
+  icon(name, cls) {
+    return `<svg class="ic${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+  },
+
   showPopup(html) {
     this.closePopup();
     const div = document.createElement('div');
@@ -63,29 +139,126 @@ App.UI = {
     div.innerHTML = `<div class="popup-content">${html}</div>`;
     div.onclick = e => { if (e.target === div) this.closePopup(); };
     document.body.appendChild(div);
+    if (!this._escBound) {
+      this._escBound = e => { if (e.key === 'Escape') App.UI.closePopup(); };
+    }
+    document.addEventListener('keydown', this._escBound);
   },
+
   closePopup() {
     const p = document.getElementById('popup');
     if (p) p.remove();
+    if (this._escBound) document.removeEventListener('keydown', this._escBound);
+    this._confirmFn = null;
   },
+
+  // Унифицированный диалог подтверждения (тексты задаёт вызывающий код).
+  confirm(opts) {
+    this.showPopup(`<h2>${opts.title}</h2>
+      ${opts.text ? `<p class="dlg-text">${opts.text}</p>` : ''}
+      <div class="grid-2">
+        <button class="btn ${opts.okClass || 'btn-danger'}" onclick="App.UI._confirmOk()">${opts.okLabel}</button>
+        <button class="btn btn-muted" onclick="App.UI.closePopup()">${opts.cancelLabel || 'Отмена'}</button>
+      </div>`);
+    // ВАЖНО: _confirmFn ставим ПОСЛЕ showPopup — showPopup вызывает closePopup(),
+    // который обнуляет _confirmFn, иначе кнопка OK молча ничего не делает.
+    this._confirmFn = opts.onOk;
+  },
+
+  _confirmOk() {
+    const f = this._confirmFn;
+    this._confirmFn = null;
+    if (f) f();
+  },
+
   formatDate(iso) {
     if (!iso) return '';
     const [y, m, d] = iso.split('-');
     return `${d}.${m}.${y}`;
   },
+
   escHtml(s) {
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   },
+
   escJs(s) {
     return (s || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/\n/g,'\\n');
+  },
+
+  /* ----- Визуальная система концепта (только презентация, без логики) ----- */
+
+  // Hue предмета из палитры концепта (iris/viol/cyn/mint/ambr/rose) — по id.
+  hueFor(id) {
+    const hues = ['var(--hue-0)', 'var(--hue-1)', 'var(--hue-2)', 'var(--hue-3)', 'var(--hue-4)', 'var(--hue-5)'];
+    return hues[Math.abs(id || 0) % hues.length];
+  },
+
+  // Короткий бейдж предмета (концепт: цветной short-бейдж).
+  subjDot(name, id) {
+    const short = App.UI.escHtml((name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase());
+    return `<div class="subj-dot" style="--hue:${App.UI.hueFor(id)}">${short}</div>`;
+  },
+
+  // ProgressRing из концепта: статичный SVG без motion-библиотеки.
+  ring(pct, color, size, stroke) {
+    size = size || 64; stroke = stroke || 6;
+    const r = (size - stroke) / 2;
+    const c = 2 * Math.PI * r;
+    const p = Math.min(100, Math.max(0, pct || 0));
+    const off = (c * (100 - p) / 100).toFixed(1);
+    return `<div class="ring" style="width:${size}px;height:${size}px">` +
+      `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+      `<circle class="ring-track" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke-width="${stroke}"/>` +
+      `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off}"/>` +
+      `</svg><div class="ring-label">${Math.round(p)}<span class="ts3">%</span></div></div>`;
+  },
+
+  // AreaChart из концепта: плоский SVG-тренд (линия + заливка), без анимаций библиотек.
+  spark(points, color) {
+    const w = 320, h = 74, pad = 8;
+    let pts = (points || []).filter(v => v != null);
+    if (!pts.length) return '';
+    if (pts.length < 2) pts = [pts[0], pts[0]];
+    const min = Math.min(...pts) - 0.4, max = Math.max(...pts) + 0.4;
+    const step = (w - pad * 2) / (pts.length - 1);
+    const xy = pts.map((p, i) => [pad + i * step, h - pad - ((p - min) / (max - min)) * (h - pad * 2)]);
+    const line = xy.map(([x, y], i) => (i === 0 ? `M${x.toFixed(1)},${y.toFixed(1)}` : `L${x.toFixed(1)},${y.toFixed(1)}`)).join(' ');
+    const area = `${line} L${xy[xy.length - 1][0].toFixed(1)},${h} L${xy[0][0].toFixed(1)},${h} Z`;
+    const gid = 'sg' + Math.abs((points.length * 31 + Math.round(pts[0] * 10)) % 997);
+    const dots = xy.map(([x, y]) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="var(--surface)" stroke="${color}" stroke-width="2"/>`).join('');
+    return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">` +
+      `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">` +
+      `<stop offset="0%" stop-color="${color}" stop-opacity="0.35"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/>` +
+      `</linearGradient></defs><path d="${area}" fill="url(#${gid})"/>` +
+      `<path d="${line}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round"/>${dots}</svg>`;
+  },
+
+  // Distribution из концепта: полоса распределения оценок занятия.
+  dist(grades) {
+    const colors = { '5': 'var(--g5)', '4': 'var(--g4)', '3': 'var(--g3)', '2': 'var(--g2)', '0': 'var(--g0)', 'present': 'var(--g0)', 'absent': 'var(--gabsent)' };
+    const counts = {};
+    let total = 0;
+    for (const g of grades || []) {
+      const k = g === '0' ? 'present' : g;
+      if (!g && g !== 0) continue;
+      if (g == null || g === '') continue;
+      counts[k] = (counts[k] || 0) + 1;
+      total++;
+    }
+    if (!total) return '';
+    return `<div class="dist">` + ['5', '4', '3', '2', 'present', 'absent']
+      .filter(k => counts[k])
+      .map(k => `<i style="width:${(counts[k] / total * 100).toFixed(1)}%;background:${colors[k]}"></i>`).join('') + `</div>`;
   }
 };
 
+/* ===== 3. Скачивание и шаринг файлов ===== */
 App.Download = {
   _lastBlob: null,
   _lastName: '',
+
   async as(name, url) {
-    const m = url.match(/\/api\/export\/(grades\/\d+|report\/[0-9-]+)\.xlsx$/);
+    const m = url.match(/\/api\/export\/(grades\/\d+|report\/[0-9-]+|general)\.xlsx$/);
     if (m && !(navigator.share && navigator.canShare)) {
       // APK без Web Share: сохранить в Загрузки и сразу открыть шторку.
       try {
@@ -127,6 +300,7 @@ App.Download = {
     if (navigator.share) this._showShare(name, blob);
     else App.UI.notify(`Скачано: ${name}`);
   },
+
   async _tryShare(name, blob) {
     try {
       if (!navigator.share || !navigator.canShare) return false;
@@ -142,6 +316,7 @@ App.Download = {
       return false;
     }
   },
+
   _showShare(name, blob) {
     App.UI.showPopup(`
       <h2>Скачано: ${name}</h2>
@@ -151,6 +326,7 @@ App.Download = {
       </div>
     `);
   },
+
   async share() {
     const blob = this._lastBlob;
     const name = this._lastName;
@@ -171,8 +347,10 @@ App.Download = {
   }
 };
 
+/* ===== 4. Баннер обновления APK ===== */
 App.Update = {
   _updateData: null,
+
   async checkBanner() {
     try {
       const vr = await App.API.get('/api/version');
@@ -191,17 +369,17 @@ App.Update = {
       if (!exportH2) return;
       const banner = document.createElement('div');
       banner.id = 'update-banner';
-      banner.className = 'card';
-      banner.style.cssText = 'border-left:3px solid #007aff;margin-bottom:12px';
+      banner.className = 'card upd';
       banner.innerHTML =
         '<div class="card-title">Доступно обновление ' + verLabel + (notes ? ' · ' + notes : '') + '</div>' +
-        '<div style="display:flex;gap:8px;margin-top:8px">' +
+        '<div class="g8 mt8">' +
         '<button class="btn btn-primary btn-sm" id="btn-upd-action" onclick="App.Update.download()">Скачать</button>' +
         '<button class="btn btn-muted btn-sm" onclick="App.Update.dismiss()">Скрыть</button>' +
         '</div>';
       exportH2.parentElement.insertBefore(banner, exportH2);
     } catch (_) {}
   },
+
   async download() {
     var btn = document.getElementById('btn-upd-action');
     if (btn) { btn.textContent = 'Загрузка…'; btn.disabled = true; }
@@ -218,6 +396,7 @@ App.Update = {
       if (btn) { btn.textContent = 'Скачать'; btn.disabled = false; }
     }
   },
+
   async install() {
     var btn = document.getElementById('btn-upd-action');
     if (btn) { btn.textContent = 'Установка…'; btn.disabled = true; }
@@ -229,6 +408,7 @@ App.Update = {
       if (btn) { btn.textContent = 'Установить'; btn.disabled = false; }
     }
   },
+
   dismiss() {
     localStorage.setItem('update_dismiss_ts', String(Date.now()));
     var el = document.getElementById('update-banner');
@@ -236,19 +416,21 @@ App.Update = {
   }
 };
 
+/* ===== 5. Навигация ===== */
 App.Nav = {
   render() {
     const pages = [
-      { hash: '#home', label: 'Дом' },
-      { hash: '#schedule', label: 'Расп.' },
-      { hash: '#settings', label: 'Настр.' }
+      { hash: '#home', label: 'Главная', icon: 'home' },
+      { hash: '#schedule', label: 'Расписание', icon: 'cal' },
+      { hash: '#analytics', label: 'Аналитика', icon: 'chart' },
+      { hash: '#settings', label: 'Настройки', icon: 'cog' }
     ];
     const active = location.hash.split('?')[0] || '#home';
     return `<div class="nav">${
       pages.map(p =>
-        `<a href="${p.hash}" class="${active === p.hash ? 'active' : ''}">${p.label}</a>`
+        `<a href="${p.hash}" class="${active === p.hash ? 'active' : ''}">${App.UI.icon(p.icon)}<span>${p.label}</span></a>`
       ).join('')
-    }</div>${this.showFab() ? '<button class="fab" onclick="App.Pages.showCreateLessonAny()" aria-label="Новое занятие">+</button>' : ''}`;
+    }</div>${this.showFab() ? `<button class="fab" onclick="App.Pages.showCreateLessonAny()" aria-label="Новое занятие">${App.UI.icon('plus', 'ic-lg')}</button>` : ''}`;
   },
   showFab() {
     const h = location.hash.split('?')[0];
@@ -256,8 +438,10 @@ App.Nav = {
   }
 };
 
+/* ===== 6. Оценки: перебор тапом ===== */
 App.Grades = {
   CYCLE: ['', '0', '5', '4', '3', '2'],
+
   colorClass(grade) {
     if (grade === '0' || grade === 'present') return 'present';
     if (grade === '5') return '5';
@@ -267,6 +451,7 @@ App.Grades = {
     if (grade === 'absent' || grade === 'н/я') return 'absent';
     return 'none';
   },
+
   async cycle(lessonId, studentId, currentGrade, ev) {
     // Направление перебора от места тапа: правая половина — вперёд, левая — назад.
     let dir = 1;
@@ -279,10 +464,55 @@ App.Grades = {
     const idx = this.CYCLE.indexOf(currentGrade || '');
     const next = this.CYCLE[(((idx + dir) % n) + n) % n];
     await App.API.post(`/api/lessons/${lessonId}/attendance`, { student_id: studentId, grade: next });
-    App.Pages.lesson(lessonId);
+    // Сервер — источник истины; POST успешен = значение записано.
+    // Обновляем одну строку вместо полного ререндера страницы (2 GET + rebuild DOM на каждый тап).
+    this._paintRow(lessonId, studentId, next);
+    // Живые статы: патчим #lstat из кэша без новых GET.
+    try {
+      if (App.state.lessonId == lessonId && App.state.lessonAtt) {
+        App.state.lessonAtt.attMap[studentId] = next;
+        this._paintStats();
+      }
+    } catch (e) {}
+  },
+
+  _paintRow(lessonId, studentId, grade) {
+    const row = document.getElementById('att-' + studentId);
+    if (!row) { App.Pages.lesson(lessonId); return; }
+    const cc = this.colorClass(grade);
+    row.className = `att-row-2col ${grade ? 'marked' : ''} grade-tint-${cc.replace('0', 'present')}`;
+    row.setAttribute('onclick', `App.Grades.cycle(${lessonId}, ${studentId}, '${grade || ''}', event)`);
+    const b = row.querySelector('.att-badge');
+    if (b) {
+      b.className = 'att-badge grade-' + cc;
+      b.textContent = (grade === null || grade === '') ? '—' : grade;
+    }
+  },
+
+  _renderStats(students, attMap) {
+    const allGrades = students.map(s => attMap[s.id] != null ? attMap[s.id] : '');
+    const markedVals = allGrades.filter(g => g !== '' && g != null);
+    const numVals = markedVals.filter(g => g === '2' || g === '3' || g === '4' || g === '5').map(Number);
+    const lessonAvg = numVals.length ? (numVals.reduce((a, b) => a + b, 0) / numVals.length) : null;
+    const presentN = markedVals.filter(g => g !== 'absent').length;
+    const attPct = markedVals.length ? Math.round(presentN / markedVals.length * 100) : 0;
+    const avgColor = lessonAvg == null ? 'var(--text-3)' : lessonAvg >= 4 ? 'var(--g5)' : lessonAvg >= 3 ? 'var(--g3)' : 'var(--g2)';
+    return `<div class="lstat-grid">
+      <div><div class="lstat-num" style="color:${avgColor}">${lessonAvg != null ? lessonAvg.toFixed(1).replace('.', ',') : '—'}</div><div class="lstat-label">ср. балл</div></div>
+      <div><div class="lstat-num">${markedVals.length}<span class="ts3">/${students.length}</span></div><div class="lstat-label">отмечено</div></div>
+      <div><div class="lstat-num">${attPct}<span class="ts3">%</span></div><div class="lstat-label">посещаем.</div></div>
+    </div><div class="mt8">${App.UI.dist(markedVals)}</div>`;
+  },
+
+  _paintStats() {
+    const el = document.getElementById('lstat');
+    const s = App.state.lessonAtt;
+    if (!el || !s) return;
+    el.innerHTML = App.Grades._renderStats(s.students, s.attMap);
   }
 };
 
+/* ===== 7. Роутер ===== */
 App.Router = {
   init() {
     window.addEventListener('hashchange', () => this.handle());
@@ -293,18 +523,41 @@ App.Router = {
     if (hash === '#home') App.Pages.home();
     else if (hash.startsWith('#today') || hash.startsWith('#subjects')) {
       location.hash = '#home';
-    } else if (hash.startsWith('#schedule')) App.Pages.schedule();
-    else if (hash.startsWith('#subjects')) App.Pages.subjects();
+    }
+    else if (hash.startsWith('#schedule')) App.Pages.schedule();
     else if (hash.startsWith('#subject/')) App.Pages.subject(hash.split('/')[1]);
     else if (hash.startsWith('#lesson/')) App.Pages.lesson(hash.split('/')[1]);
     else if (hash.startsWith('#students/')) App.Pages.students(hash.split('/')[1]);
+    else if (hash.startsWith('#analytics')) App.Pages.analytics();
     else if (hash.startsWith('#settings')) App.Pages.settings();
     else App.Pages.home();
   }
 };
 
+/* ===== 8. Экраны ===== */
 App.Pages = {
   _showToday: false,
+
+  // Карточка предмета (главная + списки): ProgressRing + hue-бейдж из концепта.
+  _subjectCard(s) {
+    const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
+    const hue = App.UI.hueFor(s.id);
+    return `<div class="card hued interactive" style="--hue:${hue}" onclick="location='#subject/${s.id}'">
+      <div class="fx" style="gap:12px">
+        ${App.UI.ring(pct, hue)}
+        <div class="fg1">
+          <div class="card-title">${App.UI.escHtml(s.name)}</div>
+          <div class="card-sub">${App.UI.escHtml(s.group_name)} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
+        </div>
+      </div>
+    </div>`;
+  },
+
+  _lessonLinkRow(l) {
+    const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
+    const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
+    return { cls, label };
+  },
 
   _renderTodaySchedule(schedule, lessons, opts) {
     opts = opts || {};
@@ -314,18 +567,21 @@ App.Pages = {
       for (const e of schedule) {
         const existing = lessons.filter(l => l.subject_id === e.subject_id
           && (l.lesson_number == null || e.lesson_number == null || l.lesson_number === e.lesson_number));
-        html += `<div class="card">
+        html += `<div class="card hued" style="--hue:${App.UI.hueFor(e.subject_id)}">
+          <div class="fx" style="gap:10px">
+          ${App.UI.subjDot(e.subject_name || '?', e.subject_id)}
+          <div class="fg1">
           <div class="card-title">Занятие ${e.lesson_number} · ${App.UI.escHtml(e.subject_name)}</div>
-          <div class="card-sub">${App.UI.escHtml(e.group_name)}</div>`;
+          <div class="card-sub">${App.UI.escHtml(e.group_name)}</div>
+          </div></div>`;
           for (const l of existing) {
-          const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
-          const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-top:4px">
-            <a href="#lesson/${l.id}" style="flex:1">${label} · ${App.UI.formatDate(l.date)}</a>
-            <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">✕</button>
-          </div>`;
-        }
-        html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.startLesson(${e.subject_id}, ${e.lesson_number})">Начать занятие</button>`;
+            const m = this._lessonLinkRow(l);
+            html += `<div class="fx mt4" style="gap:4px">
+              <a href="#lesson/${l.id}" class="fg1">${m.label} · ${App.UI.formatDate(l.date)}</a>
+              <button class="btn btn-danger btn-sm ibtn" aria-label="Удалить" onclick="event.stopPropagation();App.Pages.confirmDeleteLesson(${l.id})">${App.UI.icon('x')}</button>
+            </div>`;
+          }
+        html += `<button class="btn btn-success btn-sm mt8" onclick="App.Pages.startLesson(${e.subject_id}, ${e.lesson_number})">Начать занятие</button>`;
         html += `</div>`;
       }
     }
@@ -333,11 +589,10 @@ App.Pages = {
     if (otherLessons.length) {
       html += `<h2>Другие занятия</h2>`;
       for (const l of otherLessons) {
-        const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
-        const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
-        html += `<div class="card" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
+        const m = this._lessonLinkRow(l);
+        html += `<div class="card interactive" onclick="location='#lesson/${l.id}'">
           <div class="card-title">${App.UI.escHtml(l.actual_subject_name)}</div>
-          <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${cls}">${label}</span></div>
+          <div class="card-sub">${App.UI.escHtml(l.group_name)} · <span class="badge ${m.cls}">${m.label}</span></div>
         </div>`;
       }
     }
@@ -349,11 +604,12 @@ App.Pages = {
       // hide global create button when opts explicitly false
     } else {
       const label = opts.globalLabel || '+ Создать занятие';
-      html += `<button class="btn btn-success btn-sm" style="margin-top:8px" onclick="App.Pages.showCreateLessonAny()">${label}</button>`;
+      html += `<button class="btn btn-success btn-sm mt8" onclick="App.Pages.showCreateLessonAny()">${label}</button>`;
     }
     return html;
   },
 
+  /* ----- Главная ----- */
   async home() {
     App.Loading.show();
     const [subjects, groups, today] = await Promise.all([
@@ -363,11 +619,28 @@ App.Pages = {
     ]);
 
     let html = App.Nav.render();
-    html += `<h1>Учёт занятий</h1>`;
+    html += `<div class="hero mb8">
+      <div>
+        <div class="hero-date">${App.UI.formatDate(today.date)}</div>
+        <h1 class="hero-title" style="margin:0">Учёт<br>занятий</h1>
+      </div>
+      <div class="hero-marks">
+        <div class="hero-marks-num">${today.lessons.length}</div>
+        <div class="hero-marks-label">занятий</div>
+      </div>
+    </div>`;
 
-    html += `<div class="card" style="cursor:pointer" onclick="App.Pages._showToday = !App.Pages._showToday; App.Pages.home()">
-      <div class="card-title">Сегодня (${App.UI.formatDate(today.date)})</div>
-      <div class="card-sub">${today.schedule.length} запланировано · ${today.lessons.length} занятий · ${App.Pages._showToday ? '▲' : '▼'}</div>
+    html += `<div class="card interactive" onclick="App.Pages._showToday = !App.Pages._showToday; App.Pages.home()">
+      <div class="fxb">
+        <div class="fx" style="gap:10px">
+          ${App.UI.subjDot('Сегодня', 2)}
+          <div>
+            <div class="card-title">Сегодня (${App.UI.formatDate(today.date)})</div>
+            <div class="card-sub">${today.schedule.length} запланировано · ${today.lessons.length} занятий</div>
+          </div>
+        </div>
+        ${App.UI.icon('chev', App.Pages._showToday ? 'r180' : '')}
+      </div>
     </div>`;
 
     if (App.Pages._showToday) {
@@ -375,98 +648,36 @@ App.Pages = {
     }
 
     html += `<h2>Предметы</h2>`;
-    for (const s of subjects) {
-      const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
-      html += `<div class="card">
-        <div class="row" style="cursor:pointer" onclick="location='#subject/${s.id}'">
-          <div style="flex:1">
-            <div class="card-title">${App.UI.escHtml(s.name)}</div>
-            <div class="card-sub">${App.UI.escHtml(s.group_name)} · ${s.held_lessons}/${s.total_hours} (осталось ${s.remaining})</div>
-            <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
-          </div>
-        </div>
-        <button class="btn btn-muted btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.showEditSubject(${s.id}, '${App.UI.escJs(s.name)}', ${s.total_hours})">✎</button>
-        <button class="btn btn-danger btn-sm" style="margin-top:4px;width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteSubject(${s.id}, '${App.UI.escJs(s.name)}')">✕</button>
-      </div>`;
-    }
+    for (const s of subjects) html += App.Pages._subjectCard(s);
 
     if (!groups.length) {
       html += `<div class="card"><div class="card-sub">Сначала создайте группу</div>`;
-      html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.showAddGroup()">+ Создать группу</button></div>`;
+      html += `<button class="btn btn-primary btn-sm mt8" onclick="App.Pages.showAddGroup()">${App.UI.icon('plus')} Создать группу</button></div>`;
     }
 
     if (groups.length) {
       html += `<h2>Группы</h2><div class="grid-2">`;
       for (const g of groups) {
-        html += `<div class="card" style="cursor:pointer;text-align:center" onclick="location='#students/${g.id}'">
+        html += `<div class="card interactive txc" onclick="location='#students/${g.id}'">
+          <div class="stu-ava" style="margin:0 auto 8px">${App.UI.icon('users')}</div>
           <div class="card-title">${App.UI.escHtml(g.name)}</div>
-          <div style="display:flex;gap:4px;justify-content:center;margin-top:4px">
-            <button class="btn btn-muted btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.showEditGroup(${g.id}, '${App.UI.escJs(g.name)}')">✎</button>
-            <button class="btn btn-danger btn-sm" style="width:auto" onclick="event.stopPropagation();App.Pages.confirmDeleteGroup(${g.id}, '${App.UI.escJs(g.name)}')">✕</button>
-          </div>
         </div>`;
       }
       html += `</div>`;
     }
 
-    html += `<div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-primary" style="flex:1" onclick="App.Pages.showAddSubject()">+ Предмет</button>
-      <button class="btn btn-muted" style="flex:1" onclick="App.Pages.showAddGroup()">+ Группа</button>
+    html += `<div class="g8 mt8">
+      <button class="btn btn-primary fg1" onclick="App.Pages.showAddSubject()">${App.UI.icon('plus')} Предмет</button>
+      <button class="btn btn-muted fg1" onclick="App.Pages.showAddGroup()">${App.UI.icon('plus')} Группа</button>
     </div>
     <h2>Экспорт</h2><div class="grid-2">
-      <button class="btn btn-muted btn-sm" onclick="App.Pages.shareReport('${today.date}')">Поделиться отчётом</button>
+      <button class="btn btn-muted btn-sm" onclick="App.Pages.shareGeneral()">Поделиться отчётом</button>
     </div>`;
-    document.getElementById('app').innerHTML = html;
+    App._root().innerHTML = html;
     App.Update.checkBanner();
   },
 
-  async today(subjectId) {
-    App.Loading.show();
-    const [data, subjects] = await Promise.all([
-      App.API.get('/api/schedule/today'),
-      App.API.get('/api/subjects')
-    ]);
-
-    let schedule = data.schedule;
-    let lessons = data.lessons;
-    let currentSubject = null;
-
-    if (subjectId) {
-      currentSubject = subjects.find(s => s.id == subjectId);
-      schedule = data.schedule.filter(e => e.subject_id == subjectId);
-      lessons = data.lessons.filter(l => l.subject_id == subjectId);
-    }
-
-    let html = App.Nav.render();
-    const title = currentSubject ? `${currentSubject.name} — сегодня` : 'Сегодня';
-    html += `<h1>${title}</h1>`;
-    html += `<div class="card"><div class="card-title">${App.UI.formatDate(data.date)}</div>`;
-    html += `<div class="card-sub">День ${data.day_of_week}</div></div>`;
-
-    if (currentSubject) {
-      html += `<button class="btn btn-muted btn-sm" style="margin-bottom:8px" onclick="location='#subject/${subjectId}'">📋 Журнал предмета</button>`;
-      html += `<button class="btn btn-muted btn-sm" style="margin-bottom:8px" onclick="location='#today'">📅 Все предметы</button>`;
-    }
-
-    html += App.Pages._renderTodaySchedule(schedule, lessons, {
-      emptyText: currentSubject ? 'Сегодня занятий по этому предмету нет' : 'Сегодня занятий нет',
-      globalLabel: subjectId ? '+ Создать занятие' : 'Создать занятие вручную',
-      showGlobalCreate: subjectId ? false : true
-    });
-
-    if (currentSubject) {
-      const pct = currentSubject.total_hours > 0 ? Math.round(currentSubject.held_lessons / currentSubject.total_hours * 100) : 0;
-      html += `<div class="card" style="margin-top:8px">
-        <div class="card-title">Прогресс</div>
-        <div class="card-sub">${currentSubject.held_lessons}/${currentSubject.total_hours} (осталось ${currentSubject.remaining})</div>
-        <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
-      </div>`;
-    }
-
-    document.getElementById('app').innerHTML = html;
-  },
-
-  /* ----- Subject journal ----- */
+  /* ----- Журнал предмета ----- */
   async subject(subjectId) {
     App.Loading.show();
     const [data, avg] = await Promise.all([
@@ -479,18 +690,30 @@ App.Pages = {
     if (data.summary) {
       const s = data.summary;
       const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
+      const hue = App.UI.hueFor(subjectId);
       html += `<h1>${App.UI.escHtml(s.name)}</h1>`;
-      html += `<div class="card"><div class="grid-2">
+      html += `<div class="card hued" style="--hue:${hue}"><div class="grid-2">
         <div class="stat"><div class="stat-value">${s.held_lessons}</div><div class="stat-label">Проведено</div></div>
         <div class="stat"><div class="stat-value">${s.remaining}</div><div class="stat-label">Осталось</div></div>
         <div class="stat"><div class="stat-value">${s.average_grade || '-'}</div><div class="stat-label">Ср. балл</div></div>
         <div class="stat"><div class="stat-value">${s.total_students}</div><div class="stat-label">Студентов</div></div>
       </div>
-      <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
-      <div class="card-sub" style="margin-top:8px">Группа: ${App.UI.escHtml(s.group_name)}</div>`;
-      html += `<div class="grid-2" style="margin-top:8px">
-        <button class="btn btn-muted btn-sm" onclick="App.Pages.shareGrades(${subjectId})">Поделиться</button>
-        <button class="btn btn-muted btn-sm" onclick="location='#students/${s.group_id}'">Студенты</button>
+      <div class="bar"><div class="bar-fill" style="transform:scaleX(${(pct / 100).toFixed(3)});background:${hue}"></div></div>
+      <div class="card-sub mt8">Группа: ${App.UI.escHtml(s.group_name)}</div>`;
+      // Динамика среднего балла по занятиям (концепт AreaChart, данные уже на клиенте).
+      const trend = (data.lessons || []).map(l => {
+        const vals = Object.values(data.grades || {})
+          .map(gm => (gm || {})[l.id])
+          .filter(g => g === '2' || g === '3' || g === '4' || g === '5')
+          .map(Number);
+        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+      }).filter(v => v != null);
+      const spark = App.UI.spark(trend, hue);
+      if (spark) html += `<div class="ts mt8 mb8" style="font-weight:700;text-transform:uppercase;letter-spacing:.06em;font-size:10px">Динамика среднего балла</div>${spark}`;
+      html += `<div class="g8 mt8">
+        <button class="btn btn-muted btn-sm fg1" onclick="App.Pages.shareGrades(${subjectId})">Ведомость</button>
+        <button class="btn btn-muted btn-sm fg1" onclick="App.Pages.showEditSubject(${subjectId}, '${App.UI.escJs(s.name)}', ${s.total_hours})">Редактировать</button>
+        <button class="btn btn-danger btn-sm fg1" onclick="App.Pages.confirmDeleteSubject(${subjectId}, '${App.UI.escJs(s.name)}')">Удалить</button>
       </div></div>`;
     }
 
@@ -499,26 +722,42 @@ App.Pages = {
       html += `<h2>Средний балл</h2><div class="card">`;
       for (const a of avg) {
         const pct = maxAvg > 0 ? (a.average / maxAvg * 100) : 0;
-        html += `<div style="margin-bottom:8px">
-          <div style="font-size:13px">${App.UI.escHtml(a.last_name)} ${App.UI.escHtml(a.first_name)}</div>
-          <div class="chart-bar"><div class="chart-bar-fill" style="width:${pct}%">${a.average}</div></div>
+        html += `<div class="mb8">
+          <div class="ts" style="color:var(--text);font-size:13px">${App.UI.escHtml(a.last_name)} ${App.UI.escHtml(a.first_name)}</div>
+          <div class="chart-bar"><div class="chart-bar-fill" style="transform:scaleX(${(pct / 100).toFixed(3)})">${a.average}</div></div>
         </div>`;
       }
       html += `</div>`;
+    }
+
+    // Зона риска из концепта Gradebook: средний балл < 3.5 (данные avg уже загружены).
+    const debtors = (avg || []).filter(a => a.average != null && a.average < 3.5).sort((x, y) => x.average - y.average);
+    if (debtors.length) {
+      html += `<h2>Зона риска · ${debtors.length}</h2>`;
+      for (const d of debtors) {
+        const ini = `${App.UI.escHtml((d.last_name || '?')[0])}${App.UI.escHtml((d.first_name || '?')[0])}`;
+        html += `<div class="card"><div class="fx" style="gap:12px">
+          <div class="stu-ava risk-ava">${ini}</div>
+          <div class="fg1">
+            <div class="card-title">${App.UI.escHtml(d.last_name)} ${App.UI.escHtml(d.first_name)}</div>
+            <div class="card-sub">средний балл ${d.average}</div>
+          </div>
+          <div class="stat-value" style="color:var(--g2)">${d.average}</div>
+        </div></div>`;
+      }
     }
 
     html += `<h2>Все занятия</h2>`;
     if (allLessons.length) {
       html += `<div class="card">`;
       for (const l of allLessons) {
-        const cls = l.status === 'cancelled' ? 'badge-cancelled' : 'badge-held';
-        const label = l.status === 'cancelled' ? 'Отменено' : 'Проведено';
-        html += `<div class="row" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
-          <div style="flex:1">
-            <div style="font-weight:500">${App.UI.formatDate(l.date)}${l.lesson_number != null ? ` · Занятие №${l.lesson_number}` : ''}</div>
-            <div><span class="badge ${cls}">${label}</span></div>
+        const m = this._lessonLinkRow(l);
+        html += `<div class="row interactive" style="cursor:pointer" onclick="location='#lesson/${l.id}'">
+          <div class="fg1">
+            <div class="w600">${App.UI.formatDate(l.date)}${l.lesson_number != null ? ` · Занятие №${l.lesson_number}` : ''}</div>
+            <div><span class="badge ${m.cls}">${m.label}</span></div>
           </div>
-          <span style="color:#007aff;font-size:20px">›</span>
+          ${App.UI.icon('chev', 'chev')}
         </div>`;
       }
       html += `</div>`;
@@ -527,29 +766,29 @@ App.Pages = {
     }
 
     html += `<h2>Ведомость</h2><div class="card" style="overflow-x:auto">`;
-    html += `<table style="width:100%;font-size:13px;border-collapse:collapse">`;
-    html += `<tr><th style="text-align:left;padding:4px;position:sticky;left:0;background:#fff">Студент</th>`;
+    html += `<table class="vtab">`;
+    html += `<tr><th>Студент</th>`;
     for (let i = 0; i < data.lessons.length; i++) {
       const _l = data.lessons[i];
       const _tip = `${App.UI.formatDate(_l.date)}${_l.lesson_number != null ? ` · №${_l.lesson_number}` : ''}`;
-      html += `<th style="padding:4px;text-align:center;min-width:32px"><a href="#lesson/${_l.id}" title="${_tip}" style="text-decoration:underline dotted">${i + 1}</a></th>`;
+      html += `<th><a href="#lesson/${_l.id}" title="${_tip}">${i + 1}</a></th>`;
     }
     html += `</tr>`;
     for (const s of data.students) {
-      html += `<tr><td style="padding:4px;position:sticky;left:0;background:#fff;font-weight:500">${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</td>`;
+      html += `<tr><td>${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</td>`;
       for (const l of data.lessons) {
         const grade = (data.grades[s.id] || {})[l.id] || '';
         const gc = App.Grades.colorClass(grade);
-        html += `<td style="padding:4px;text-align:center"><span class="grade grade-${gc}" style="display:inline-flex;width:28px;height:28px">${grade || '—'}</span></td>`;
+        html += `<td><span class="grade grade-${gc}">${grade || '—'}</span></td>`;
       }
       html += `</tr>`;
     }
     html += `</table></div>`;
-    html += `<button class="btn btn-muted btn-sm" style="margin-top:8px" onclick="history.back()">Назад</button>`;
-    document.getElementById('app').innerHTML = html;
+    html += `<button class="btn btn-muted btn-sm mt8" onclick="history.back()">Назад</button>`;
+    App._root().innerHTML = html;
   },
 
-  /* ----- Lesson page ----- */
+  /* ----- Экран занятия ----- */
   async lesson(lessonId) {
     App.Loading.show();
     const [data, adjacent] = await Promise.all([
@@ -560,63 +799,79 @@ App.Pages = {
     let html = App.Nav.render();
     if (!data.lesson) {
       html += `<div class="card">Занятие не найдено</div>`;
-      document.getElementById('app').innerHTML = html;
+      App._root().innerHTML = html;
       return;
     }
 
     const l = data.lesson;
     App.state.lessonSubjectId = l.subject_id;
 
-    html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">`;
+    html += `<div class="fx mb8" style="gap:6px">`;
     html += adjacent.prev_id
-      ? `<button class="btn btn-muted btn-sm" style="width:auto;padding:4px 10px;font-size:12px" onclick="location='#lesson/${adjacent.prev_id}'">‹</button>`
+      ? `<button class="btn btn-muted btn-sm ibtn" aria-label="Предыдущее занятие" onclick="location='#lesson/${adjacent.prev_id}'">${App.UI.icon('chev', 'r180')}</button>`
       : `<div style="width:28px"></div>`;
     html += `<div class="lesson-header-wrap">`;
     html += `<h1 class="lesson-header-title" title="${App.UI.escHtml(l.actual_subject_name)}">${App.UI.escHtml(l.actual_subject_name)}</h1>`;
-    html += `<div style="font-size:11px;opacity:0.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.formatDate(l.date)} · ${App.UI.escHtml(l.group_name)}${l.lesson_number != null ? ` · Занятие №${l.lesson_number}` : ''} ${l.status === 'cancelled' ? '· (Отменено)' : ''}</div>`;
+    html += `<div class="ts3" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.formatDate(l.date)} · ${App.UI.escHtml(l.group_name)}${l.lesson_number != null ? ` · Занятие №${l.lesson_number}` : ''} ${l.status === 'cancelled' ? '· (Отменено)' : ''}</div>`;
     html += `</div>`;
     html += adjacent.next_id
-      ? `<button class="btn btn-muted btn-sm" style="width:auto;padding:4px 10px;font-size:12px" onclick="location='#lesson/${adjacent.next_id}'">›</button>`
+      ? `<button class="btn btn-muted btn-sm ibtn" aria-label="Следующее занятие" onclick="location='#lesson/${adjacent.next_id}'">${App.UI.icon('chev')}</button>`
       : `<div style="width:28px"></div>`;
     html += `</div>`;
 
     if (l.status === 'cancelled') {
-      html += `<div class="card"><div class="badge badge-cancelled" style="margin-bottom:8px">Занятие отменено</div></div>`;
+      html += `<div class="card"><div class="badge badge-cancelled mb8">Занятие отменено</div></div>`;
       html += `<button class="btn btn-muted btn-sm" onclick="location='#subject/${App.state.lessonSubjectId}'">Журнал</button>`;
-      document.getElementById('app').innerHTML = html;
+      App._root().innerHTML = html;
       return;
     }
 
     const attMap = {};
     for (const a of data.attendance) attMap[a.student_id] = a.grade;
+    // Кэш для живой перерисовки статов без новых GET (см. _paintStats).
+    App.state.lessonId = lessonId;
+    App.state.lessonAtt = {students: data.students || [], attMap: attMap};
 
-    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 6px 0">`;
-    html += `<h2 style="margin:0;font-size:14px">Отметки (${(data.students || []).length})</h2>`;
+    // Живые статы занятия из концепта Lesson (считаем на клиенте, без новых запросов).
+    html += `<div class="card mt8" id="lstat">${App.Grades._renderStats(data.students || [], attMap)}</div>`;
+
+    html += `<div class="hint">${App.UI.icon('swap')} тап слева — назад · тап справа — вперёд</div>`;
+    html += `<div class="fxb mt4 mb8">`;
+    html += `<h2 style="margin:0">Отметки (${(data.students || []).length})</h2>`;
     html += `</div>`;
     html += `<div class="card" style="padding:8px">`;
     html += `<div class="attendance-list-2col">`;
     for (const s of data.students || []) {
-      const grade = attMap[s.id] || null;
-      const label = (grade === null || grade === '') ? '—' : grade;
-      const fullName = `${s.last_name} ${s.first_name || ''} ${s.middle_name || ''}`.trim();
-      const displayName = `${s.last_name} ${s.first_name ? s.first_name[0] + '.' : ''}`;
-      html += `<div class="att-row-2col ${grade ? 'marked' : ''} grade-tint-${App.Grades.colorClass(grade).replace('0','present')}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}', event)" title="${App.UI.escHtml(fullName)}">
-        <div class="att-name">${App.UI.escHtml(displayName)}</div>
-        <div class="att-badge grade-${App.Grades.colorClass(grade)}">${label}</div>
-      </div>`;
+      html += App.Pages._attRow(lessonId, s, attMap[s.id] != null ? attMap[s.id] : null);
     }
     html += `</div></div>`;
 
-    html += `<div style="display:flex;gap:6px;margin-top:6px">
-      <button class="btn btn-warning btn-sm" style="flex:1;min-height:44px;padding:6px 4px;font-size:11px" onclick="App.Pages.showLessonSubstitution(${lessonId})">🔄 Замена</button>
-      <button class="btn btn-danger btn-sm" style="flex:1;min-height:44px;padding:6px 4px;font-size:11px" onclick="App.Pages.confirmCancelLesson(${lessonId})">✕ Отмена</button>
-      <button class="btn btn-danger btn-sm" style="flex:1;min-height:44px;padding:6px 4px;font-size:11px" onclick="App.Pages.confirmDeleteLesson(${lessonId})">🗑 Удал.</button>
-      <button class="btn btn-success btn-sm" style="flex:1;min-height:44px;padding:6px 4px;font-size:11px" onclick="location='#subject/${App.state.lessonSubjectId}'">📖 Журнал</button>
+    html += `<div class="lesson-actions">
+      <button class="btn btn-warning btn-sm" onclick="App.Pages.showLessonSubstitution(${lessonId})">${App.UI.icon('swap')}Замена</button>
+      <button class="btn btn-danger btn-sm" onclick="App.Pages.confirmCancelLesson(${lessonId})">${App.UI.icon('x')}Отмена</button>
+      <button class="btn btn-danger btn-sm" onclick="App.Pages.confirmDeleteLesson(${lessonId})">${App.UI.icon('trash')}Удал.</button>
+      <button class="btn btn-success btn-sm" onclick="location='#subject/${App.state.lessonSubjectId}'">${App.UI.icon('book')}Журнал</button>
     </div>`;
-    document.getElementById('app').innerHTML = html;
+    App._root().innerHTML = html;
   },
 
-  /* ----- Schedule management ----- */
+  // Строка отметки студента — плитка StudentTile из концепта (орб + имя).
+  _attRow(lessonId, s, grade) {
+    const cc = App.Grades.colorClass(grade);
+    const label = (grade === null || grade === '') ? '—' : grade;
+    const fullName = `${s.last_name} ${s.first_name || ''} ${s.middle_name || ''}`.trim();
+    return `<div id="att-${s.id}" class="att-row-2col ${grade ? 'marked' : ''} grade-tint-${cc.replace('0', 'present')}" onclick="App.Grades.cycle(${lessonId}, ${s.id}, '${grade || ''}', event)" title="${App.UI.escHtml(fullName)}">
+      <div class="att-badge grade-${cc}">${label}</div>
+      <div class="fg1" style="min-width:0">
+        <div class="att-name">${App.UI.escHtml(s.last_name)}</div>
+        <div class="ts3" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.escHtml(s.first_name || '')}</div>
+      </div>
+    </div>`;
+  },
+
+  /* ----- Расписание ----- */
+  _schedFilter: 'all',
+
   async schedule() {
     App.Loading.show();
     const [schedule, subjects] = await Promise.all([
@@ -625,34 +880,49 @@ App.Pages = {
     ]);
     const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
     const weekTypes = ['Каждую', 'Нечетная', 'Четная'];
+    const weekCls = ['w-every', 'w-odd', 'w-even'];
+    const weekShort = ['каждую', 'нечёт', 'чёт'];
+    const filter = App.Pages._schedFilter || 'all';
+    const todayDow = new Date().getDay();
 
     let html = App.Nav.render();
     html += `<h1>Расписание</h1>`;
-    html += `<button class="btn btn-primary btn-sm" onclick="App.Pages.showAddScheduleEntry()">+ Добавить в расписание</button>`;
+    html += `<button class="btn btn-primary btn-sm" onclick="App.Pages.showAddScheduleEntry()">${App.UI.icon('plus')} Добавить в расписание</button>`;
+    // Чипы чётности из концепта (только клиентская фильтрация, API тот же).
+    html += `<div class="chip-row mt8">` +
+      [['all', 'Все'], ['odd', 'Нечётная'], ['even', 'Чётная']].map(([f, label]) =>
+        `<button class="chip${filter === f ? ' active' : ''}" onclick="App.Pages._schedFilter='${f}';App.Pages.schedule()">${label}</button>`
+      ).join('') + `</div>`;
 
     for (const d of days) {
-      const entries = schedule.filter(e => e.day_of_week === days.indexOf(d) + 1);
+      let entries = schedule.filter(e => e.day_of_week === days.indexOf(d) + 1);
+      if (filter !== 'all') entries = entries.filter(e => e.week_type === 0 || (filter === 'odd' ? e.week_type === 1 : e.week_type === 2));
       if (!entries.length) continue;
-      html += `<h2>${d}</h2>`;
+      const isToday = (days.indexOf(d) + 1) === todayDow;
+      html += `<h2>${d}${isToday ? ' · сегодня' : ''}</h2>`;
       for (const e of entries) {
+        const subj = subjects.find(s => s.id === e.subject_id) || {};
         html += `<div class="card">
           <div class="row">
-            <div style="flex:1">
-              <div class="card-title">Занятие ${e.lesson_number}</div>
-              <div class="card-sub">${App.UI.escHtml(e.subject_name)} · ${App.UI.escHtml(e.group_name)} · ${weekTypes[e.week_type] || 'Каждую'}</div>
+            ${App.UI.subjDot(subj.name || '?', e.subject_id)}
+            <div class="fg1">
+              <div class="card-title">Занятие ${e.lesson_number} · ${App.UI.escHtml(e.subject_name)}</div>
+              <div class="card-sub">${App.UI.escHtml(e.group_name)} ${isToday ? '<span class="pill-today">сегодня</span>' : ''}</div>
             </div>
-            <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditScheduleEntry(${e.id}, ${JSON.stringify(e).replace(/"/g, '&quot;')})">✎</button>
-            <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.confirmDeleteScheduleEntry(${e.id})">✕</button>
+            <span class="week-badge ${weekCls[e.week_type] || 'w-every'}">${weekShort[e.week_type] || weekTypes[e.week_type] || 'Каждую'}</span>
+            <button class="btn btn-muted btn-sm ibtn" aria-label="Редактировать" onclick="App.Pages.showEditScheduleEntry(${e.id}, ${JSON.stringify(e).replace(/"/g, '&quot;')})">${App.UI.icon('edit')}</button>
           </div>
         </div>`;
       }
     }
 
-    html += `<button class="btn btn-muted btn-sm" style="margin-top:8px" onclick="history.back()">Назад</button>`;
-    document.getElementById('app').innerHTML = html;
+    html += `<button class="btn btn-muted btn-sm mt8" onclick="history.back()">Назад</button>`;
+    App._root().innerHTML = html;
   },
 
-  /* ----- Student list ----- */
+  /* ----- Студенты группы ----- */
+  _stuQuery: {},
+
   async students(groupId) {
     App.Loading.show();
     const [students, groups] = await Promise.all([
@@ -675,104 +945,320 @@ App.Pages = {
       curator = c;
     } catch (e) {}
     const group = groups.find(g => g.id == groupId);
+    // Поиск из концепта: только клиентская фильтрация уже загруженного списка.
+    const q = (App.Pages._stuQuery[groupId] || '').trim().toLowerCase();
+    const visible = q ? students.filter(s => `${s.last_name} ${s.first_name} ${s.middle_name || ''}`.toLowerCase().includes(q)) : students;
+    const tgCount = students.filter(s => botBound[s.id]).length;
+    const maxCount = students.filter(s => maxBound[s.id]).length;
 
     let html = App.Nav.render();
-    html += `<h1>${group ? group.name : 'Студенты'}</h1>`;
-    html += `<div class="card"><div class="card-sub">Куратор: код ${App.UI.escHtml(curator.code) || '—'} · ${curator.bound ? 'привязан' : 'не привязан'}</div>${curator.bound ? `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.unbindGroupCurator(${groupId})">Отвязать</button>` : ''}</div>`;
-    html += `<button class="btn btn-primary btn-sm" onclick="App.Pages.showAddStudents(${groupId})">+ Добавить студентов</button>`;
-    html += `<div class="card">`;
+    html += `<h1>${group ? App.UI.escHtml(group.name) : 'Студенты'}</h1>`;
+    html += `<div class="ts">${students.length} студентов · TG ${tgCount} · MAX ${maxCount}</div>`;
+    html += `<div class="card mt8"><div class="fx" style="gap:12px">
+      <div class="set-ico" style="background:color-mix(in srgb, var(--info) 12%, transparent);color:var(--info)">${App.UI.icon('shield', 'ic-lg')}</div>
+      <div class="fg1">
+        <div class="card-title">Куратор группы</div>
+        <div class="card-sub">${curator.bound ? 'привязан' : 'не привязан'}</div>
+        ${curator.code ? `<button class="cur-code" onclick="App.Pages.copyCuratorCode('${App.UI.escJs(curator.code)}')">${App.UI.icon('book')} ${App.UI.escHtml(curator.code)}</button>` : ''}
+      </div>${curator.bound ? `<button class="btn btn-muted btn-sm mt4" onclick="App.Pages.unbindGroupCurator(${groupId})">Отвязать</button>` : ''}</div></div>`;
+    html += `<button class="btn btn-primary btn-sm" onclick="App.Pages.showAddStudents(${groupId})">${App.UI.icon('plus')} Добавить студентов</button>`;
+    html += `<div class="search">${App.UI.icon('search')}<input id="stu-search" placeholder="Поиск по фамилии, имени…" value="${App.UI.escHtml(App.Pages._stuQuery[groupId] || '')}" oninput="App.Pages._stuSearch(this.value)">${q ? `<button onclick="App.Pages._stuSearch('')">Сброс</button>` : ''}</div>`;
+    html += `<div class="card" id="stu-list">`;
     for (const s of students) {
+      const ini = `${App.UI.escHtml((s.last_name || '?')[0])}${App.UI.escHtml((s.first_name || '?')[0])}`;
       html += `<div class="row">
-        <div style="flex:1"><span style="font-weight:500">${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</span> ${App.UI.escHtml(s.middle_name || '')}${botBound[s.id] ? ' <span title="Привязан к Telegram-боту">📱</span>' : ''}${maxBound[s.id] ? ' <span title="Привязан к MAX">📨</span>' : ''}</div>
-        <div style="display:flex;gap:4px">
-        ${botBound[s.id] ? `<button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.unbindBot(${s.id})">TG</button>` : ''}
-        ${maxBound[s.id] ? `<button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.unbindMaxBot(${s.id})">MAX</button>` : ''}
-        <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages.showEditStudent(${s.id}, '${App.UI.escJs(s.last_name)}', '${App.UI.escJs(s.first_name)}', '${App.UI.escJs(s.middle_name || '')}')">✎</button>
-        <button class="btn btn-danger btn-sm" style="width:auto" onclick="App.Pages.confirmDeleteStudent(${s.id})">✕</button>
+        <div class="stu-ava">${ini}</div>
+        <div class="fg1"><span class="w600">${App.UI.escHtml(s.last_name)} ${App.UI.escHtml(s.first_name)}</span> ${App.UI.escHtml(s.middle_name || '')}${botBound[s.id] ? ` <span class="bind-ic" title="Привязан к Telegram-боту">${App.UI.icon('phone')}</span>` : ''}${maxBound[s.id] ? ` <span class="bind-ic max" title="Привязан к MAX">${App.UI.icon('send')}</span>` : ''}</div>
+        <div class="g4">
+        ${botBound[s.id] ? `<button class="btn btn-muted btn-sm" onclick="App.Pages.unbindBot(${s.id})">TG</button>` : ''}
+        ${maxBound[s.id] ? `<button class="btn btn-muted btn-sm" onclick="App.Pages.unbindMaxBot(${s.id})">MAX</button>` : ''}
+        <button class="btn btn-muted btn-sm ibtn" aria-label="Редактировать" onclick="App.Pages.showEditStudent(${s.id}, '${App.UI.escJs(s.last_name)}', '${App.UI.escJs(s.first_name)}', '${App.UI.escJs(s.middle_name || '')}')">${App.UI.icon('edit')}</button>
+        <button class="btn btn-danger btn-sm ibtn" aria-label="Удалить" onclick="App.Pages.confirmDeleteStudent(${s.id})">${App.UI.icon('x')}</button>
         </div>
       </div>`;
     }
+    if (!students.length) html += `<div class="card-sub txc" style="padding:12px">В группе пока нет студентов</div>`;
+    html += `<div class="card-sub txc" id="stu-empty" style="display:none;padding:12px"></div>`;
     html += `</div>`;
-    html += `<button class="btn btn-muted btn-sm" onclick="history.back()">Назад</button>`;
-    document.getElementById('app').innerHTML = html;
+    html += `<div class="g8 mt8">
+      <button class="btn btn-muted btn-sm" onclick="history.back()">Назад</button>
+      <button class="btn btn-muted btn-sm fg1" onclick="App.Pages.showEditGroup(${groupId}, '${App.UI.escJs(group ? group.name : '')}')">Изменить</button>
+      <button class="btn btn-danger btn-sm" onclick="App.Pages.confirmDeleteGroup(${groupId}, '${App.UI.escJs(group ? group.name : '')}')">Удалить</button>
+    </div>`;
+    App._root().innerHTML = html;
+    App.Pages._stuApplyFilter();
+    const si = document.getElementById('stu-search');
+    if (si && q) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
   },
 
-  /* ----- Subjects management ----- */
-  async subjects() {
-    App.Loading.show();
-    const [groups, subjects] = await Promise.all([
-      App.API.get('/api/groups'),
-      App.API.get('/api/subjects')
-    ]);
+  // Живой поиск без перезагрузки и запросов: фильтрация уже отрисованных строк.
+  _stuSearch(value) {
+    const si = document.getElementById('stu-search');
+    const list = si ? si.closest('#app').querySelector('#stu-list') : null;
+    const gid = location.hash.split('/')[1];
+    if (gid) App.Pages._stuQuery[gid] = value;
+    App.Pages._stuApplyFilter();
+  },
 
-    let html = App.Nav.render();
-    html += `<h1>Предметы</h1>`;
-    html += `<button class="btn btn-primary" onclick="App.Pages.showAddSubject()">+ Добавить предмет</button>`;
-
-    if (!groups.length) {
-      html += `<div class="card" style="margin-top:12px"><div class="card-sub">Сначала создайте группу</div>`;
-      html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.showAddGroup()">+ Создать группу</button></div>`;
+  _stuApplyFilter() {
+    const si = document.getElementById('stu-search');
+    const list = document.getElementById('stu-list');
+    const empty = document.getElementById('stu-empty');
+    if (!si || !list) return;
+    const q = si.value.trim().toLowerCase();
+    let shown = 0;
+    for (const row of list.querySelectorAll('.row')) {
+      const hit = !q || (row.textContent || '').toLowerCase().includes(q);
+      row.style.display = hit ? '' : 'none';
+      if (hit) shown++;
     }
+    if (empty) {
+      empty.style.display = shown ? 'none' : '';
+      empty.textContent = shown ? '' : `Никого не найдено по «${si.value}»`;
+    }
+  },
 
-    for (const s of subjects) {
-      const pct = s.total_hours > 0 ? Math.round(s.held_lessons / s.total_hours * 100) : 0;
-      html += `<div class="card" style="cursor:pointer" onclick="location='#subject/${s.id}'">
-        <div class="card-title">${App.UI.escHtml(s.name)}</div>
-        <div class="card-sub">${App.UI.escHtml(s.group_name)} · ${s.held_lessons}/${s.total_hours} · осталось ${s.remaining}</div>
-        <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+  // Копирование кода куратора (концепт: mono-бейдж).
+  copyCuratorCode(code) {
+    try {
+      if (navigator.clipboard) navigator.clipboard.writeText(code).catch(() => {});
+      App.UI.notify('Код куратора скопирован');
+    } catch (e) { App.UI.notify(code); }
+  },
+};
+
+/* ----- Аналитика (read-only, порт React-прототипа Analytics.tsx) ----- */
+
+App.Pages.analytics = async function() {
+  App.Loading.show();
+  let subjects = [];
+  try { subjects = await App.API.get('/api/subjects'); } catch (e) { subjects = []; }
+
+  // Пустой кейс: иконка + фраза + действие.
+  if (!subjects.length) {
+    let html = App.Nav.render();
+    html += `<h1>Аналитика</h1>`;
+    html += `<div class="card txc" style="padding:28px 16px">
+      <div class="set-ico" style="margin:0 auto;background:var(--accent-soft);color:var(--accent)">${App.UI.icon('chart', 'ic-lg')}</div>
+      <div class="card-title mt8">Пока нет данных для аналитики</div>
+      <div class="card-sub">Создайте предмет и проведите первое занятие</div>
+      <button class="btn btn-primary btn-sm mt8" onclick="App.Pages.showAddSubject()">${App.UI.icon('plus')} Создать предмет</button>
+    </div>`;
+    App._root().innerHTML = html;
+    return;
+  }
+
+  // N+1 gradebook-запросов приемлемо (предметов мало).
+  let gbs = [];
+  try {
+    gbs = await Promise.all(subjects.map(s => App.API.get(`/api/subjects/${s.id}/gradebook`)));
+  } catch (e) { gbs = []; }
+
+  // ---- Расчёт на клиенте (порт useMemo из Analytics.tsx) ----
+  const numOf = g => (g === '5' ? 5 : g === '4' ? 4 : g === '3' ? 3 : g === '2' ? 2 : null);
+  const avgOf = vals => {
+    let sum = 0, cnt = 0;
+    for (const v of vals) { const n = numOf(v); if (n != null) { sum += n; cnt++; } }
+    return cnt ? sum / cnt : null;
+  };
+  const fmtAvg = a => (a == null ? '—' : (Math.round(a * 10) / 10).toString().replace('.', ','));
+
+  // Все занятия (gradebook уже исключает cancelled/replaced) + все оценки.
+  const allLessons = [];
+  const gradesByLesson = {};
+  let allVals = [];
+  for (let gi = 0; gi < gbs.length; gi++) {
+    const gb = gbs[gi];
+    const gm = gb.grades || {};
+    for (const sk in gm) {
+      for (const lk in gm[sk]) {
+        (gradesByLesson[lk] = gradesByLesson[lk] || {})[sk] = gm[sk][lk];
+        allVals.push(gm[sk][lk]);
+      }
+    }
+    for (const l of gb.lessons || []) allLessons.push({ id: l.id, date: l.date });
+  }
+  allLessons.sort((a, b) => a.date.localeCompare(b.date));
+
+  const avg = avgOf(allVals);
+  let present = 0, marked = 0;
+  for (const g of allVals) if (g) { marked++; if (g !== 'absent') present++; }
+  const att = marked ? Math.round(present / marked * 100) : 0;
+
+  // Динамика среднего по занятиям: scheduled без оценок отсеиваем фильтром n>0.
+  const series = [];
+  for (const l of allLessons) {
+    const vals = Object.values(gradesByLesson[l.id] || {});
+    const n = vals.filter(Boolean).length;
+    const la = avgOf(vals);
+    if (n > 0 && la != null) series.push(la);
+  }
+  const last3 = series.slice(-3);
+  const delta = last3.length >= 2 ? last3[last3.length - 1] - last3[0] : 0;
+
+  // Тепловая полоса активности за 14 дней.
+  const byDay = {};
+  for (const l of allLessons) {
+    const n = Object.keys(gradesByLesson[l.id] || {}).length;
+    if (n > 0) byDay[l.date] = (byDay[l.date] || 0) + n;
+  }
+  let maxDay = 1;
+  for (const k in byDay) if (byDay[k] > maxDay) maxDay = byDay[k];
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    days.push({ d, v: byDay[k] ? byDay[k] / maxDay : 0 });
+  }
+
+  // Доски почёта и риска по всем предметам (среднее по предметам + прогулы).
+  const stMap = {};
+  for (const gb of gbs) {
+    for (const s of gb.students || []) {
+      if (!stMap[s.id]) stMap[s.id] = { id: s.id, last: s.last_name, first: s.first_name, avgSum: 0, avgCnt: 0, abs: 0 };
+      let sVals = [], sAbs = 0;
+      for (const l of gb.lessons || []) {
+        const gr = (gb.grades || {})[s.id] ? (gb.grades[s.id][l.id]) : null;
+        if (gr) {
+          const n = numOf(gr);
+          if (n != null) sVals.push(n);
+          if (gr === 'absent') sAbs++;
+        }
+      }
+      const sAvg = sVals.length ? sVals.reduce((a, b) => a + b, 0) / sVals.length : null;
+      if (sAvg != null) { stMap[s.id].avgSum += sAvg; stMap[s.id].avgCnt++; }
+      stMap[s.id].abs += sAbs;
+    }
+  }
+  const board = [];
+  for (const id in stMap) {
+    const b = stMap[id];
+    if (b.avgCnt > 0) board.push({ id: b.id, name: `${b.last} ${(b.first || '')[0]}.`, avg: b.avgSum / b.avgCnt, abs: b.abs });
+  }
+  const top = board.slice().sort((a, b) => b.avg - a.avg).slice(0, 3);
+  const risk = board.filter(b => b.avg < 3.4 || b.abs >= 3).sort((a, b) => a.avg - b.avg).slice(0, 3);
+
+  // ---- Рендер ----
+  const avgColor = avg == null ? 'var(--text-3)' : avg >= 4 ? 'var(--g5)' : avg >= 3 ? 'var(--g3)' : 'var(--g2)';
+  const up = delta >= 0;
+  const deltaColor = up ? 'var(--g5)' : 'var(--g2)';
+  const deltaTxt = (up ? '+' : '') + (Math.round(delta * 100) / 100).toString().replace('.', ',');
+  const ringSize = 92, ringStroke = 8;
+  const ringR = (ringSize - ringStroke) / 2;
+  const ringC = 2 * Math.PI * ringR;
+  const ringOff = (ringC * (100 - Math.min(100, Math.max(0, att))) / 100).toFixed(1);
+
+  let html = App.Nav.render();
+  html += `<h1>Аналитика</h1>`;
+
+  // Hero-карточка: ProgressRing посещаемости + CountUp-числа + AreaChart + delta.
+  html += `<div class="card">
+    <div class="fx" style="gap:14px">
+      <div class="ring" style="width:${ringSize}px;height:${ringSize}px">
+        <svg width="${ringSize}" height="${ringSize}" viewBox="0 0 ${ringSize} ${ringSize}">
+          <circle class="ring-track" cx="${ringSize / 2}" cy="${ringSize / 2}" r="${ringR}" fill="none" stroke-width="${ringStroke}"/>
+          <circle cx="${ringSize / 2}" cy="${ringSize / 2}" r="${ringR}" fill="none" stroke="var(--g5)" stroke-width="${ringStroke}" stroke-linecap="round" stroke-dasharray="${ringC.toFixed(1)}" stroke-dashoffset="${ringOff}"/>
+        </svg>
+        <div class="ring-label" style="flex-direction:column;line-height:1.2">
+          <div><span id="an-att" style="font-size:19px;font-weight:800">0</span><span class="ts3" style="font-size:11px">%</span></div>
+          <div style="font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)">посещ.</div>
+        </div>
+      </div>
+      <div class="fg1">
+        <div class="fx" style="gap:8px;align-items:baseline">
+          <span id="an-avg" style="font-size:34px;font-weight:800;line-height:1;color:${avgColor}">—</span>
+          <span style="font-size:12px;font-weight:700;color:${deltaColor}">${up ? '&#9650;' : '&#9660;'} ${deltaTxt}</span>
+        </div>
+        <div class="ts" style="margin-top:2px">средний балл по всем предметам</div>
+        <div class="ts"><span id="an-marked" style="font-weight:700">0</span> оценок за период</div>
+      </div>
+    </div>
+    <div class="ts mt8 mb8" style="font-weight:800;text-transform:uppercase;letter-spacing:.06em;font-size:10px">динамика среднего балла</div>
+    ${App.UI.spark(series, 'var(--g5)')}
+  </div>`;
+
+  // Тепловая полоса активности за 14 дней.
+  html += `<div class="card">
+    <div class="fx" style="gap:8px;margin-bottom:12px">
+      ${App.UI.icon('chart')}
+      <span class="ts" style="font-weight:800">активность · 14 дней</span>
+    </div>
+    <div class="an-heat">`;
+  for (const d of days) {
+    const bg = d.v > 0
+      ? `linear-gradient(180deg, color-mix(in srgb, var(--g3) ${Math.round(25 + d.v * 65)}%, transparent), color-mix(in srgb, var(--g3) ${Math.round(10 + d.v * 25)}%, transparent))`
+      : 'var(--surface-2)';
+    html += `<div class="an-heat-cell" style="background:${bg}" title="${d.d.getDate()}.${d.d.getMonth() + 1}"></div>`;
+  }
+  html += `</div>
+    <div class="fxb" style="margin-top:6px"><span class="ts3" style="font-family:var(--font-mono)">-14д</span><span class="ts3" style="font-family:var(--font-mono)">сегодня</span></div>
+  </div>`;
+
+  // По предметам: Bar + held/студенты.
+  html += `<h2>По предметам</h2>`;
+  for (let pi = 0; pi < gbs.length; pi++) {
+    const gb = gbs[pi];
+    const subj = subjects[pi];
+    let psAvg = gb.summary ? parseFloat(gb.summary.average_grade) : null;
+    if (!psAvg) psAvg = null;
+    const psPct = psAvg != null ? (psAvg / 5) * 100 : 0;
+    const pHeld = (gb.lessons || []).length;
+    const pStudents = (gb.students || []).length;
+    const pHue = App.UI.hueFor(subj.id);
+    html += `<div class="card">
+      <div class="fxb">
+        <div class="card-title">${App.UI.escHtml(subj.name)}</div>
+        <div style="font-family:var(--font-mono);font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;color:${pHue}">${fmtAvg(psAvg)}</div>
+      </div>
+      <div class="bar"><div class="bar-fill" style="transform:scaleX(${(psPct / 100).toFixed(3)});background:${pHue}"></div></div>
+      <div class="fxb mt4"><span class="ts3">${pHeld} занятий</span><span class="ts3">${pStudents} студентов</span></div>
+    </div>`;
+  }
+
+  // Тренды: Лидеры top-3 и Зона риска.
+  html += `<h2>Тренды по студентам</h2><div class="grid-2">`;
+  html += `<div class="card">
+    <div class="fx" style="gap:6px;margin-bottom:10px;color:var(--g5)">
+      ${App.UI.icon('check')}<span class="ts" style="font-weight:800">Лидеры</span>
+    </div>`;
+  if (top.length) {
+    for (let ti = 0; ti < top.length; ti++) {
+      html += `<div class="fx" style="gap:8px;padding:6px 0">
+        <span class="ts3" style="width:12px;font-family:var(--font-mono)">${ti + 1}</span>
+        <span class="fg1 w600" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.escHtml(top[ti].name)}</span>
+        <span style="font-family:var(--font-mono);font-size:12px;font-weight:800;color:var(--g5);font-variant-numeric:tabular-nums">${fmtAvg(top[ti].avg)}</span>
       </div>`;
     }
-
-    html += `<button class="btn btn-muted btn-sm" style="margin-top:8px" onclick="App.Pages.showAddGroup()">+ Управление группами</button>`;
-    document.getElementById('app').innerHTML = html;
+  } else {
+    html += `<div class="ts3" style="padding:8px 0">нет данных</div>`;
   }
-};
-
-/* ===== Dialog / Action helpers (on window for onclick access) ===== */
-
-App.Pages._copyText = async function(text) {
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
+  html += `</div>`;
+  html += `<div class="card">
+    <div class="fx" style="gap:6px;margin-bottom:10px;color:var(--g2)">
+      ${App.UI.icon('alert')}<span class="ts" style="font-weight:800">Зона риска</span>
+    </div>`;
+  if (risk.length) {
+    for (const r of risk) {
+      html += `<div class="fx" style="gap:8px;padding:6px 0">
+        <span class="fg1 w600" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.UI.escHtml(r.name)}</span>
+        <span class="ts3" style="font-size:9.5px;font-family:var(--font-mono)">${r.abs}пр</span>
+        <span style="font-family:var(--font-mono);font-size:12px;font-weight:800;color:var(--g2);font-variant-numeric:tabular-nums">${fmtAvg(r.avg)}</span>
+      </div>`;
     }
-  } catch (e) {}
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.top = '-9999px';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    ta.setSelectionRange(0, ta.value.length);
-    const ok = document.execCommand('copy');
-    ta.remove();
-    return !!ok;
-  } catch (e) { return false; }
-};
-
-/* Тап по названию Telegram-бота: скопировать invite-ссылку + открыть шторку «Поделиться». */
-App.Pages.shareBotLink = async function(kind) {
-  const title = 'Telegram-бот «Мои оценки»';
-  let link = '';
-  try {
-    const r = await App.API.get('/api/settings/bot/check');
-    if (!r || r.ok === false || !r.username) { App.UI.notify('Telegram-бот не настроен'); return; }
-    link = 'https://t.me/' + r.username;
-  } catch (e) { App.UI.notify('Telegram-бот не настроен'); return; }
-  await App.Pages._copyText(link);
-  try {
-    if (navigator.share) {
-      await navigator.share({ title: title, text: link });
-      return;
-    }
-  } catch (e) {
-    if (e && e.name === 'AbortError') return;
+  } else {
+    html += `<div class="ts3" style="padding:8px 0">все в порядке</div>`;
   }
-  App.UI.notify('Ссылка скопирована: ' + link);
+  html += `</div></div>`;
+
+  App._root().innerHTML = html;
+
+  // CountUp: hero-числа (посещаемость, средний балл, оценок за период).
+  App.CountUp.run(document.getElementById('an-att'), att);
+  if (avg != null) App.CountUp.run(document.getElementById('an-avg'), avg, 1);
+  App.CountUp.run(document.getElementById('an-marked'), marked);
 };
+
+/* ----- Диалоги и действия (вызываются из inline onclick) ----- */
 
 App.Pages.settings = async function() {
   App.Loading.show();
@@ -791,52 +1277,70 @@ App.Pages.settings = async function() {
   } catch (e) {}
   let html = App.Nav.render();
   html += `<h1>Настройки</h1>`;
-  html += `<div class="card"><div class="card-title" onclick="App.Pages.shareBotLink('telegram')" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px" title="Скопировать ссылку и поделиться">Telegram-бот «Мои оценки» &#x1F517;</div>`;
-  html += `<div class="card-sub" onclick="App.Pages.shareBotLink('telegram')" style="cursor:pointer;margin-bottom:8px">Студенты смотрят оценки через бота, пока приложение открыто. Токен: <a href="https://t.me/BotFather" target="_blank" onclick="event.stopPropagation()">BotFather → /newbot</a><br><span style="font-size:12px">🔗 нажмите, чтобы скопировать ссылку и поделиться</span></div>`;
-  html += `<div style="font-size:12px;margin-bottom:4px">Статус: ${st.has_token ? 'токен есть' : 'нет токена'}${st.enabled ? ' · включён' : ''}</div>`;
+  html += `<div class="card"><div class="fx" style="gap:12px">
+    <div class="set-ico" style="background:color-mix(in srgb, var(--accent) 12%, transparent);color:var(--accent)">${App.UI.icon('cog', 'ic-lg')}</div>
+    <div class="fg1"><div class="card-title">Внешний вид</div></div>
+  </div>
+  <label class="fxb mt8" style="gap:8px;font-size:14px"><span>Тёмная тема (концепт)</span><input id="set-theme" class="switch" type="checkbox" ${App.Theme.current() === 'concept' ? 'checked' : ''} onchange="App.Theme.toggle()"></label>
+  </div>`;
+  html += `<div class="card"><div class="fx" style="gap:12px">
+    <div class="set-ico" style="background:color-mix(in srgb, var(--accent) 12%, transparent);color:var(--accent)">${App.UI.icon('send', 'ic-lg')}</div>
+    <div class="fg1"><div class="card-title">Telegram-бот «Мои оценки»</div></div>
+  </div>`;
+  html += `<div class="card-sub mb8">Студенты смотрят оценки через бота, пока приложение открыто. Токен: <a href="https://t.me/BotFather" target="_blank">BotFather → /newbot</a></div>`;
+  html += `<div class="ts mb8">Статус: ${st.has_token ? 'токен есть' : 'нет токена'}${st.enabled ? ' · включён' : ''}</div>`;
   html += `<input id="set-btoken" type="password" placeholder="Токен бота" autocomplete="off">`;
-  html += `<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px"><input id="set-benabled" type="checkbox" ${st.enabled ? 'checked' : ''} style="width:auto"> Включить бота</label>`;
-  html += `<div style="font-size:11px;color:#b91c1c;margin-top:4px">⚠️ Для госучреждений использование Telegram для ПД запрещено 41-ФЗ с 01.06.2025 — включайте только для частного использования с согласия студентов. Основной канал — MAX.</div>`;
-  html += `<div class="grid-2" style="margin-top:8px">
+  html += `<label class="fxb mt8" style="gap:8px;font-size:14px"><span>Включить бота</span><input id="set-benabled" class="switch" type="checkbox" ${st.enabled ? 'checked' : ''}></label>`;
+  html += `<div class="ts mt4" style="color:var(--bad)">${App.UI.icon('alert')} Для госучреждений использование Telegram для ПД запрещено 41-ФЗ с 01.06.2025 — включайте только для частного использования с согласия студентов. Основной канал — MAX.</div>`;
+  html += `<div class="grid-2 mt8">
     <button class="btn btn-primary btn-sm" onclick="App.Pages.saveBot()">Сохранить</button>
     <button class="btn btn-muted btn-sm" onclick="App.Pages.checkBot()">Проверить</button>
   </div>`;
-  if (st.has_token) html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.dropBot()">Отключить</button>`;
+  if (st.has_token) html += `<button class="btn btn-danger btn-sm mt8" onclick="App.Pages.dropBot()">Отключить</button>`;
   html += `</div>`;
-  html += `<div class="card"><div class="card-title">MAX-бот «Мои оценки»</div>`;
-  html += `<div class="card-sub" style="margin-bottom:8px">Студенты смотрят оценки через MAX-бота. Токен: <a href="https://max.ru" target="_blank">MAX Platform</a></div>`;
-  html += `<div style="font-size:12px;margin-bottom:4px">Статус: ${mx.has_token ? 'токен есть' : 'нет токена'}${mx.enabled ? ' · включён' : ''}</div>`;
+  html += `<div class="card"><div class="fx" style="gap:12px">
+    <div class="set-ico" style="background:color-mix(in srgb, var(--info) 12%, transparent);color:var(--info)">${App.UI.icon('shield', 'ic-lg')}</div>
+    <div class="fg1"><div class="card-title">MAX-бот «Мои оценки»</div></div>
+  </div>`;
+  html += `<div class="card-sub mb8">Студенты смотрят оценки через MAX-бота. Токен: <a href="https://max.ru" target="_blank">MAX Platform</a></div>`;
+  html += `<div class="ts mb8">Статус: ${mx.has_token ? 'токен есть' : 'нет токена'}${mx.enabled ? ' · включён' : ''}</div>`;
   html += `<input id="set-mtoken" type="password" placeholder="Токен MAX-бота" autocomplete="off">`;
-  html += `<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px"><input id="set-mlenabled" type="checkbox" ${mx.enabled ? 'checked' : ''} style="width:auto"> Включить бота</label>`;
-  html += `<div class="grid-2" style="margin-top:8px">
+  html += `<label class="fxb mt8" style="gap:8px;font-size:14px"><span>Включить бота</span><input id="set-mlenabled" class="switch" type="checkbox" ${mx.enabled ? 'checked' : ''}></label>`;
+  html += `<div class="grid-2 mt8">
     <button class="btn btn-primary btn-sm" onclick="App.Pages.saveMaxBot()">Сохранить</button>
     <button class="btn btn-muted btn-sm" onclick="App.Pages.checkMaxBot()">Проверить</button>
   </div>`;
-  if (mx.has_token) html += `<button class="btn btn-danger btn-sm" style="margin-top:8px" onclick="App.Pages.dropMaxBot()">Отключить</button>`;
-  html += `<div style="font-size:12px;margin-top:8px">Код преподавателя: ${mx.teacher_code || '—'} ${mx.teacher_bound ? '· привязан' : '· не привязан'}</div>`;
-  if (mx.teacher_bound) html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.unbindMaxTeacher()">Отвязать преподавателя</button>`;
+  if (mx.has_token) html += `<button class="btn btn-danger btn-sm mt8" onclick="App.Pages.dropMaxBot()">Отключить</button>`;
+  html += `<div class="ts mt8">Код преподавателя: ${mx.teacher_code || '—'} ${mx.teacher_bound ? '· привязан' : '· не привязан'}</div>`;
+  if (mx.teacher_bound) html += `<button class="btn btn-muted btn-sm mt4" onclick="App.Pages.unbindMaxTeacher()">Отвязать преподавателя</button>`;
   html += `</div>`;
-  html += `<div class="card"><div class="card-title">Бэкап</div>`;
-  html += `<div class="card-sub" style="margin-bottom:8px">Создать резервную копию или восстановить данные.</div>`;
-  html += `<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.Pages.doBackup()">Выгрузить копию</button>`;
-  html += `<button class="btn btn-muted btn-sm" style="margin-top:4px" onclick="App.Pages.confirmRestoreList()">Восстановить из копии…</button>`;
+  html += `<div class="card"><div class="fx" style="gap:12px">
+    <div class="set-ico" style="background:var(--ok-soft);color:var(--ok)">${App.UI.icon('download', 'ic-lg')}</div>
+    <div class="fg1"><div class="card-title">Бэкап</div></div>
+  </div>`;
+  html += `<div class="card-sub mb8">Создать резервную копию или восстановить данные.</div>`;
+  html += `<button class="btn btn-primary btn-sm mt8" onclick="App.Pages.doBackup()">Выгрузить копию</button>`;
+  html += `<button class="btn btn-muted btn-sm mt4" onclick="App.Pages.confirmRestoreList()">Восстановить из копии…</button>`;
   if (android) {
     if (pickerAvailable) {
-      html += `<button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="App.Pages.restoreByPicker()">Выбрать файл (Android)</button>`;
+      html += `<button class="btn btn-primary btn-sm mt4" onclick="App.Pages.restoreByPicker()">Выбрать файл (Android)</button>`;
     } else {
-      html += `<div style="font-size:12px;color:var(--color-text-muted);margin-top:6px">Нативный выбор файла недоступен на этом устройстве</div>`;
+      html += `<div class="ts mt8">Нативный выбор файла недоступен на этом устройстве</div>`;
     }
   } else {
-    html += `<div style="margin-top:8px"><input type="file" id="restore-file" accept=".db" style="font-size:12px"></div>`;
-    html += `<button class="btn btn-danger btn-sm" style="margin-top:4px" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
+    html += `<div class="mt8"><input type="file" id="restore-file" accept=".db"></div>`;
+    html += `<button class="btn btn-danger btn-sm mt4" onclick="App.Pages.doRestore()">Восстановить из файла</button>`;
   }
   html += `</div>`;
-  html += `<div class="card" style="opacity:0.85"><div class="card-title">Поддержать проект</div>`;
-  html += `<div class="card-sub" style="margin-bottom:8px">Если «Учет занятий» экономит вам время — можно сказать спасибо ☕</div>`;
+  html += `<div class="card" style="opacity:0.85"><div class="fx" style="gap:12px">
+    <div class="set-ico" style="background:var(--bad-soft);color:var(--bad)">${App.UI.icon('coffee', 'ic-lg')}</div>
+    <div class="fg1"><div class="card-title">Поддержать проект</div></div>
+  </div>`;
+  html += `<div class="card-sub mb8">Если «Учет занятий» экономит вам время — можно сказать спасибо ${App.UI.icon('coffee')}</div>`;
   html += `<button class="btn btn-muted btn-sm" onclick="window.open('https://boosty.to/mifnail/donate', '_blank')">Поддержать</button>`;
   html += `</div>`;
-  html += `<div style="font-size:11px;color:var(--color-text-muted);text-align:center;margin-top:4px">сборка ${App.UI.escHtml(appVer) || '?'}</div>`;
-  document.getElementById('app').innerHTML = html;
+  html += `<div class="ts3 txc mt4">сборка ${App.UI.escHtml(appVer) || '?'}</div>`;
+  App._root().innerHTML = html;
 };
 
 App.Pages.saveBot = async function() {
@@ -891,6 +1395,8 @@ App.Pages.unbindMaxTeacher = async function() {
   App.Pages.settings();
 };
 
+/* ----- Бэкап и восстановление ----- */
+
 App.Pages.doBackup = async function() {
   try {
     const r = await App.API.post('/api/backup/share');
@@ -916,14 +1422,12 @@ App.Pages.doRestore = async function() {
     App.UI.notify('Выберите файл .db');
     return;
   }
-  App.UI.showPopup(`
-    <h2>Восстановить данные?</h2>
-    <p style="margin-bottom:12px">Текущая база данных будет заменена. Все несохранённые изменения будут потеряны.</p>
-    <div class="grid-2">
-      <button class="btn btn-danger" onclick="App.Pages.confirmRestore()">Да, заменить</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
-    </div>
-  `);
+  App.UI.confirm({
+    title: 'Восстановить данные?',
+    text: 'Текущая база данных будет заменена. Все несохранённые изменения будут потеряны.',
+    okLabel: 'Да, заменить',
+    onOk: App.Pages.confirmRestore
+  });
 };
 
 App.Pages.confirmRestore = async function() {
@@ -965,31 +1469,29 @@ App.Pages.confirmRestoreList = async function() {
   const fmtSize = s => s == null ? '' : (s / 1048576 >= 1 ? (s / 1048576).toFixed(1) + ' МБ' : Math.round(s / 1024) + ' КБ');
   const fmtMtime = t => t == null ? '' : new Date(t * 1000).toLocaleString();
   const rows = backups.map(b =>
-    `<button class="backup-row" style="display:block;width:100%;text-align:left;padding:10px 12px;margin-bottom:6px;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface);cursor:pointer" onclick="App.Pages.confirmRestoreNamed('${App.UI.escJs(b.name)}')">
-      <div style="font-weight:600">${App.UI.escHtml(b.name)}</div>
-      <div style="font-size:12px;color:var(--color-text-muted);margin-top:2px">${App.UI.escHtml(fmtSize(b.size))}${b.mtime != null ? ' · ' : ''}${App.UI.escHtml(fmtMtime(b.mtime))}</div>
-      ${b.path ? `<div style="font-size:11px;color:var(--color-text-muted);margin-top:1px;word-break:break-all">${App.UI.escHtml(b.path)}</div>` : ''}
+    `<button class="backup-row" onclick="App.Pages.confirmRestoreNamed('${App.UI.escJs(b.name)}')">
+      <div class="w600">${App.UI.escHtml(b.name)}</div>
+      <div class="br-size">${App.UI.escHtml(fmtSize(b.size))}${b.mtime != null ? ' · ' : ''}${App.UI.escHtml(fmtMtime(b.mtime))}</div>
+      ${b.path ? `<div class="br-path">${App.UI.escHtml(b.path)}</div>` : ''}
     </button>`
   ).join('');
   App.UI.showPopup(`
     <h2>Восстановить из копии</h2>
-    <p style="margin-bottom:12px">Выберите бэкап из «Загрузок»:</p>
+    <p class="dlg-text">Выберите бэкап из «Загрузок»:</p>
     <div style="max-height:300px;overflow-y:auto">${rows}</div>
-    <div class="grid-2" style="margin-top:4px">
+    <div class="grid-2 mt4">
       <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
     </div>
   `);
 };
 
 App.Pages.confirmRestoreNamed = function(name) {
-  App.UI.showPopup(`
-    <h2>Восстановить данные?</h2>
-    <p style="margin-bottom:12px">База будет заменена копией <b>${App.UI.escHtml(name)}</b>. Все несохранённые изменения будут потеряны.</p>
-    <div class="grid-2">
-      <button class="btn btn-danger" onclick="App.Pages.restoreNamed('${App.UI.escJs(name)}')">Да, заменить</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
-    </div>
-  `);
+  App.UI.confirm({
+    title: 'Восстановить данные?',
+    text: `База будет заменена копией <b>${App.UI.escHtml(name)}</b>. Все несохранённые изменения будут потеряны.`,
+    okLabel: 'Да, заменить',
+    onOk: function() { App.Pages.restoreNamed(name); }
+  });
 };
 
 App.Pages.restoreNamed = async function(name) {
@@ -1017,6 +1519,8 @@ App.Pages.restoreByPicker = async function() {
   }
 };
 
+/* ----- Отвязки ботов ----- */
+
 App.Pages.unbindBot = async function(studentId) {
   try {
     await App.API._delete(`/api/bot/links/by-student/${studentId}`);
@@ -1041,6 +1545,8 @@ App.Pages.unbindGroupCurator = async function(groupId) {
   App.Router.handle();
 };
 
+/* ----- Экспорт и шаринг ----- */
+
 App.Pages.shareGrades = async function(subjectId) {
   try {
     const r = await App.API.post(`/api/export/grades/${subjectId}/share`);
@@ -1054,6 +1560,15 @@ App.Pages.shareReport = async function(dateStr) {
     App.UI.notify(r.shared === false ? ('Файл сохранён, шторка не открылась: ' + (r.error || '')) : 'Шторка открыта');
   } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
 };
+
+App.Pages.shareGeneral = async function() {
+  try {
+    const r = await App.API.post(`/api/export/general/share`);
+    App.UI.notify(r.shared === false ? ('Файл сохранён, шторка не открылась: ' + (r.error || '')) : 'Шторка открыта');
+  } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
+};
+
+/* ----- Создание занятия (предмет + календарь-сетка) ----- */
 
 App.Pages.startLesson = async function(subjectId, lessonNumber) {
   await App.Pages.showCreateLessonAny(subjectId, lessonNumber);
@@ -1074,9 +1589,9 @@ App.Pages.showCreateLessonAny = async function(preselectId, lessonNumber) {
   App.Pages._cal = { y: t.getFullYear(), m: t.getMonth(), sel: App.Pages._isoLocal(t) };
   App.UI.showPopup(`
     <h2>Создать занятие</h2>
-    <div id="new-lesson-subjects" style="max-height:130px;overflow-y:auto"></div>
-    <div id="lesson-cal" style="margin-top:8px"></div>
-    <div class="grid-2" style="margin-top:8px">
+    <div id="new-lesson-subjects" class="pick-list"></div>
+    <div id="lesson-cal" class="mt8"></div>
+    <div class="grid-2 mt8">
       <button class="btn btn-success" onclick="App.Pages.createLessonCalPicked()">Создать</button>
       <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
     </div>
@@ -1090,7 +1605,7 @@ App.Pages._renderLessonSubjects = function(subjects) {
   if (!box) return;
   box.innerHTML = subjects.map(s => {
     const sel = s.id === App.Pages._newLessonSubject;
-    return `<button class="btn ${sel ? 'btn-success' : 'btn-muted'} btn-sm" style="display:block;width:100%;margin-bottom:4px;text-align:left" onclick="App.Pages._pickLessonSubject(${s.id})">${App.UI.escHtml(s.name)} · ${App.UI.escHtml(s.group_name || '')}</button>`;
+    return `<button class="btn ${sel ? 'btn-success' : 'btn-muted'} btn-sm pick-btn" onclick="App.Pages._pickLessonSubject(${s.id})">${App.UI.escHtml(s.name)} · ${App.UI.escHtml(s.group_name || '')}</button>`;
   }).join('');
 };
 
@@ -1107,22 +1622,22 @@ App.Pages._renderCal = function() {
   const startDay = (new Date(st.y, st.m, 1).getDay() + 6) % 7;
   const dim = new Date(st.y, st.m + 1, 0).getDate();
   const pad = n => String(n).padStart(2, '0');
-  let cells = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(n => `<div style="text-align:center;font-size:11px;color:#888">${n}</div>`).join('');
+  let cells = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(n => `<div class="cal-head">${n}</div>`).join('');
   for (let i = 0; i < startDay; i++) cells += `<div></div>`;
   for (let d = 1; d <= dim; d++) {
     const iso = `${st.y}-${pad(st.m + 1)}-${pad(d)}`;
     if (iso > todayIso) {
-      cells += `<div style="text-align:center;padding:6px 0;color:#ccc">${d}</div>`;
+      cells += `<div class="cal-cell dis">${d}</div>`;
     } else {
-      const sel = iso === st.sel ? 'background:#007aff;color:#fff;' : '';
-      cells += `<div onclick="App.Pages._calPick('${iso}')" style="min-height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;${sel}">${d}</div>`;
+      const sel = iso === st.sel ? ' sel' : '';
+      cells += `<div class="cal-cell${sel}" onclick="App.Pages._calPick('${iso}')">${d}</div>`;
     }
   }
   box.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-      <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages._calNav(-1)">◀</button>
-      <div style="font-weight:600;font-size:14px">${App.Pages._calMonths[st.m]} ${st.y}</div>
-      <button class="btn btn-muted btn-sm" style="width:auto" onclick="App.Pages._calNav(1)">▶</button>
+    <div class="fxb mb8">
+      <button class="btn btn-muted btn-sm ibtn" aria-label="Предыдущий месяц" onclick="App.Pages._calNav(-1)">${App.UI.icon('chev', 'r180')}</button>
+      <div class="w600" style="font-size:14px">${App.Pages._calMonths[st.m]} ${st.y}</div>
+      <button class="btn btn-muted btn-sm ibtn" aria-label="Следующий месяц" onclick="App.Pages._calNav(1)">${App.UI.icon('chev')}</button>
     </div>
     <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">${cells}</div>`;
 };
@@ -1159,7 +1674,7 @@ App.Pages._createLessonAt = async function(subjectId, lessonNumber, iso) {
     const lesson = await App.API.get(`/api/lessons/${result.id}`);
     const stored = (lesson && lesson.date) || '?';
     App.UI.showPopup(`<h2>Занятие создано</h2>
-      <div style="font-size:13px;margin-bottom:8px">id ${result.id}, дата в базе: ${App.UI.escHtml(App.UI.formatDate(stored))}</div>
+      <div class="ts mb8">id ${result.id}, дата в базе: ${App.UI.escHtml(App.UI.formatDate(stored))}</div>
       <div class="grid-2">
         <button class="btn btn-success" onclick="location='#lesson/${result.id}'">Открыть</button>
         <button class="btn btn-muted" onclick="App.UI.closePopup()">Закрыть</button>
@@ -1167,15 +1682,17 @@ App.Pages._createLessonAt = async function(subjectId, lessonNumber, iso) {
   } catch (e) { App.UI.notify((e && e.error) || 'Ошибка'); }
 };
 
+/* ----- Замены и отмены занятий ----- */
+
 App.Pages.showLessonSubstitution = async function(lessonId) {
   const lesson = await App.API.get(`/api/lessons/${lessonId}`);
-  const subs = await App.API.get(`/api/subjects/${lesson.subject_id}/substitution-list`);
+  const subs = await App.API.get('/api/subjects');
   const opts = subs.map(s => `<option value="${s.id}">${App.UI.escHtml(s.name)}</option>`).join('');
   App.UI.showPopup(`
     <h2>Замена</h2>
-    <p style="margin-bottom:8px">Выберите предмет:</p>
+    <p class="dlg-text">Выберите предмет:</p>
     <select id="subst-subject">${opts}</select>
-    <div class="grid-2" style="margin-top:8px">
+    <div class="grid-2 mt8">
       <button class="btn btn-success" onclick="App.Pages.createSubstitution(${lessonId})">Заменить</button>
       <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
     </div>
@@ -1196,14 +1713,14 @@ App.Pages.confirmCancelLesson = async function(lessonId) {
     const data = await App.API.get(`/api/lessons/${lessonId}/attendance`);
     n = (data.attendance || []).length;
   } catch (e) {}
-  App.UI.showPopup(`
-    <h2>Отменить занятие?</h2>
-    <p style="margin-bottom:12px;color:#86868b">Оценки будут удалены${n ? ` (${n} шт.)` : ''}. Действие необратимо.</p>
-    <div class="grid-2">
-      <button class="btn btn-danger" onclick="App.Pages.cancelLesson(${lessonId})">Отменить</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
-    </div>
-  `);
+  App.UI.confirm({
+    title: 'Отменить занятие?',
+    text: `Оценки будут удалены${n ? ` (${n} шт.)` : ''}. Действие необратимо.`,
+    okLabel: 'Отменить',
+    okClass: 'btn-danger',
+    cancelLabel: 'Нет',
+    onOk: function() { App.Pages.cancelLesson(lessonId); }
+  });
 };
 
 App.Pages.cancelLesson = async function(lessonId) {
@@ -1213,14 +1730,13 @@ App.Pages.cancelLesson = async function(lessonId) {
 };
 
 App.Pages.confirmDeleteLesson = function(lessonId) {
-  App.UI.showPopup(`
-    <h2>Удалить занятие?</h2>
-    <p style="margin-bottom:12px;color:#86868b">Занятие и оценки будут полностью удалены.</p>
-    <div class="grid-2">
-      <button class="btn btn-danger" onclick="App.Pages.deleteLesson(${lessonId})">Удалить</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
-    </div>
-  `);
+  App.UI.confirm({
+    title: 'Удалить занятие?',
+    text: 'Занятие и оценки будут полностью удалены.',
+    okLabel: 'Удалить',
+    cancelLabel: 'Нет',
+    onOk: function() { App.Pages.deleteLesson(lessonId); }
+  });
 };
 
 App.Pages.deleteLesson = async function(lessonId) {
@@ -1236,7 +1752,7 @@ App.Pages.deleteLesson = async function(lessonId) {
   }
 };
 
-// showCustomLesson/createCustomLesson removed — creation goes via showCreateLessonAny.
+/* ----- Предметы / группы / расписание: CRUD-диалоги ----- */
 
 App.Pages.showAddSubject = async function() {
   const groups = await App.API.get('/api/groups');
@@ -1336,32 +1852,13 @@ App.Pages.updateScheduleEntry = async function(id) {
   App.Pages.schedule();
 };
 
-App.Pages.confirmDeleteScheduleEntry = function(id) {
-  App.UI.showPopup(`
-    <h2>Удалить запись расписания?</h2>
-    <div class="grid-2">
-      <button class="btn btn-danger" onclick="App.Pages.deleteScheduleEntry(${id})">Удалить</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Отмена</button>
-    </div>
-  `);
-};
-
-App.Pages.deleteScheduleEntry = async function(id) {
-  try {
-    await App.API._delete(`/api/schedule/${id}`);
-    App.UI.closePopup();
-    App.UI.notify('Запись удалена');
-    App.Pages.schedule();
-  } catch (e) {
-    App.UI.notify(e.error || 'Ошибка удаления');
-  }
-};
+/* ----- Студенты: диалоги ----- */
 
 App.Pages.showAddStudents = function(groupId) {
   App.UI.showPopup(`
     <h2>Добавить студентов</h2>
     <textarea id="students-text" placeholder="Иванов Иван Иванович\nПетров Петр Петрович\n..."></textarea>
-    <div style="font-size:12px;color:#86868b">Каждая строка: Фамилия Имя Отчество</div>
+    <div class="ts">Каждая строка: Фамилия Имя Отчество</div>
     <button class="btn btn-primary btn-sm" onclick="App.Pages.createStudents(${groupId})">Добавить</button>
   `);
 };
@@ -1408,14 +1905,12 @@ App.Pages.editStudent = async function(studentId) {
 };
 
 App.Pages.confirmDeleteStudent = function(studentId) {
-  App.UI.showPopup(`
-    <h2>Удалить студента?</h2>
-    <p style="margin-bottom:12px;color:#86868b">Оценки будут удалены.</p>
-    <div class="grid-2">
-      <button class="btn btn-danger" onclick="App.Pages.deleteStudent(${studentId})">Удалить</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
-    </div>
-  `);
+  App.UI.confirm({
+    title: 'Удалить студента?',
+    text: 'Оценки будут удалены.',
+    okLabel: 'Удалить',
+    onOk: function() { App.Pages.deleteStudent(studentId); }
+  });
 };
 
 App.Pages.deleteStudent = async function(studentId) {
@@ -1430,14 +1925,12 @@ App.Pages.deleteStudent = async function(studentId) {
 };
 
 App.Pages.confirmDeleteGroup = function(groupId, name) {
-  App.UI.showPopup(`
-    <h2>Удалить группу «${name}»?</h2>
-    <p style="margin-bottom:12px;color:#86868b">Все студенты, предметы и занятия будут удалены.</p>
-    <div class="grid-2">
-      <button class="btn btn-danger" onclick="App.Pages.deleteGroup(${groupId})">Удалить</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
-    </div>
-  `);
+  App.UI.confirm({
+    title: `Удалить группу «${App.UI.escHtml(name)}»?`,
+    text: 'Все студенты, предметы и занятия будут удалены.',
+    okLabel: 'Удалить',
+    onOk: function() { App.Pages.deleteGroup(groupId); }
+  });
 };
 
 App.Pages.deleteGroup = async function(groupId) {
@@ -1452,14 +1945,12 @@ App.Pages.deleteGroup = async function(groupId) {
 };
 
 App.Pages.confirmDeleteSubject = function(subjectId, name) {
-  App.UI.showPopup(`
-    <h2>Удалить предмет «${name}»?</h2>
-    <p style="margin-bottom:12px;color:#86868b">Занятия и оценки будут удалены.</p>
-    <div class="grid-2">
-      <button class="btn btn-danger" onclick="App.Pages.deleteSubject(${subjectId})">Удалить</button>
-      <button class="btn btn-muted" onclick="App.UI.closePopup()">Нет</button>
-    </div>
-  `);
+  App.UI.confirm({
+    title: `Удалить предмет «${App.UI.escHtml(name)}»?`,
+    text: 'Занятия и оценки будут удалены.',
+    okLabel: 'Удалить',
+    onOk: function() { App.Pages.deleteSubject(subjectId); }
+  });
 };
 
 App.Pages.deleteSubject = async function(subjectId) {
@@ -1467,7 +1958,9 @@ App.Pages.deleteSubject = async function(subjectId) {
     await App.API._delete(`/api/subjects/${subjectId}`);
     App.UI.closePopup();
     App.UI.notify('Предмет удалён');
-    App.Router.handle();
+    // если были на странице предмета — уходим на главную, иначе просто обновляем
+    if (location.hash.startsWith('#subject/')) location.hash = '#home';
+    else App.Router.handle();
   } catch (e) {
     App.UI.notify(e.error || 'Ошибка удаления предмета');
   }
@@ -1525,5 +2018,6 @@ App.Pages.editSubject = async function(subjectId) {
   }
 };
 
-/* ===== INIT ===== */
+/* ===== 9. INIT ===== */
+App.Theme.init();
 App.Router.init();
