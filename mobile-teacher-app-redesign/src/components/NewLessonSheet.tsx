@@ -81,25 +81,28 @@ export function NewLessonSheet({
               Нет предметов — добавьте предмет на вкладке «Предметы/Группы».
             </p>
           )}
-          {pairs.map((p) => {
-            const g = store.group(p.groupId);
-            const s = store.subject(p.subjectId);
-            if (!g || !s) return null;
-            return (
-              <button
-                key={p.groupId + "/" + p.subjectId}
-                onClick={() => setPair(p)}
-                className="pressable flex items-center gap-3 p-3 rounded-xl border border-line
-                  bg-surface text-left active:bg-surface2"
-              >
-                <AvatarTile text={s.name.slice(0, 2)} />
-                <span className="min-w-0">
-                  <span className="block text-[14.5px] font-bold truncate">{s.name}</span>
-                  <span className="block text-[12px] text-muted">{g.name}</span>
-                </span>
-              </button>
-            );
-          })}
+          {pairs.length > 0 && (
+            <div className="bg-surface border border-line rounded-2xl divide-y divide-line overflow-hidden">
+              {pairs.map((p) => {
+                const g = store.group(p.groupId);
+                const s = store.subject(p.subjectId);
+                if (!g || !s) return null;
+                return (
+                  <button
+                    key={p.groupId + "/" + p.subjectId}
+                    onClick={() => setPair(p)}
+                    className="pressable flex items-center gap-3 p-3 w-full text-left active:bg-surface2"
+                  >
+                    <AvatarTile text={s.name.slice(0, 2)} />
+                    <span className="min-w-0">
+                      <span className="block text-[14.5px] font-bold truncate">{s.name}</span>
+                      <span className="block text-[12px] text-muted">{g.name}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

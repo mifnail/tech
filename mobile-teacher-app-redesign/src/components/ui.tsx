@@ -4,6 +4,7 @@ import {
   createContext, useCallback, useContext, useEffect, useRef, useState,
   type ReactNode, type ButtonHTMLAttributes, type InputHTMLAttributes,
 } from "react";
+import { createPortal } from "react-dom";
 import { X, type LucideIcon } from "lucide-react";
 import { cn } from "../utils/cn";
 import { gradeLabel, gradeTone, type GradeTone } from "../lib/grades";
@@ -255,7 +256,7 @@ export function Sheet({
   }, [open]);
 
   if (!open) return null;
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center">
       <div
         className="an-fade absolute inset-0"
@@ -279,7 +280,8 @@ export function Sheet({
           {children}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
