@@ -6,6 +6,7 @@ export interface Group {
   id: ID;
   name: string;
   curatorCode: string;
+  curatorBound: boolean; // куратор привязан к MAX-боту
   subjectIds: ID[];
 }
 
@@ -60,6 +61,11 @@ export interface Settings {
   tgToken: string;
   maxToken: string;
   teacherCode: string;
+  tgEnabled: boolean; // серверный флаг включения TG-бота
+  maxEnabled: boolean; // серверный флаг включения MAX-бота
+  tgHasToken: boolean; // на сервере задан токен TG
+  maxHasToken: boolean; // на сервере задан токен MAX
+  teacherBound: boolean; // преподаватель привязан к MAX-боту
 }
 
 export interface DB {

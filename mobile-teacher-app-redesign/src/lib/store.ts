@@ -71,7 +71,7 @@ function seed(): DB {
   let n = 0;
   for (const g of groupsRaw) {
     const gid = id();
-    groups.push({ id: gid, name: g.name, curatorCode: makeCode(rand), subjectIds: g.subs });
+    groups.push({ id: gid, name: g.name, curatorCode: makeCode(rand), curatorBound: false, subjectIds: g.subs });
     for (let i = 0; i < g.size; i++, n++) {
       students.push({
         id: id(),
@@ -155,6 +155,11 @@ function seed(): DB {
       tgToken: "",
       maxToken: "",
       teacherCode: makeCode(rand),
+      tgEnabled: false,
+      maxEnabled: false,
+      tgHasToken: false,
+      maxHasToken: false,
+      teacherBound: false,
     },
     seq,
   };
@@ -176,6 +181,11 @@ function emptyDB(): DB {
       tgToken: "",
       maxToken: "",
       teacherCode: "",
+      tgEnabled: false,
+      maxEnabled: false,
+      tgHasToken: false,
+      maxHasToken: false,
+      teacherBound: false,
     },
     seq: 0,
   };
@@ -399,8 +409,8 @@ class Store {
       // Batch 2: коды кураторов + gradebook'и (параллельно)
       const curatorP = groupsRaw.map((g) =>
         fetchJson(`/api/groups/${g.id}/curator`)
-          .then((c) => (c as { code: string }).code || "")
-          .catch(() => ""),
+          .then((c) => (c as { code: string; bound: boolean }))
+          .catch(() => ({ code: "", bound: false })),
       );
       const gbP = subjectsRaw.map((s) =>
         (fetchJson(`/api/subjects/${s.id}/gradebook`) as Promise<{
@@ -420,7 +430,8 @@ class Store {
         return {
           id: g.id,
           name: g.name,
-          curatorCode: curators[i],
+          curatorCode: curators[i].code,
+          curatorBound: curators[i].bound,
           subjectIds: subIds,
         };
       });
@@ -503,10 +514,22 @@ class Store {
         }
       }
 
-      // Настройки: teacherCode из maxbot settings
+      // Настройки ботов: enabled/has_token TG и MAX, код и привязка преподавателя
+      let tgEnabled = false, tgHasToken = false;
+      let maxEnabled = false, maxHasToken = false, teacherBound = false;
       let teacherCode = "";
       try {
-        const ms = await fetchJson("/api/settings/maxbot") as { teacher_code?: string };
+        const [bs, ms] = await Promise.all([
+          fetchJson("/api/settings/bot") as Promise<{ has_token: boolean; enabled: boolean }>,
+          fetchJson("/api/settings/maxbot") as Promise<{
+            has_token: boolean; enabled: boolean; teacher_code?: string; teacher_bound?: boolean;
+          }>,
+        ]);
+        tgEnabled = bs.enabled;
+        tgHasToken = bs.has_token;
+        maxEnabled = ms.enabled;
+        maxHasToken = ms.has_token;
+        teacherBound = !!ms.teacher_bound;
         teacherCode = ms.teacher_code || "";
       } catch (_) { /* ignore */ }
 
@@ -529,6 +552,7 @@ class Store {
           tgToken: "",
           maxToken: "",
           teacherCode,
+          tgEnabled, maxEnabled, tgHasToken, maxHasToken, teacherBound,
         },
         seq: maxId + 1,
       };
@@ -670,7 +694,7 @@ class Store {
   addGroup(name: string): Group {
     const g: Group = {
       id: this.nextId(), name: name.trim(),
-      curatorCode: makeCode(Math.random), subjectIds: [],
+      curatorCode: makeCode(Math.random), curatorBound: false, subjectIds: [],
     };
     this.db.groups.push(g);
     this.touch();
@@ -956,7 +980,7 @@ class Store {
     this.markGradeDirty(lessonId);
     this.touch();
   }
-  updateSettings(patch: Partial<Settings>) {
+  async updateSettings(patch: Partial<Settings>) {
     Object.assign(this.db.settings, patch);
     if (patch.theme) {
       try {
@@ -966,34 +990,140 @@ class Store {
         if (meta) meta.setAttribute("content", patch.theme === "dark" ? "#0B0F14" : "#ECEEF1");
       } catch (_) {}
     }
-    if (!import.meta.env.DEV) {
-      if (patch.tgToken !== undefined) {
-        const token = patch.tgToken.trim();
-        if (token) {
-          _post("/api/settings/bot", { token }).catch((e) =>
-            console.error("[store] save tg token failed:", e));
-        } else {
-          _del("/api/settings/bot").catch((e) =>
-            console.error("[store] drop tg token failed:", e));
-        }
-      }
-      if (patch.maxToken !== undefined) {
-        const token = patch.maxToken.trim();
-        if (token) {
-          _post("/api/settings/maxbot", { token }).catch((e) =>
-            console.error("[store] save max token failed:", e));
-        } else {
-          _del("/api/settings/maxbot").catch((e) =>
-            console.error("[store] drop max token failed:", e));
-        }
-      }
-    }
     this.touch();
+    if (import.meta.env.DEV) return;
+    const ops: Promise<unknown>[] = [];
+    if (patch.tgEnabled !== undefined) {
+      ops.push(_post("/api/settings/bot", { enabled: patch.tgEnabled ? 1 : 0 }));
+    }
+    if (patch.maxEnabled !== undefined) {
+      ops.push(_post("/api/settings/maxbot", { enabled: patch.maxEnabled ? 1 : 0 }));
+    }
+    if (patch.tgToken !== undefined) {
+      const token = patch.tgToken.trim();
+      ops.push((token ? _post("/api/settings/bot", { token }) : _del("/api/settings/bot"))
+        .catch((e) => console.error("[store] save tg token failed:", e)));
+    }
+    if (patch.maxToken !== undefined) {
+      const token = patch.maxToken.trim();
+      ops.push((token ? _post("/api/settings/maxbot", { token }) : _del("/api/settings/maxbot"))
+        .catch((e) => console.error("[store] save max token failed:", e)));
+    }
+    await Promise.all(ops);
   }
   regenerateTeacherCode() {
     this.db.settings.teacherCode = makeCode(Math.random);
     this.touch();
   }
+
+  /* ── PROD: перезагрузка среза «боты» (settings + привязки студентов) ── */
+  async reloadBotState() {
+    if (import.meta.env.DEV) return;
+    try {
+      const [bs, ms, tgLinks, maxLinks] = await Promise.all([
+        fetchJson("/api/settings/bot") as Promise<{ has_token: boolean; enabled: boolean }>,
+        fetchJson("/api/settings/maxbot") as Promise<{
+          has_token: boolean; enabled: boolean; teacher_code?: string; teacher_bound?: boolean;
+        }>,
+        fetchJson("/api/bot/links") as Promise<Array<{ student_id: number }>>,
+        fetchJson("/api/maxbot/links") as Promise<Array<{ student_id: number }>>,
+      ]);
+      this.db.settings.tgEnabled = bs.enabled;
+      this.db.settings.tgHasToken = bs.has_token;
+      this.db.settings.maxEnabled = ms.enabled;
+      this.db.settings.maxHasToken = ms.has_token;
+      this.db.settings.teacherBound = !!ms.teacher_bound;
+      if (ms.teacher_code) this.db.settings.teacherCode = ms.teacher_code;
+      const tgSet = new Set(tgLinks.map((l) => l.student_id));
+      const maxSet = new Set(maxLinks.map((l) => l.student_id));
+      for (const st of this.db.students) {
+        st.tg = tgSet.has(st.id);
+        st.max = maxSet.has(st.id);
+      }
+      this.touch();
+    } catch (e) {
+      console.error("[store] reloadBotState failed:", e);
+    }
+  }
+
+  /* ── PROD: перезагрузка кода куратора группы ── */
+  async reloadCurator(groupId: ID) {
+    if (import.meta.env.DEV) return;
+    try {
+      const c = await fetchJson(`/api/groups/${groupId}/curator`) as { code: string; bound: boolean };
+      const g = this.db.groups.find((x) => x.id === groupId);
+      if (g) {
+        g.curatorCode = c.code;
+        g.curatorBound = !!c.bound;
+      }
+      this.touch();
+    } catch (e) {
+      console.error("[store] reloadCurator failed:", e);
+    }
+  }
+
+  /* ── Отвязать токен бота целиком (DELETE /api/settings/bot|/maxbot) ── */
+  async dropBotToken(kind: "tg" | "max") {
+    if (import.meta.env.DEV) {
+      if (kind === "tg") {
+        this.db.settings.tgToken = "";
+        this.db.settings.tgEnabled = false;
+        this.db.settings.tgHasToken = false;
+      } else {
+        this.db.settings.maxToken = "";
+        this.db.settings.maxEnabled = false;
+        this.db.settings.maxHasToken = false;
+      }
+      this.touch();
+      return;
+    }
+    await _del(kind === "tg" ? "/api/settings/bot" : "/api/settings/maxbot");
+    await this.reloadBotState();
+  }
+
+  /* ── Отвязать преподавателя (POST /api/settings/maxbot/teacher/unbind) ── */
+  async unbindTeacher() {
+    if (import.meta.env.DEV) {
+      this.db.settings.teacherBound = false;
+      this.touch();
+      return;
+    }
+    await _post("/api/settings/maxbot/teacher/unbind");
+    await this.reloadBotState();
+  }
+
+  /* ── Отвязать студента от бота (DELETE /api/bot|/maxbot/links/by-student/<id>) ── */
+  async unbindStudentBot(studentId: ID, kind: "tg" | "max") {
+    if (import.meta.env.DEV) {
+      const st = this.db.students.find((x) => x.id === studentId);
+      if (st) {
+        if (kind === "tg") st.tg = false;
+        else st.max = false;
+      }
+      this.touch();
+      return;
+    }
+    await _del(kind === "tg"
+      ? `/api/bot/links/by-student/${studentId}`
+      : `/api/maxbot/links/by-student/${studentId}`);
+    await this.reloadBotState();
+  }
+
+  /* ── Отвязать куратора (DELETE /api/groups/<id>/curator) ── */
+  async unbindCurator(groupId: ID) {
+    if (import.meta.env.DEV) {
+      const g = this.db.groups.find((x) => x.id === groupId);
+      if (g) {
+        g.curatorCode = makeCode(Math.random);
+        g.curatorBound = false;
+      }
+      this.touch();
+      return;
+    }
+    await _del(`/api/groups/${groupId}/curator`);
+    await this.reloadCurator(groupId);
+  }
+
   exportBackup(): string {
     return JSON.stringify(this.db, null, 2);
   }

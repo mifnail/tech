@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  BookOpen, ChevronRight, Copy, Plus, Send, MessageCircle, Trash2, UserPlus, X,
+  BookOpen, ChevronRight, Copy, Plus, Send, MessageCircle, Trash2, Unlink, UserPlus, X,
 } from "lucide-react";
 import { useDB, useVersion, store } from "../lib/store";
 import { avgOf, formatAvg, isDebtor } from "../lib/grades";
@@ -50,7 +50,29 @@ export default function GroupDetailScreen({ id }: { id: number }) {
   const [subjectHours, setSubjectHours] = useState("");
   const [removeStudentId, setRemoveStudentId] = useState<number | null>(null);
   const [removeGroupOpen, setRemoveGroupOpen] = useState(false);
+  const [curatorUnbindOpen, setCuratorUnbindOpen] = useState(false);
+  const [unbindStudent, setUnbindStudent] = useState<{ id: number; kind: "tg" | "max" } | null>(null);
   const [filter, setFilter] = useState("");
+
+  const unbindCurator = async () => {
+    if (!group) return;
+    try {
+      await store.unbindCurator(group.id);
+      toast("Куратор отвязан");
+    } catch (_) {
+      toast("Ошибка");
+    }
+  };
+
+  const unbindStudentBot = async () => {
+    if (!unbindStudent) return;
+    try {
+      await store.unbindStudentBot(unbindStudent.id, unbindStudent.kind);
+      toast(unbindStudent.kind === "tg" ? "Чат Telegram отвязан" : "Чат MAX отвязан");
+    } catch (_) {
+      toast("Ошибка");
+    }
+  };
 
   const students = useMemo(
     () => (group ? store.studentsOf(group.id) : []),
@@ -220,8 +242,24 @@ export default function GroupDetailScreen({ id }: { id: number }) {
                 {s.name}
               </div>
               <div className="flex items-center gap-1.5 mt-0.5">
-                {s.tg && <Send size={11} className="text-faint" />}
-                {s.max && <MessageCircle size={11} className="text-faint" />}
+                {s.tg && (
+                  <button
+                    onClick={() => setUnbindStudent({ id: s.id, kind: "tg" })}
+                    className="pressable inline-flex items-center gap-1 px-1.5 h-[18px] rounded-md bg-surface2 border border-line text-[10px] font-bold text-faint"
+                    title="Отвязать Telegram"
+                  >
+                    <Send size={10} /> TG
+                  </button>
+                )}
+                {s.max && (
+                  <button
+                    onClick={() => setUnbindStudent({ id: s.id, kind: "max" })}
+                    className="pressable inline-flex items-center gap-1 px-1.5 h-[18px] rounded-md bg-surface2 border border-line text-[10px] font-bold text-faint"
+                    title="Отвязать MAX"
+                  >
+                    <MessageCircle size={10} /> MAX
+                  </button>
+                )}
                 {(s.tg || s.max) && (
                   <span className="text-[10.5px] text-faint">бот привязан</span>
                 )}
@@ -260,6 +298,7 @@ export default function GroupDetailScreen({ id }: { id: number }) {
           </div>
           <div className="mt-0.5 text-[12px] text-muted leading-snug">
             Код для MAX-бота: пуши оценок группы и ведомость по запросу.
+            {group.curatorBound && <span className="text-g5"> · привязан</span>}
           </div>
         </div>
         <IconBtn
@@ -268,6 +307,14 @@ export default function GroupDetailScreen({ id }: { id: number }) {
           className="bg-surface2 border border-line"
           onClick={() => copyText(group.curatorCode) && toast("Код куратора скопирован")}
         />
+        {group.curatorBound && (
+          <IconBtn
+            icon={Unlink}
+            label="Отвязать куратора"
+            className="bg-surface2 border border-line"
+            onClick={() => setCuratorUnbindOpen(true)}
+          />
+        )}
       </Card>
 
       <SectionTitle>Опасная зона</SectionTitle>
@@ -357,6 +404,26 @@ export default function GroupDetailScreen({ id }: { id: number }) {
           navigate("/groups");
           toast("Группа удалена");
         }}
+      />
+
+      <ConfirmSheet
+        open={curatorUnbindOpen}
+        onClose={() => setCuratorUnbindOpen(false)}
+        title="Отвязать куратора?"
+        body="Куратор перестанет получать пуши об оценках группы. Код группы сохранится."
+        confirmLabel="Отвязать"
+        danger
+        onConfirm={unbindCurator}
+      />
+
+      <ConfirmSheet
+        open={unbindStudent !== null}
+        onClose={() => setUnbindStudent(null)}
+        title={unbindStudent?.kind === "tg" ? "Отвязать Telegram?" : "Отвязать MAX?"}
+        body="Студент перестанет получать уведомления об оценках через этого бота."
+        confirmLabel="Отвязать"
+        danger
+        onConfirm={unbindStudentBot}
       />
     </Screen>
   );
