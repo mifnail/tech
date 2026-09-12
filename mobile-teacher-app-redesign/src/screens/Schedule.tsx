@@ -50,7 +50,7 @@ export default function ScheduleScreen() {
   const saveItem = () => {
     const gid = Number(fGroup);
     let sid = fSubject ? Number(fSubject) : null;
-    if (!sid && fNewSubject.trim()) sid = store.addSubject(fNewSubject).id;
+    if (!sid && fNewSubject.trim()) sid = store.addSubject(fNewSubject, gid).id;
     if (!gid || !sid) { toast("Выберите группу и предмет"); return; }
     store.addScheduleItem({
       groupId: gid,
@@ -188,8 +188,8 @@ export default function ScheduleScreen() {
                 <Btn
                   className="justify-start"
                   disabled={!canCreate}
-                  onClick={() => {
-                    const l = store.createLesson(actionItem.groupId, actionItem.subjectId, selectedISO);
+                  onClick={async () => {
+                    const l = await store.createLesson(actionItem.groupId, actionItem.subjectId, selectedISO);
                     setActionItem(null);
                     navigate("/lesson/" + l.id);
                   }}

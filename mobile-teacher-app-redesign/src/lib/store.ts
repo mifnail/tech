@@ -85,19 +85,19 @@ function seed(): DB {
   const [IS, EK, TM] = groups.map((g) => g.id);
 
   const schedule: ScheduleItem[] = [
-    { id: id(), groupId: IS, subjectId: BD, weekday: 1, parity: 0, time: "09:00", room: "204" },
-    { id: id(), groupId: EK, subjectId: MA, weekday: 1, parity: 0, time: "10:40", room: "315" },
-    { id: id(), groupId: TM, subjectId: EN, weekday: 1, parity: 2, time: "13:00", room: "112" },
-    { id: id(), groupId: IS, subjectId: OS, weekday: 2, parity: 0, time: "09:00", room: "421" },
-    { id: id(), groupId: TM, subjectId: AR, weekday: 2, parity: 1, time: "10:40", room: "118" },
-    { id: id(), groupId: IS, subjectId: MA, weekday: 3, parity: 0, time: "10:40", room: "315" },
-    { id: id(), groupId: EK, subjectId: EN, weekday: 3, parity: 0, time: "13:00", room: "112" },
-    { id: id(), groupId: TM, subjectId: MA, weekday: 3, parity: 2, time: "09:00", room: "315" },
-    { id: id(), groupId: IS, subjectId: BD, weekday: 4, parity: 0, time: "09:00", room: "204" },
-    { id: id(), groupId: EK, subjectId: MA, weekday: 4, parity: 1, time: "10:40", room: "315" },
-    { id: id(), groupId: TM, subjectId: AR, weekday: 5, parity: 0, time: "10:40", room: "118" },
-    { id: id(), groupId: EK, subjectId: EN, weekday: 5, parity: 2, time: "09:00", room: "112" },
-    { id: id(), groupId: IS, subjectId: OS, weekday: 6, parity: 2, time: "09:00", room: "421" },
+    { id: id(), groupId: IS, subjectId: BD, weekday: 1, parity: 0, time: "09:00", room: "204", lessonNumber: 1 },
+    { id: id(), groupId: EK, subjectId: MA, weekday: 1, parity: 0, time: "10:40", room: "315", lessonNumber: 2 },
+    { id: id(), groupId: TM, subjectId: EN, weekday: 1, parity: 2, time: "13:00", room: "112", lessonNumber: 3 },
+    { id: id(), groupId: IS, subjectId: OS, weekday: 2, parity: 0, time: "09:00", room: "421", lessonNumber: 1 },
+    { id: id(), groupId: TM, subjectId: AR, weekday: 2, parity: 1, time: "10:40", room: "118", lessonNumber: 2 },
+    { id: id(), groupId: IS, subjectId: MA, weekday: 3, parity: 0, time: "10:40", room: "315", lessonNumber: 2 },
+    { id: id(), groupId: EK, subjectId: EN, weekday: 3, parity: 0, time: "13:00", room: "112", lessonNumber: 3 },
+    { id: id(), groupId: TM, subjectId: MA, weekday: 3, parity: 2, time: "09:00", room: "315", lessonNumber: 1 },
+    { id: id(), groupId: IS, subjectId: BD, weekday: 4, parity: 0, time: "09:00", room: "204", lessonNumber: 1 },
+    { id: id(), groupId: EK, subjectId: MA, weekday: 4, parity: 1, time: "10:40", room: "315", lessonNumber: 2 },
+    { id: id(), groupId: TM, subjectId: AR, weekday: 5, parity: 0, time: "10:40", room: "118", lessonNumber: 2 },
+    { id: id(), groupId: EK, subjectId: EN, weekday: 5, parity: 2, time: "09:00", room: "112", lessonNumber: 1 },
+    { id: id(), groupId: IS, subjectId: OS, weekday: 6, parity: 2, time: "09:00", room: "421", lessonNumber: 1 },
   ];
 
   // Прошлые занятия — 5 недель назад по расписанию, проведённые, с оценками.
@@ -199,6 +199,50 @@ async function fetchJson(url: string): Promise<unknown> {
   return r.json();
 }
 
+/* ── PROD-only: write-хелперы (POST/PATCH/DELETE с JSON) ───── */
+async function _post(url: string, body?: unknown): Promise<unknown> {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body != null ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  return r.json();
+}
+
+async function _patch(url: string, body?: unknown): Promise<unknown> {
+  const r = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: body != null ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  return r.json();
+}
+
+async function _del(url: string): Promise<unknown> {
+  const r = await fetch(url, { method: "DELETE" });
+  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  return r.json();
+}
+
+/** ФИО «Иванова Мария Петровна» → {last_name, first_name, middle_name}. */
+function splitName(name: string): { last_name: string; first_name: string; middle_name: string } {
+  const parts = name.trim().split(/\s+/);
+  return {
+    last_name: parts[0] || "",
+    first_name: parts[1] || "",
+    middle_name: parts.slice(2).join(" ") || "",
+  };
+}
+
+/** GradeRec → серверный TEXT: '' (нет строки), '0' (присутствие), '2'–'5'. */
+function gradeToText(g: GradeRec): string {
+  if (!g.present) return "";
+  if (g.value === null || g.value === 0) return "0";
+  return String(g.value);
+}
+
 /* ── Хранилище ────────────────────────────────────────────── */
 class Store {
   db: DB;
@@ -207,6 +251,54 @@ class Store {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   /** Обратная карта subjectId → groupId (для маппинга расписания/уроков). */
   private subjectGroup = new Map<ID, ID>();
+
+  /* ── PROD: дебаунс-пуши оценок ─────────────────────────── */
+  /** Занятия с изменёнными оценками, ожидающие флаша. */
+  private dirtyLessons = new Set<ID>();
+  /** Снимки оценок ДО первого изменения (для отката при ошибке). */
+  private gradeSnapshots = new Map<ID, GradeRec[]>();
+  private gradeFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Idle-окно флаша: длиннее серверных бот-окон (10с/60с) не нужно,
+      но коалесцирует шторм тапов в один settled-POST. */
+  private static GRADE_PUSH_DELAY = 1500;
+
+  /** Пометить занятие «грязным» и перезапустить таймер флаша. */
+  private markGradeDirty(lessonId: ID) {
+    if (import.meta.env.DEV) return;
+    if (!this.gradeSnapshots.has(lessonId)) {
+      this.gradeSnapshots.set(
+        lessonId,
+        this.db.grades.filter((g) => g.lessonId === lessonId).map((g) => ({ ...g })),
+      );
+    }
+    this.dirtyLessons.add(lessonId);
+    if (this.gradeFlushTimer) clearTimeout(this.gradeFlushTimer);
+    this.gradeFlushTimer = setTimeout(() => this.flushAttendance(), Store.GRADE_PUSH_DELAY);
+  }
+
+  /** Флаш: bulk POST attendance по всем «грязным» занятиям; откат при ошибке. */
+  private async flushAttendance() {
+    const dirty = [...this.dirtyLessons];
+    const snapshots = new Map(this.gradeSnapshots);
+    this.dirtyLessons.clear();
+    this.gradeSnapshots.clear();
+    this.gradeFlushTimer = null;
+
+    for (const lessonId of dirty) {
+      const snapshot = snapshots.get(lessonId);
+      if (!snapshot) continue;
+      try {
+        const recs = this.db.grades.filter((g) => g.lessonId === lessonId);
+        const payload = recs.map((g) => ({ student_id: g.studentId, grade: gradeToText(g) }));
+        await _post(`/api/lessons/${lessonId}/attendance`, payload);
+      } catch (e) {
+        console.error(`[store] grade flush for lesson ${lessonId}:`, e);
+        this.db.grades = this.db.grades.filter((g) => g.lessonId !== lessonId);
+        this.db.grades.push(...snapshot);
+        this.touch();
+      }
+    }
+  }
 
   constructor() {
     if (import.meta.env.DEV) {
@@ -342,6 +434,7 @@ class Store {
         parity: s.week_type as 0 | 1 | 2,
         time: "",
         room: "",
+        lessonNumber: s.lesson_number,
       }));
 
       // Маппинг уроков и оценок из gradebook'ов
@@ -566,9 +659,30 @@ class Store {
     };
     this.db.groups.push(g);
     this.touch();
+    if (!import.meta.env.DEV) {
+      _post("/api/groups", { name: name.trim() }).then((r) => {
+        const { id } = r as { id: number };
+        if (id !== g.id) {
+          g.id = id;
+          this.db.seq = Math.max(this.db.seq, id + 1);
+          this.touch();
+        }
+      }).catch((e) => {
+        console.error("[store] addGroup failed:", e);
+        this.db.groups = this.db.groups.filter((x) => x !== g);
+        this.touch();
+      });
+    }
     return g;
   }
   removeGroup(id: ID) {
+    const snap = {
+      groups: [...this.db.groups],
+      students: [...this.db.students],
+      lessons: [...this.db.lessons],
+      schedule: [...this.db.schedule],
+      grades: [...this.db.grades],
+    };
     const studentIds = this.studentsOf(id).map((s) => s.id);
     const lessonIds = this.db.lessons.filter((l) => l.groupId === id).map((l) => l.id);
     this.db.grades = this.db.grades.filter(
@@ -579,19 +693,58 @@ class Store {
     this.db.students = this.db.students.filter((s) => s.groupId !== id);
     this.db.groups = this.db.groups.filter((g) => g.id !== id);
     this.touch();
+    if (!import.meta.env.DEV) {
+      _del(`/api/groups/${id}`).catch((e) => {
+        console.error("[store] removeGroup failed:", e);
+        this.db.groups = snap.groups;
+        this.db.students = snap.students;
+        this.db.lessons = snap.lessons;
+        this.db.schedule = snap.schedule;
+        this.db.grades = snap.grades;
+        this.touch();
+      });
+    }
   }
   addStudent(groupId: ID, name: string): Student {
     const st: Student = { id: this.nextId(), groupId, name: name.trim() };
     this.db.students.push(st);
     this.touch();
+    if (!import.meta.env.DEV) {
+      const parts = splitName(name);
+      _post("/api/students/bulk", {
+        group_id: groupId,
+        students: [parts],
+      }).then((r) => {
+        const { added } = r as { added: number };
+        if (added === 0) {
+          // INSERT OR IGNORE — дубликат: откатываем локально.
+          this.db.students = this.db.students.filter((x) => x !== st);
+          this.touch();
+        }
+      }).catch((e) => {
+        console.error("[store] addStudent failed:", e);
+        this.db.students = this.db.students.filter((x) => x !== st);
+        this.touch();
+      });
+    }
     return st;
   }
   removeStudent(id: ID) {
+    const st = this.db.students.find((s) => s.id === id);
+    const affectedGrades = this.db.grades.filter((g) => g.studentId === id);
     this.db.students = this.db.students.filter((s) => s.id !== id);
     this.db.grades = this.db.grades.filter((g) => g.studentId !== id);
     this.touch();
+    if (!import.meta.env.DEV) {
+      _del(`/api/students/${id}`).catch((e) => {
+        console.error("[store] removeStudent failed:", e);
+        if (st) this.db.students.push(st);
+        this.db.grades.push(...affectedGrades);
+        this.touch();
+      });
+    }
   }
-  addSubject(name: string): Subject {
+  addSubject(name: string, groupId?: ID): Subject {
     const existing = this.db.subjects.find(
       (s) => s.name.toLowerCase() === name.trim().toLowerCase(),
     );
@@ -599,6 +752,22 @@ class Store {
     const s: Subject = { id: this.nextId(), name: name.trim() };
     this.db.subjects.push(s);
     this.touch();
+    if (!import.meta.env.DEV && groupId != null) {
+      _post("/api/subjects", { name: name.trim(), total_hours: 0, group_id: groupId })
+        .then((r) => {
+          const { id } = r as { id: number };
+          if (id !== s.id) {
+            s.id = id;
+            this.db.seq = Math.max(this.db.seq, id + 1);
+            this.touch();
+          }
+        })
+        .catch((e) => {
+          console.error("[store] addSubject failed:", e);
+          this.db.subjects = this.db.subjects.filter((x) => x !== s);
+          this.touch();
+        });
+    }
     return s;
   }
   assignSubject(groupId: ID, subjectId: ID) {
@@ -614,42 +783,136 @@ class Store {
     g.subjectIds = g.subjectIds.filter((x) => x !== subjectId);
     this.touch();
   }
-  addScheduleItem(item: Omit<ScheduleItem, "id">): ScheduleItem {
-    const it: ScheduleItem = { ...item, id: this.nextId() };
+  addScheduleItem(item: Omit<ScheduleItem, "id" | "lessonNumber">): ScheduleItem {
+    const maxNum = this.db.schedule
+      .filter((s) => s.weekday === item.weekday)
+      .reduce((m, s) => Math.max(m, s.lessonNumber), 0);
+    const it: ScheduleItem = { ...item, id: this.nextId(), lessonNumber: maxNum + 1 };
     this.db.schedule.push(it);
     const g = this.group(item.groupId);
     if (g && !g.subjectIds.includes(item.subjectId)) g.subjectIds.push(item.subjectId);
     this.touch();
+    if (!import.meta.env.DEV) {
+      _post("/api/schedule", {
+        day_of_week: item.weekday,
+        lesson_number: it.lessonNumber,
+        subject_id: item.subjectId,
+        week_type: item.parity,
+      }).then((r) => {
+        const { id } = r as { id: number };
+        if (id !== it.id) {
+          it.id = id;
+          this.db.seq = Math.max(this.db.seq, id + 1);
+          this.touch();
+        }
+      }).catch((e) => {
+        console.error("[store] addScheduleItem failed:", e);
+        this.db.schedule = this.db.schedule.filter((x) => x !== it);
+        this.touch();
+      });
+    }
     return it;
   }
   removeScheduleItem(id: ID) {
+    const it = this.db.schedule.find((s) => s.id === id);
     this.db.schedule = this.db.schedule.filter((s) => s.id !== id);
     this.touch();
+    if (!import.meta.env.DEV) {
+      _del(`/api/schedule/${id}`).catch((e) => {
+        console.error("[store] removeScheduleItem failed:", e);
+        if (it) this.db.schedule.push(it);
+        this.touch();
+      });
+    }
   }
-  /** Создание занятия с датой (прошлое + сегодня). Дубли разрешены. */
-  createLesson(groupId: ID, subjectId: ID, date: string): Lesson {
+  /** Создание занятия с датой (прошлое + сегодня). Дубли разрешены.
+      PROD: POST /api/lessons, сервер назначает ID (рекониляция). */
+  async createLesson(groupId: ID, subjectId: ID, date: string): Promise<Lesson> {
     const fromSchedule = this.scheduleItemFor({ groupId, subjectId }, date);
     const lesson: Lesson = {
       id: this.nextId(), groupId, subjectId, date,
       status: "scheduled",
-      time: fromSchedule?.time ?? "—",
-      room: fromSchedule?.room ?? "—",
+      time: fromSchedule?.time ?? "",
+      room: fromSchedule?.room ?? "",
     };
     this.db.lessons.push(lesson);
     for (const st of this.studentsOf(groupId)) {
       this.db.grades.push({ lessonId: lesson.id, studentId: st.id, value: null, present: true });
     }
     this.touch();
+
+    if (!import.meta.env.DEV) {
+      try {
+        const r = await _post("/api/lessons", {
+          subject_id: subjectId, date, status: "scheduled",
+        }) as { id: number };
+        if (r.id !== lesson.id) {
+          const oldId = lesson.id;
+          lesson.id = r.id;
+          for (const g of this.db.grades) {
+            if (g.lessonId === oldId) g.lessonId = r.id;
+          }
+          this.db.seq = Math.max(this.db.seq, r.id + 1);
+          this.touch();
+        }
+      } catch (e) {
+        console.error("[store] createLesson failed:", e);
+        this.db.lessons = this.db.lessons.filter((l) => l !== lesson);
+        this.db.grades = this.db.grades.filter((g) => g.lessonId !== lesson.id);
+        this.touch();
+      }
+    }
     return lesson;
   }
   setLessonStatus(id: ID, status: LessonStatus) {
     const l = this.lesson(id);
-    if (l) { l.status = status; this.touch(); }
+    if (!l) return;
+    const prev = l.status;
+    l.status = status;
+    this.touch();
+    if (!import.meta.env.DEV) {
+      if (status === "cancelled") {
+        _patch(`/api/lessons/${id}/cancel`).catch((e) => {
+          console.error("[store] cancel lesson failed:", e);
+          l.status = prev;
+          this.touch();
+        });
+      } else {
+        _patch(`/api/lessons/${id}/status`, { status }).catch((e) => {
+          console.error("[store] set lesson status failed:", e);
+          l.status = prev;
+          this.touch();
+        });
+      }
+    }
+  }
+  /** Замена занятия: PATCH substitute (сервер отменяет старое и создаёт новое). */
+  async substituteLesson(lessonId: ID, newSubjectId: ID): Promise<ID | null> {
+    if (import.meta.env.DEV) return null;
+    try {
+      const r = await _patch(`/api/lessons/${lessonId}/substitute`, {
+        new_subject_id: newSubjectId,
+      }) as { new_lesson_id: number };
+      return r.new_lesson_id;
+    } catch (e) {
+      console.error("[store] substituteLesson failed:", e);
+      return null;
+    }
   }
   removeLesson(id: ID) {
+    const lesson = this.db.lessons.find((l) => l.id === id);
+    const affectedGrades = this.db.grades.filter((g) => g.lessonId === id);
     this.db.lessons = this.db.lessons.filter((l) => l.id !== id);
     this.db.grades = this.db.grades.filter((g) => g.lessonId !== id);
     this.touch();
+    if (!import.meta.env.DEV) {
+      _del(`/api/lessons/${id}`).catch((e) => {
+        console.error("[store] removeLesson failed:", e);
+        if (lesson) this.db.lessons.push(lesson);
+        this.db.grades.push(...affectedGrades);
+        this.touch();
+      });
+    }
   }
   /** Досоздать записи оценок для студентов, добавленных после создания занятия. */
   ensureGrades(lessonId: ID) {
@@ -668,12 +931,14 @@ class Store {
     const rec = this.gradeOf(lessonId, studentId);
     if (!rec || !rec.present) return;
     rec.value = dir === 1 ? nextGrade(rec.value) : prevGrade(rec.value);
+    this.markGradeDirty(lessonId);
     this.touch();
   }
   togglePresent(lessonId: ID, studentId: ID) {
     const rec = this.gradeOf(lessonId, studentId);
     if (!rec) return;
     rec.present = !rec.present;
+    this.markGradeDirty(lessonId);
     this.touch();
   }
   updateSettings(patch: Partial<Settings>) {
@@ -685,6 +950,28 @@ class Store {
         const meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.setAttribute("content", patch.theme === "dark" ? "#0B0F14" : "#ECEEF1");
       } catch (_) {}
+    }
+    if (!import.meta.env.DEV) {
+      if (patch.tgToken !== undefined) {
+        const token = patch.tgToken.trim();
+        if (token) {
+          _post("/api/settings/bot", { token }).catch((e) =>
+            console.error("[store] save tg token failed:", e));
+        } else {
+          _del("/api/settings/bot").catch((e) =>
+            console.error("[store] drop tg token failed:", e));
+        }
+      }
+      if (patch.maxToken !== undefined) {
+        const token = patch.maxToken.trim();
+        if (token) {
+          _post("/api/settings/maxbot", { token }).catch((e) =>
+            console.error("[store] save max token failed:", e));
+        } else {
+          _del("/api/settings/maxbot").catch((e) =>
+            console.error("[store] drop max token failed:", e));
+        }
+      }
     }
     this.touch();
   }
