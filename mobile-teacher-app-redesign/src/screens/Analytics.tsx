@@ -3,13 +3,13 @@
    тепловая полоса 14 дней, по предметам, лидеры top-3 и зона риска.
    Математика та же, что в ванилле; менялась только подача. */
 
-import { useMemo } from "react";
-import { AlertTriangle, BarChart3, Check } from "lucide-react";
+import { useMemo, useState } from "react";
+import { AlertTriangle, BarChart3, Check, Download } from "lucide-react";
 import { useDB, useVersion } from "../lib/store";
 import { addDaysISO, todayISO } from "../lib/date";
 import { avgOf, formatAvg } from "../lib/grades";
 import { BigHeader, Screen } from "../components/shell";
-import { Card, Chip, EmptyState, SectionTitle } from "../components/ui";
+import { Btn, Card, Chip, EmptyState, SectionTitle, Select, useToast } from "../components/ui";
 import { cn } from "../utils/cn";
 
 /* ── График динамики: оси X/Y, автомасштаб с паддингом, точки ── */
@@ -88,6 +88,28 @@ function TrendChart({ points }: { points: { date: string; v: number }[] }) {
 export default function AnalyticsScreen() {
   const db = useDB();
   const ver = useVersion();
+  const toast = useToast();
+  // null = «Все предметы» (общая ведомость), иначе id предмета
+  const [exportSubjectId, setExportSubjectId] = useState<number | null>(null);
+
+  // Экспорт через сервер (как в проде): POST share → файл в Загрузки + шторка на Android.
+  // На десктопе share вернёт 400 (ожидаемо, только Android) — это не ошибка фронта.
+  const shareVedomost = async () => {
+    const url = exportSubjectId == null
+      ? "/api/export/general/share"
+      : `/api/export/grades/${exportSubjectId}/share`;
+    try {
+      const r = await fetch(url, { method: "POST" });
+      if (!r.ok) {
+        toast("Ошибка");
+        return;
+      }
+      const j = (await r.json()) as { shared?: boolean; error?: string };
+      toast(j.shared === false ? `Файл сохранён, шторка не открылась: ${j.error || ""}` : "Шторка открыта");
+    } catch (_) {
+      toast("Ошибка");
+    }
+  };
 
   const model = useMemo(() => {
     // Все проведённые занятия + их оценки
@@ -318,6 +340,32 @@ export default function AnalyticsScreen() {
               ))}
             </Card>
           </div>
+
+          {/* Экспорт ведомости: серверный .xlsx (как в проде), шторка на Android */}
+          <SectionTitle>Экспорт ведомости</SectionTitle>
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Download size={15} className="text-faint" />
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted">
+                ведомость в Excel
+              </span>
+            </div>
+            <Select
+              value={exportSubjectId == null ? "" : String(exportSubjectId)}
+              onChange={(e) => setExportSubjectId(e.target.value === "" ? null : Number(e.target.value))}
+            >
+              <option value="">Все предметы</option>
+              {db.subjects.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </Select>
+            <Btn className="w-full mt-3" icon={Download} onClick={shareVedomost}>
+              Ведомость
+            </Btn>
+            <div className="mt-2.5 text-[11.5px] text-muted leading-snug">
+              Файл .xlsx собирается на сервере; на Android откроется системная шторка.
+            </div>
+          </Card>
         </>
       )}
     </Screen>
