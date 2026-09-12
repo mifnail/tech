@@ -4,7 +4,7 @@
 import { useMemo, useState } from "react";
 import { ArrowLeft, Check } from "lucide-react";
 import type { ID, Lesson } from "../lib/types";
-import { store } from "../lib/store";
+import { store, useDB } from "../lib/store";
 import {
   addDaysISO, fromISO, formatDot, monthYearLabel, todayISO, toISO, weekdayShort,
 } from "../lib/date";
@@ -27,7 +27,14 @@ export function NewLessonSheet({
   const [date, setDate] = useState(today);
   const [fNum, setFNum] = useState(0); // 0 = авто (из расписания)
 
-  const pairs = useMemo(() => store.scheduledPairs(), [open]);
+  const db = useDB();
+  const pairs = useMemo(
+    () =>
+      db.groups.flatMap((g) =>
+        g.subjectIds.map((sid) => ({ groupId: g.id, subjectId: sid })),
+      ),
+    [db],
+  );
 
   const fromSchedule = pair ? store.scheduleItemFor(pair, date) : undefined;
   const effNum = fNum || fromSchedule?.lessonNumber || 0;
@@ -71,7 +78,7 @@ export function NewLessonSheet({
           </div>
           {pairs.length === 0 && (
             <p className="text-[14px] text-muted py-4 text-center">
-              Нет предметов в расписании — добавьте пару на вкладке «Расписание».
+              Нет предметов — добавьте предмет на вкладке «Предметы/Группы».
             </p>
           )}
           {pairs.map((p) => {

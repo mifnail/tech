@@ -264,7 +264,7 @@ export function Sheet({
       />
       <div
         className="an-sheet relative w-full max-w-[480px] bg-surface rounded-t-[22px]
-          border-t border-line max-h-[85dvh] flex flex-col"
+          border-t border-line max-h-[85vh] max-h-[85dvh] flex flex-col"
         role="dialog"
         aria-modal="true"
       >

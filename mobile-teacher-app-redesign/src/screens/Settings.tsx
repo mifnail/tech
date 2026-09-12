@@ -1,15 +1,15 @@
 /* «Ещё»: профиль, тема, боты (Telegram / MAX), код преподавателя,
-   бэкап/восстановление, информация о сборке, сброс демо. */
+   бэкап/восстановление. */
 
 import { useRef, useState } from "react";
 import {
-  Bot, Check, Code2, Coffee, Copy, DatabaseBackup, Moon, RefreshCw,
-  Send, Sun, Trash2, Upload,
+  Bot, Check, Coffee, Copy, DatabaseBackup, Moon, RefreshCw,
+  Send, Sun, Upload,
 } from "lucide-react";
 import { useDB, store } from "../lib/store";
 import { BigHeader, Screen } from "../components/shell";
 import {
-  Btn, Card, Chip, ConfirmSheet, Field, IconBtn, Input,
+  Btn, Card, Chip, Field, IconBtn, Input,
   SectionTitle, Segmented, useToast,
 } from "../components/ui";
 
@@ -40,7 +40,6 @@ export default function SettingsScreen() {
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [tgDraft, setTgDraft] = useState<string | null>(null);
   const [maxDraft, setMaxDraft] = useState<string | null>(null);
-  const [resetOpen, setResetOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const downloadBackup = () => {
@@ -231,36 +230,6 @@ export default function SettingsScreen() {
         </div>
       </Card>
 
-      <SectionTitle>О приложении</SectionTitle>
-      <Card className="p-4">
-        <div className="flex items-center justify-between text-[13px]">
-          <span className="text-muted">Версия</span>
-          <span className="font-bold tabular-nums">2.0 · редизайн</span>
-        </div>
-        <div className="h-px bg-line my-2.5" />
-        <div className="flex items-center justify-between text-[13px]">
-          <span className="text-muted">Сборка</span>
-          <span className="font-bold tabular-nums">0.121</span>
-        </div>
-        <div className="h-px bg-line my-2.5" />
-        <div className="flex items-center justify-between text-[13px]">
-          <span className="text-muted">Платформа</span>
-          <span className="font-semibold">Android 7+ · WebView</span>
-        </div>
-        <div className="h-px bg-line my-2.5" />
-        <a
-          href="https://github.com/mifnail/tech"
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center justify-between text-[13px] pressable"
-        >
-          <span className="text-muted">Исходный код</span>
-          <span className="font-semibold text-accent inline-flex items-center gap-1.5">
-            <Code2 size={14} /> github.com/mifnail/tech
-          </span>
-        </a>
-      </Card>
-
       <SectionTitle>Поддержать проект</SectionTitle>
       <Card className="p-4 opacity-90">
         <div className="flex items-center gap-2 mb-2.5">
@@ -280,21 +249,6 @@ export default function SettingsScreen() {
           Поддержать
         </Btn>
       </Card>
-
-      <SectionTitle>Демо-данные</SectionTitle>
-      <Btn variant="danger" icon={Trash2} className="w-full" onClick={() => setResetOpen(true)}>
-        Сбросить и заполнить заново
-      </Btn>
-
-      <ConfirmSheet
-        open={resetOpen}
-        onClose={() => setResetOpen(false)}
-        title="Сбросить данные?"
-        body="Все изменения будут удалены. Журнал заполнится демонстрационными данными заново."
-        confirmLabel="Сбросить"
-        danger
-        onConfirm={() => { store.resetDemo(); toast("Демо-данные восстановлены"); }}
-      />
     </Screen>
   );
 }

@@ -90,7 +90,7 @@ export function AvatarTile({ text, className }: { text: string; className?: stri
 /* ── Нижняя навигация ─────────────────────────────────────── */
 const TABS = [
   { path: "today", label: "Сегодня", icon: House },
-  { path: "groups", label: "Группы", icon: Layers },
+  { path: "groups", label: "Предметы и группы", icon: Layers },
   { path: "schedule", label: "Расписание", icon: CalendarDays },
   { path: "analytics", label: "Аналитика", icon: BarChart3 },
   { path: "more", label: "Ещё", icon: SlidersHorizontal },
@@ -127,7 +127,7 @@ export function BottomNav({ segment }: { segment: string }) {
               </span>
               <span
                 className={cn(
-                  "text-[10px] leading-none",
+                  "text-[9px] leading-[1.2] max-w-full text-center",
                   is ? "font-bold text-accent" : "font-semibold text-faint",
                 )}
               >

@@ -47,7 +47,7 @@ function RouterView({ seg }: { seg: string[] }) {
   }
 
   return (
-    <div key={key} className="an-rise">
+    <div key={key} className="an-rise z-50">
       {view}
     </div>
   );
