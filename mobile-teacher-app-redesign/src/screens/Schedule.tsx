@@ -34,6 +34,7 @@ export default function ScheduleScreen() {
   const [fSubject, setFSubject] = useState("");
   const [fNewSubject, setFNewSubject] = useState("");
   const [fParity, setFParity] = useState("0");
+  const [fLessonNum, setFLessonNum] = useState("1");
 
   const monday = mondayOfWeek(selectedISO);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDaysISO(monday, i)), [monday]);
@@ -44,6 +45,7 @@ export default function ScheduleScreen() {
     setFSubject("");
     setFNewSubject("");
     setFParity("0");
+    setFLessonNum("1");
     setAddOpen(true);
   };
 
@@ -52,6 +54,11 @@ export default function ScheduleScreen() {
     let sid = fSubject ? Number(fSubject) : null;
     if (!sid && fNewSubject.trim()) sid = store.addSubject(fNewSubject, gid).id;
     if (!gid || !sid) { toast("Выберите группу и предмет"); return; }
+    // Мягкая валидация дублирующегося номера в тот же день — сервер остаётся источником истины.
+    const num = Number(fLessonNum);
+    const dup = store.scheduleFor(weekdayOf(selectedISO), Number(parity) as 1 | 2)
+      .some((it) => it.lessonNumber === num);
+    if (dup) toast("Номер пары уже занят в этот день — сервер решит");
     store.addScheduleItem({
       groupId: gid,
       subjectId: sid,
@@ -59,6 +66,7 @@ export default function ScheduleScreen() {
       parity: Number(fParity) as 0 | 1 | 2,
       time: "",
       room: "",
+      lessonNumber: num,
     });
     setAddOpen(false);
     toast("Пара добавлена в расписание");
@@ -141,6 +149,15 @@ export default function ScheduleScreen() {
             className="p-3.5 mb-2 flex items-center gap-3"
             onClick={() => setActionItem(it)}
           >
+            <div className="w-[44px] shrink-0 text-center">
+              <div className="text-[15px] font-extrabold tabular-nums leading-none">
+                №{it.lessonNumber}
+              </div>
+              <div className="mt-0.5 text-[9.5px] font-bold uppercase tracking-wide text-faint">
+                пара
+              </div>
+            </div>
+            <div className="w-px self-stretch bg-line" />
             <AvatarTile text={g.name.slice(0, 2)} className="w-9 h-9 text-[11px]" />
             <div className="min-w-0 flex-1">
               <div className="text-[14.5px] font-bold truncate">{s.name}</div>
@@ -238,6 +255,13 @@ export default function ScheduleScreen() {
               <option value="0">Каждую неделю</option>
               <option value="1">Только чётные</option>
               <option value="2">Только нечётные</option>
+            </Select>
+          </Field>
+          <Field label="Номер пары">
+            <Select value={fLessonNum} onChange={(e) => setFLessonNum(e.target.value)}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>Пара №{n}</option>
+              ))}
             </Select>
           </Field>
           <Btn size="lg" onClick={saveItem}>Добавить</Btn>

@@ -23,14 +23,14 @@ function LessonCard({ lesson }: { lesson: Lesson }) {
       className="p-3.5 mb-2 flex items-center gap-3"
       onClick={() => navigate("/lesson/" + lesson.id)}
     >
-      {lesson.time && (
+      {lesson.lessonNumber > 0 && (
         <>
           <div className="w-[52px] shrink-0 text-center">
             <div className="text-[15px] font-extrabold tabular-nums leading-none">
-              {lesson.time}
+              №{lesson.lessonNumber}
             </div>
             <div className="mt-1 text-[10px] font-bold uppercase tracking-wide text-faint">
-              {lesson.room ? "ауд. " + lesson.room : ""}
+              пара
             </div>
           </div>
           <div className="w-px self-stretch bg-line" />

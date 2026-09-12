@@ -121,7 +121,7 @@ function seed(): DB {
       const lid = id();
       lessons.push({
         id: lid, groupId: it.groupId, subjectId: it.subjectId,
-        date, status: "held", time: it.time, room: it.room,
+        date, status: "held", time: it.time, room: it.room, lessonNumber: it.lessonNumber,
       });
       for (const st of students.filter((s) => s.groupId === it.groupId)) {
         const present = rand() > 0.07;
@@ -142,7 +142,7 @@ function seed(): DB {
   for (const it of todayItems.slice(0, 3)) {
     lessons.push({
       id: id(), groupId: it.groupId, subjectId: it.subjectId,
-      date: today, status: "scheduled", time: it.time, room: it.room,
+      date: today, status: "scheduled", time: it.time, room: it.room, lessonNumber: it.lessonNumber,
     });
   }
 
@@ -276,8 +276,9 @@ class Store {
     this.gradeFlushTimer = setTimeout(() => this.flushAttendance(), Store.GRADE_PUSH_DELAY);
   }
 
-  /** Флаш: bulk POST attendance по всем «грязным» занятиям; откат при ошибке. */
-  private async flushAttendance() {
+  /** Флаш: bulk POST attendance по всем «грязным» занятиям; откат при ошибке.
+      Публичный: вызывается перед навигацией и на pagehide/visibilitychange. */
+  async flushAttendance() {
     const dirty = [...this.dirtyLessons];
     const snapshots = new Map(this.gradeSnapshots);
     this.dirtyLessons.clear();
@@ -300,6 +301,16 @@ class Store {
     }
   }
 
+  /** Best-effort флаш при уходе со страницы (закрытие/сворачивание WebView). */
+  private bindLifecycleFlush() {
+    if (import.meta.env.DEV) return;
+    const flush = () => { void this.flushAttendance(); };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flush();
+    });
+  }
+
   constructor() {
     if (import.meta.env.DEV) {
       /* ── DEV: seed + localStorage ──────────────────────── */
@@ -317,6 +328,7 @@ class Store {
       /* ── PROD: пустая БД + async загрузка с сервера ───── */
       this.db = emptyDB();
       this.loadFromApi();
+      this.bindLifecycleFlush();
     }
   }
 
@@ -458,6 +470,7 @@ class Store {
               status: "held" as LessonStatus,
               time: "",
               room: "",
+              lessonNumber: l.lesson_number ?? 0,
             });
           }
         }
@@ -485,6 +498,7 @@ class Store {
             status: (l.status === "replaced" ? "cancelled" : l.status) as LessonStatus,
             time: "",
             room: "",
+            lessonNumber: l.lesson_number ?? 0,
           });
         }
       }
@@ -532,7 +546,7 @@ class Store {
       const [att, adj] = await Promise.all([
         fetchJson(`/api/lessons/${id}/attendance`) as Promise<{
           lesson: { id: number; subject_id: number; actual_subject_id: number | null;
-                    date: string; status: string; group_id?: number } | null;
+                    date: string; status: string; group_id?: number; lesson_number?: number | null } | null;
           attendance: Array<{ student_id: number; grade: string }>;
           students: Array<{ id: number; group_id: number }>;
         }>,
@@ -551,6 +565,7 @@ class Store {
         status: (srv.status === "replaced" ? "cancelled" : srv.status) as LessonStatus,
         time: "",
         room: "",
+        lessonNumber: srv.lesson_number ?? 0,
       };
 
       // Upsert урока
@@ -592,7 +607,7 @@ class Store {
   private ensureLessonStub(id: ID, groupId: ID, subjectId: ID) {
     if (this.db.lessons.some((l) => l.id === id)) return;
     this.db.lessons.push({
-      id, groupId, subjectId, date: "", status: "scheduled", time: "", room: "",
+      id, groupId, subjectId, date: "", status: "scheduled", time: "", room: "", lessonNumber: 0,
     });
     this.db.seq = Math.max(this.db.seq, id + 1);
   }
@@ -744,7 +759,7 @@ class Store {
       });
     }
   }
-  addSubject(name: string, groupId?: ID): Subject {
+  addSubject(name: string, groupId?: ID, totalHours = 0): Subject {
     const existing = this.db.subjects.find(
       (s) => s.name.toLowerCase() === name.trim().toLowerCase(),
     );
@@ -753,7 +768,7 @@ class Store {
     this.db.subjects.push(s);
     this.touch();
     if (!import.meta.env.DEV && groupId != null) {
-      _post("/api/subjects", { name: name.trim(), total_hours: 0, group_id: groupId })
+      _post("/api/subjects", { name: name.trim(), total_hours: totalHours, group_id: groupId })
         .then((r) => {
           const { id } = r as { id: number };
           if (id !== s.id) {
@@ -783,11 +798,8 @@ class Store {
     g.subjectIds = g.subjectIds.filter((x) => x !== subjectId);
     this.touch();
   }
-  addScheduleItem(item: Omit<ScheduleItem, "id" | "lessonNumber">): ScheduleItem {
-    const maxNum = this.db.schedule
-      .filter((s) => s.weekday === item.weekday)
-      .reduce((m, s) => Math.max(m, s.lessonNumber), 0);
-    const it: ScheduleItem = { ...item, id: this.nextId(), lessonNumber: maxNum + 1 };
+  addScheduleItem(item: Omit<ScheduleItem, "id">): ScheduleItem {
+    const it: ScheduleItem = { ...item, id: this.nextId() };
     this.db.schedule.push(it);
     const g = this.group(item.groupId);
     if (g && !g.subjectIds.includes(item.subjectId)) g.subjectIds.push(item.subjectId);
@@ -826,14 +838,16 @@ class Store {
     }
   }
   /** Создание занятия с датой (прошлое + сегодня). Дубли разрешены.
-      PROD: POST /api/lessons, сервер назначает ID (рекониляция). */
-  async createLesson(groupId: ID, subjectId: ID, date: string): Promise<Lesson> {
+      PROD: POST /api/lessons, сервер назначает ID (рекониляция).
+      lessonNumber — явный номер пары (1–5); по умолчанию из расписания. */
+  async createLesson(groupId: ID, subjectId: ID, date: string, lessonNumber?: number): Promise<Lesson> {
     const fromSchedule = this.scheduleItemFor({ groupId, subjectId }, date);
     const lesson: Lesson = {
       id: this.nextId(), groupId, subjectId, date,
       status: "scheduled",
       time: fromSchedule?.time ?? "",
       room: fromSchedule?.room ?? "",
+      lessonNumber: lessonNumber ?? fromSchedule?.lessonNumber ?? 0,
     };
     this.db.lessons.push(lesson);
     for (const st of this.studentsOf(groupId)) {
@@ -845,6 +859,7 @@ class Store {
       try {
         const r = await _post("/api/lessons", {
           subject_id: subjectId, date, status: "scheduled",
+          lesson_number: lessonNumber ?? fromSchedule?.lessonNumber ?? null,
         }) as { id: number };
         if (r.id !== lesson.id) {
           const oldId = lesson.id;

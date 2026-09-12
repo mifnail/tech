@@ -44,6 +44,7 @@ export interface Lesson {
   status: LessonStatus;
   time: string;
   room: string;
+  lessonNumber: number; // номер пары (1..5)
 }
 
 export interface GradeRec {

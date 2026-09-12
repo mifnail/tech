@@ -47,6 +47,7 @@ export default function GroupDetailScreen({ id }: { id: number }) {
   const [addSubjectOpen, setAddSubjectOpen] = useState(false);
   const [subjectPick, setSubjectPick] = useState("");
   const [subjectNew, setSubjectNew] = useState("");
+  const [subjectHours, setSubjectHours] = useState("");
   const [removeStudentId, setRemoveStudentId] = useState<number | null>(null);
   const [removeGroupOpen, setRemoveGroupOpen] = useState(false);
   const [filter, setFilter] = useState("");
@@ -103,11 +104,14 @@ export default function GroupDetailScreen({ id }: { id: number }) {
 
   const assignSubject = () => {
     let sid = subjectPick ? Number(subjectPick) : null;
-    if (!sid && subjectNew.trim()) sid = store.addSubject(subjectNew, group.id).id;
+    if (!sid && subjectNew.trim()) {
+      sid = store.addSubject(subjectNew, group.id, Number(subjectHours) || 0).id;
+    }
     if (!sid) return;
     store.assignSubject(group.id, sid);
     setSubjectPick("");
     setSubjectNew("");
+    setSubjectHours("");
     setAddSubjectOpen(false);
     toast("Предмет добавлен группе");
   };
@@ -293,11 +297,22 @@ export default function GroupDetailScreen({ id }: { id: number }) {
                 ))}
             </Select>
           </Field>
-          <Field label="Или новый предмет">
+          <div className="h-px bg-line" />
+          <Field label="Новый предмет — название">
             <Input
               value={subjectNew}
               onChange={(e) => { setSubjectNew(e.target.value); setSubjectPick(""); }}
               placeholder="Например, Компьютерные сети"
+            />
+          </Field>
+          <Field label="Часов (всего)">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={subjectHours}
+              onChange={(e) => { setSubjectHours(e.target.value); setSubjectPick(""); }}
+              placeholder="Например, 72"
             />
           </Field>
           <Btn size="lg" onClick={assignSubject} disabled={!subjectPick && !subjectNew.trim()}>

@@ -167,6 +167,7 @@ export default function LessonRunScreen({ id }: { id: number }) {
             </div>
             <div className="text-[11px] text-muted leading-tight truncate">
               {group?.name} · {formatDot(lesson.date)}
+              {lesson.lessonNumber > 0 && <> · пара №{lesson.lessonNumber}</>}
             </div>
           </div>
           <Chip tone={lesson.status === "held" ? "success" : lesson.status === "scheduled" ? "warn" : "danger"}>

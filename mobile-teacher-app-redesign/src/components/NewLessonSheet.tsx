@@ -25,8 +25,12 @@ export function NewLessonSheet({
   const [pair, setPair] = useState<{ groupId: ID; subjectId: ID } | null>(null);
   const [month, setMonth] = useState(today.slice(0, 7));
   const [date, setDate] = useState(today);
+  const [fNum, setFNum] = useState(0); // 0 = авто (из расписания)
 
   const pairs = useMemo(() => store.scheduledPairs(), [open]);
+
+  const fromSchedule = pair ? store.scheduleItemFor(pair, date) : undefined;
+  const effNum = fNum || fromSchedule?.lessonNumber || 0;
 
   const cells = useMemo(() => {
     const [y, m] = month.split("-").map(Number);
@@ -47,12 +51,13 @@ export function NewLessonSheet({
     setPair(null);
     setDate(todayISO());
     setMonth(todayISO().slice(0, 7));
+    setFNum(0);
     onClose();
   };
 
   const create = async () => {
     if (!pair) return;
-    const lesson = await store.createLesson(pair.groupId, pair.subjectId, date);
+    const lesson = await store.createLesson(pair.groupId, pair.subjectId, date, effNum);
     close();
     onCreated(lesson);
   };
@@ -150,6 +155,33 @@ export function NewLessonSheet({
 
           <div className="mt-3 mb-4 text-center text-[12.5px] text-muted">
             {weekdayShort(date)}, {formatDot(date)}
+          </div>
+
+          <div className="mb-4">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted mb-2">
+              Номер пары
+            </div>
+            <div className="flex gap-1.5">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setFNum(n)}
+                  className={cn(
+                    "pressable flex-1 h-10 rounded-xl text-[14px] font-bold tabular-nums border",
+                    effNum === n
+                      ? "bg-accent text-accentink border-accent"
+                      : "bg-surface border-line text-ink active:bg-surface2",
+                  )}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            {fNum === 0 && fromSchedule && (
+              <div className="mt-1.5 text-[11.5px] text-muted">
+                Авто: пара №{fromSchedule.lessonNumber} из расписания
+              </div>
+            )}
           </div>
 
           <Btn size="lg" className="w-full" icon={Check} onClick={create}>
