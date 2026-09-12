@@ -66,6 +66,9 @@ export function NewLessonSheet({
     <Sheet open={open} onClose={close} title={pair ? "Дата занятия" : "Начать занятие"}>
       {!pair && (
         <div className="flex flex-col gap-2">
+          <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted mb-1">
+            Выберите предмет
+          </div>
           {pairs.length === 0 && (
             <p className="text-[14px] text-muted py-4 text-center">
               Нет предметов в расписании — добавьте пару на вкладке «Расписание».
@@ -82,7 +85,7 @@ export function NewLessonSheet({
                 className="pressable flex items-center gap-3 p-3 rounded-xl border border-line
                   bg-surface text-left active:bg-surface2"
               >
-                <AvatarTile text={g.name.slice(0, 2)} />
+                <AvatarTile text={s.name.slice(0, 2)} />
                 <span className="min-w-0">
                   <span className="block text-[14.5px] font-bold truncate">{s.name}</span>
                   <span className="block text-[12px] text-muted">{g.name}</span>

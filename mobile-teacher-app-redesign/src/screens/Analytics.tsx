@@ -1,6 +1,7 @@
 /* Аналитика (read-only): агрегация на клиенте из журнала.
    Порт ванильного App.Pages.analytics: посещаемость/среднее/динамика,
-   тепловая полоса 14 дней, по предметам, лидеры top-3 и зона риска. */
+   тепловая полоса 14 дней, по предметам, лидеры top-3 и зона риска.
+   Математика та же, что в ванилле; менялась только подача. */
 
 import { useMemo } from "react";
 import { AlertTriangle, BarChart3, Check } from "lucide-react";
@@ -8,8 +9,81 @@ import { useDB, useVersion } from "../lib/store";
 import { addDaysISO, todayISO } from "../lib/date";
 import { avgOf, formatAvg } from "../lib/grades";
 import { BigHeader, Screen } from "../components/shell";
-import { Card, EmptyState, SectionTitle, Sparkline } from "../components/ui";
+import { Card, Chip, EmptyState, SectionTitle } from "../components/ui";
 import { cn } from "../utils/cn";
+
+/* ── График динамики: оси X/Y, автомасштаб с паддингом, точки ── */
+function TrendChart({ points }: { points: { date: string; v: number }[] }) {
+  if (points.length === 0) return null;
+  const W = 340, H = 132, padL = 38, padR = 10, padT = 12, padB = 28;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const vals = points.map((p) => p.v);
+  let min = Math.min(...vals) - 0.4;
+  let max = Math.max(...vals) + 0.4;
+  if (min < 1) min = 1;
+  if (max > 5) max = 5;
+  if (max - min < 0.5) max = min + 0.5;
+
+  const pts = points.length === 1 ? [points[0], points[0]] : points;
+  const n = pts.length;
+  const x = (i: number) => padL + (i / (n - 1)) * plotW;
+  const y = (v: number) => padT + (1 - (v - min) / (max - min)) * plotH;
+
+  const line = pts
+    .map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`)
+    .join(" ");
+  const area = `${line} L${x(n - 1).toFixed(1)},${padT + plotH} L${x(0).toFixed(1)},${padT + plotH} Z`;
+
+  const fmt = (v: number) => (Math.round(v * 10) / 10).toString().replace(".", ",");
+  const fmtDate = (iso: string) => iso.slice(8) + "." + iso.slice(5, 7);
+  const yTicks = [max, (max + min) / 2, min];
+  const xTicks = [0, Math.floor((n - 1) / 2), n - 1];
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Динамика среднего балла">
+        {/* Сетка + шкала Y */}
+        {yTicks.map((t, i) => (
+          <g key={i}>
+            <line x1={padL} x2={W - padR} y1={y(t)} y2={y(t)} stroke="var(--line)" strokeWidth="1" strokeDasharray="3 3" />
+            <text x={padL - 6} y={y(t) + 3} textAnchor="end" fontSize="9" fill="var(--faint)">
+              {fmt(t)}
+            </text>
+          </g>
+        ))}
+        {/* Заливка + линия */}
+        <path d={area} fill="var(--accent)" opacity="0.12" />
+        <path d={line} fill="none" stroke="var(--accent)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+        {/* Точки занятий */}
+        {pts.map((p, i) => (
+          <circle key={i} cx={x(i)} cy={y(p.v)} r="3" fill="var(--surface)" stroke="var(--accent)" strokeWidth="2" />
+        ))}
+        {/* Подписи оси X (даты) */}
+        {xTicks.map((ti) => (
+          <text
+            key={ti}
+            x={x(ti)}
+            y={H - 8}
+            textAnchor={ti === 0 ? "start" : ti === n - 1 ? "end" : "middle"}
+            fontSize="9"
+            fill="var(--faint)"
+          >
+            {fmtDate(pts[ti].date)}
+          </text>
+        ))}
+      </svg>
+      <div className="flex items-center justify-between mt-1">
+        <span className="inline-flex items-center gap-1.5 text-[10.5px] text-faint">
+          <span className="w-2 h-2 rounded-full bg-accent" />
+          средний балл за занятие
+        </span>
+        <span className="text-[10.5px] text-faint tabular-nums">шкала {fmt(min)}–{fmt(max)}</span>
+      </div>
+    </div>
+  );
+}
 
 export default function AnalyticsScreen() {
   const db = useDB();
@@ -30,17 +104,17 @@ export default function AnalyticsScreen() {
     const present = allGrades.filter((g) => g.present).length;
     const att = marked ? Math.round((present / marked) * 100) : 0;
 
-    // Динамика среднего по занятиям (только с оценками)
-    const series: number[] = [];
+    // Динамика среднего по занятиям (только с оценками) — с датами для оси X
+    const series: { date: string; v: number }[] = [];
     for (const l of heldLessons) {
       const vals = db.grades
         .filter((g) => g.lessonId === l.id && g.present && g.value !== null)
         .map((g) => g.value);
       const la = avgOf(vals);
-      if (vals.length > 0 && la != null) series.push(la);
+      if (vals.length > 0 && la != null) series.push({ date: l.date, v: la });
     }
     const last3 = series.slice(-3);
-    const delta = last3.length >= 2 ? last3[last3.length - 1] - last3[0] : 0;
+    const delta = last3.length >= 2 ? last3[last3.length - 1].v - last3[0].v : 0;
 
     // Тепловая полоса активности за 14 дней (оценок в день)
     const byDay = new Map<string, number>();
@@ -95,7 +169,8 @@ export default function AnalyticsScreen() {
 
   const { avg, att, marked, series, delta, days, top, risk, perSubject } = model;
   const up = delta >= 0;
-  const avgColor = avg == null ? "text-faint" : avg >= 4 ? "text-g5" : avg >= 3 ? "text-g3" : "text-g2";
+  // Красный — только ниже порога ~3.4; иначе нейтральный акцент.
+  const avgColor = avg == null ? "text-faint" : avg < 3.4 ? "text-g2" : "text-accent";
 
   // Кольцо посещаемости
   const ringSize = 92, ringStroke = 8;
@@ -140,7 +215,7 @@ export default function AnalyticsScreen() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2">
-                  <span className={cn("text-[34px] font-extrabold leading-none tabular-nums", avgColor)}>
+                  <span className={cn("text-[24px] font-extrabold leading-none tabular-nums", avgColor)}>
                     {formatAvg(avg)}
                   </span>
                   <span className={cn("text-[12px] font-bold", up ? "text-g5" : "text-g2")}>
@@ -156,7 +231,7 @@ export default function AnalyticsScreen() {
             <div className="mt-3 mb-1.5 text-[10px] font-extrabold uppercase tracking-[0.06em] text-muted">
               динамика среднего балла
             </div>
-            <Sparkline points={series} width={400} height={40} className="w-full" />
+            <TrendChart points={series} />
           </Card>
 
           {/* Тепловая полоса 14 дней */}
@@ -186,17 +261,21 @@ export default function AnalyticsScreen() {
             </div>
           </Card>
 
-          {/* По предметам */}
+          {/* По предметам: чипы со средними */}
           <SectionTitle>По предметам</SectionTitle>
           {perSubject.map(({ subj, count, avg: sAvg, students: sCount }) => (
             <Card key={subj.id} className="p-3.5 mb-2">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-[14px] font-bold truncate">{subj.name}</div>
-                <div className="text-[13px] font-extrabold tabular-nums text-accent">{formatAvg(sAvg)}</div>
+                {sAvg != null ? (
+                  <Chip tone={sAvg < 3.4 ? "danger" : "accent"}>{formatAvg(sAvg)}</Chip>
+                ) : (
+                  <Chip tone="neutral">—</Chip>
+                )}
               </div>
               <div className="mt-2 h-[10px] rounded-full bg-surface2 overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-accent"
+                  className={cn("h-full rounded-full", sAvg != null && sAvg < 3.4 ? "bg-g2" : "bg-accent")}
                   style={{ width: (sAvg != null ? (sAvg / 5) * 100 : 0) + "%" }}
                 />
               </div>

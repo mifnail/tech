@@ -143,20 +143,21 @@ export default function GroupDetailScreen({ id }: { id: number }) {
         ))}
       </Card>
 
-      <SectionTitle
-        action={
-          <Btn size="sm" variant="muted" icon={Plus} onClick={() => setAddSubjectOpen(true)}>
-            Предмет
-          </Btn>
-        }
-      >
-        Предметы
-      </SectionTitle>
+      <SectionTitle>Предметы</SectionTitle>
 
-      {data.subjects.length === 0 && (
-        <Card className="p-4 mb-2 text-[13px] text-muted text-center">
-          Пока нет предметов — добавьте, чтобы вести ведомость.
+      {data.subjects.length === 0 ? (
+        <Card className="p-4 mb-2">
+          <div className="text-[13px] text-muted text-center mb-3">
+            Пока нет предметов — добавьте, чтобы вести ведомость.
+          </div>
+          <Btn size="md" variant="muted" icon={Plus} className="w-full" onClick={() => setAddSubjectOpen(true)}>
+            Добавить предмет
+          </Btn>
         </Card>
+      ) : (
+        <Btn size="md" variant="muted" icon={Plus} className="w-full mb-2" onClick={() => setAddSubjectOpen(true)}>
+          Добавить предмет
+        </Btn>
       )}
       {data.subjects.map(({ subj, count, avg }) => (
         <Card
