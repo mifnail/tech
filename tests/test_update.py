@@ -74,6 +74,26 @@ def _fake_commit_response():
     return resp
 
 
+# ── GET /api/version ────────────────────────────────────────
+
+class TestVersion:
+    def test_returns_app_version_and_static_ver(self):
+        client = _make_client()
+        rv = client.get('/api/version')
+        assert rv.status_code == 200
+        d = rv.get_json()
+        assert d['ver']  # mtime dist/index.html (кэш-бастер)
+        assert d['static_ver'] == d['ver']
+        assert d['app_version']  # semver (0.237 из VERSION/env/дефолта)
+
+    def test_app_version_is_semver(self):
+        client = _make_client()
+        d = client.get('/api/version').get_json()
+        parts = d['app_version'].split('.')
+        assert len(parts) >= 2
+        assert all(p.isdigit() for p in parts)
+
+
 # ── GET /api/update/latest ───────────────────────────────────
 
 class TestUpdateLatest:
@@ -213,6 +233,38 @@ class TestUpdateCheck:
         _reset_cache()
         with patch('urllib.request.urlopen', return_value=_fake_release_response()):
             rv = client.get('/api/update/check?current=0.99')
+        d = rv.get_json()
+        assert d['update_available'] is False
+
+    def test_equal_current_version(self):
+        """current == latest (0.237) → no update."""
+        client = _make_client()
+        _reset_cache()
+        with patch('urllib.request.urlopen', return_value=_fake_release_response()):
+            rv = client.get('/api/update/check?current=0.237')
+        d = rv.get_json()
+        assert d['update_available'] is False
+
+    def test_mtime_current_returns_true(self):
+        """Old clients send ver=mtime (single int > 1e9) — treat as old build → update available."""
+        client = _make_client()
+        _reset_cache()
+        with patch('urllib.request.urlopen', return_value=_fake_release_response()):
+            rv = client.get('/api/update/check?current=1789293279')
+        d = rv.get_json()
+        assert d['update_available'] is True
+        assert d['latest']['version'] == '0.99'
+
+    def test_mtime_current_no_release(self):
+        """Old mtime client + GitHub down → latest empty → update_available False."""
+        client = _make_client()
+        _reset_cache()
+
+        def mock_urlopen(req, **kwargs):
+            raise urllib.error.URLError('timeout')
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            rv = client.get('/api/update/check?current=1789293279')
         d = rv.get_json()
         assert d['update_available'] is False
 

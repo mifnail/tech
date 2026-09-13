@@ -19,7 +19,8 @@ export default function UpdateBanner() {
     let cancelled = false;
     (async () => {
       try {
-        const ver = await fetchVersion();
+        const v = await fetchVersion();
+        const ver = v.app_version || v.ver;
         if (!ver || cancelled) return;
         const r = await checkUpdate(ver);
         if (!r || !r.update_available || cancelled) return;

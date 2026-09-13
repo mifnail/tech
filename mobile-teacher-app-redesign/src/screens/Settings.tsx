@@ -84,8 +84,8 @@ export default function SettingsScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const ver = await fetchVersion();
-      if (!cancelled) setAppVer(ver);
+      const v = await fetchVersion();
+      if (!cancelled) setAppVer(v.app_version || v.ver);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -93,7 +93,8 @@ export default function SettingsScreen() {
   const checkUpdates = async () => {
     setChecking(true);
     try {
-      const ver = await fetchVersion();
+      const v = await fetchVersion();
+      const ver = v.app_version || v.ver;
       if (!ver) {
         toast("Ошибка проверки");
         return;

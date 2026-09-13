@@ -14,18 +14,28 @@ export interface UpdateCheckResult {
   latest: UpdateInfo;
 }
 
+export interface VersionInfo {
+  ver: string;
+  app_version: string;
+  static_ver: string;
+}
+
 const DISMISS_KEY = "update_dismiss_ts";
 const DISMISS_TTL = 24 * 3600 * 1000;
 
-/** Текущая версия статики (mtime dist/index.html) с /api/version. */
-export async function fetchVersion(): Promise<string> {
+/** Версии с /api/version: ver/static_ver = mtime dist (кэш-бастер), app_version = semver. */
+export async function fetchVersion(): Promise<VersionInfo> {
   try {
     const r = await fetch("/api/version");
-    if (!r.ok) return "";
-    const j = (await r.json()) as { ver?: string };
-    return (j && j.ver) || "";
+    if (!r.ok) return { ver: "", app_version: "", static_ver: "" };
+    const j = (await r.json()) as Partial<VersionInfo>;
+    return {
+      ver: (j && j.ver) || "",
+      app_version: (j && j.app_version) || "",
+      static_ver: (j && j.static_ver) || "",
+    };
   } catch (_) {
-    return "";
+    return { ver: "", app_version: "", static_ver: "" };
   }
 }
 

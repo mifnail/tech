@@ -40,6 +40,8 @@ class TestSPA:
         rv = client.get('/api/version')
         assert rv.status_code == 200
         assert rv.json['ver']
+        assert rv.json['static_ver'] == rv.json['ver']
+        assert rv.json['app_version']
 
 # ======================== GROUPS ========================
 

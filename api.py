@@ -175,6 +175,25 @@ def _static_ver() -> str:
 STATIC_VER = _static_ver()
 
 
+def _get_app_version() -> str:
+    """Semver приложения: файл VERSION в корне проекта → env APP_VERSION → дефолт '0.237'."""
+    try:
+        ver_file = os.path.join(os.path.dirname(__file__), 'VERSION')
+        with open(ver_file, encoding='utf-8') as f:
+            v = f.read().strip()
+            if v:
+                return v
+    except Exception:
+        pass
+    env_v = os.environ.get('APP_VERSION', '').strip()
+    if env_v:
+        return env_v
+    return '0.237'
+
+
+APP_VERSION = _get_app_version()
+
+
 @app.route('/')
 def index():
     dist_path = os.path.join(os.path.dirname(__file__),
@@ -199,7 +218,11 @@ def serve_static(path: str):
 
 @app.route('/api/version', methods=['GET'])
 def app_version():
-    return jsonify({'ver': STATIC_VER})
+    return jsonify({
+        'ver': STATIC_VER,
+        'app_version': APP_VERSION,
+        'static_ver': STATIC_VER,
+    })
 
 
 # ---- Groups ----
@@ -2228,6 +2251,18 @@ def _parse_version(v: str) -> list[int]:
     return parts or [0]
 
 
+def _looks_like_mtime(v: str) -> bool:
+    """Old clients send ver=mtime (dist/index.html mtime, e.g. 1789293279) —
+    a single integer > 1e9, not comparable to semver."""
+    v = v.strip()
+    if not v.isdigit():
+        return False
+    try:
+        return int(v) > 1_000_000_000
+    except ValueError:
+        return False
+
+
 update_bp = Blueprint('update', __name__, url_prefix='/api/update')
 
 
@@ -2247,8 +2282,17 @@ def update_check():
     current = request.args.get('current', '0.0')
     try:
         latest = _fetch_github_release()
+        fetched = True
     except Exception:
         latest = {'version': '0.0', 'url': '', 'notes': '', 'published_at': ''}
+        fetched = False
+    # Old clients send ver=mtime (single int > 1e9) — not semver. Any real
+    # release is newer than an mtime build → update available.
+    if _looks_like_mtime(current):
+        return jsonify({
+            'update_available': fetched,
+            'latest': latest,
+        })
     cur = _parse_version(current)
     lat = _parse_version(latest.get('version', '0.0'))
     return jsonify({
