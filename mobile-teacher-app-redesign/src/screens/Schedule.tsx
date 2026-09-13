@@ -1,30 +1,28 @@
-/* Расписание недели: лента дней, чёт/неч, пары, добавление и удаление. */
+/* Расписание недели: единый список по дням (пн–сб), без чёт/нечёт,
+   + ручные занятия (созданные через «Начать занятие» вне расписания). */
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { ChevronRight, Plus, Repeat, Trash2 } from "lucide-react";
 import { useDB, store } from "../lib/store";
 import {
-  addDaysISO, mondayOfWeek, parityLabel, todayISO, weekParity, weekdayOf,
+  addDaysISO, formatDotShort, mondayOfWeek, parityLabel, todayISO, weekdayOf,
 } from "../lib/date";
 import { navigate } from "../lib/router";
 import { BigHeader, Screen, AvatarTile } from "../components/shell";
 import {
-  Btn, Card, Chip, ConfirmSheet, EmptyState, Field, IconBtn,
-  Input, Segmented, Select, Sheet, useToast,
+  Btn, Card, Chip, ConfirmSheet, Field, IconBtn,
+  Input, Select, Sheet, SectionTitle, useToast,
 } from "../components/ui";
-import { CalendarOff } from "lucide-react";
-import { cn } from "../utils/cn";
 import type { ScheduleItem } from "../lib/types";
 
 const WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+const DAY_FULL = ["", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
 
 export default function ScheduleScreen() {
   const db = useDB();
   const toast = useToast();
   const today = todayISO();
 
-  const [parity, setParity] = useState<"1" | "2">(String(weekParity(today)) as "1" | "2");
-  const [selectedISO, setSelectedISO] = useState(today);
   const [actionItem, setActionItem] = useState<ScheduleItem | null>(null);
   const [removeConfirm, setRemoveConfirm] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -35,10 +33,9 @@ export default function ScheduleScreen() {
   const [fNewSubject, setFNewSubject] = useState("");
   const [fParity, setFParity] = useState("0");
   const [fLessonNum, setFLessonNum] = useState("1");
+  const [fWeekday, setFWeekday] = useState(String(weekdayOf(today)));
 
-  const monday = mondayOfWeek(selectedISO);
-  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDaysISO(monday, i)), [monday]);
-  const items = store.scheduleFor(weekdayOf(selectedISO), Number(parity) as 1 | 2);
+  const monday = mondayOfWeek(today);
 
   const openAdd = () => {
     setFGroup(db.groups[0] ? String(db.groups[0].id) : "");
@@ -46,6 +43,7 @@ export default function ScheduleScreen() {
     setFNewSubject("");
     setFParity("0");
     setFLessonNum("1");
+    setFWeekday(String(weekdayOf(today)));
     setAddOpen(true);
   };
 
@@ -56,13 +54,13 @@ export default function ScheduleScreen() {
     if (!gid || !sid) { toast("Выберите группу и предмет"); return; }
     // Мягкая валидация дублирующегося номера в тот же день — сервер остаётся источником истины.
     const num = Number(fLessonNum);
-    const dup = store.scheduleFor(weekdayOf(selectedISO), Number(parity) as 1 | 2)
-      .some((it) => it.lessonNumber === num);
+    const wd = Number(fWeekday);
+    const dup = db.schedule.some((it) => it.weekday === wd && it.lessonNumber === num);
     if (dup) toast("Номер пары уже занят в этот день — сервер решит");
     store.addScheduleItem({
       groupId: gid,
       subjectId: sid,
-      weekday: weekdayOf(selectedISO),
+      weekday: wd,
       parity: Number(fParity) as 0 | 1 | 2,
       time: "",
       room: "",
@@ -72,106 +70,111 @@ export default function ScheduleScreen() {
     toast("Пара добавлена в расписание");
   };
 
+  /** Пары дня (все чётности) по номеру пары. */
+  const itemsOf = (day: number) =>
+    db.schedule
+      .filter((it) => it.weekday === day)
+      .sort((a, b) => a.lessonNumber - b.lessonNumber || a.time.localeCompare(b.time));
+
+  /** Ручные занятия дня: созданы вручную и не имеют пары в расписании этого дня. */
+  const manualOf = (day: number) =>
+    db.lessons
+      .filter((l) => weekdayOf(l.date) === day)
+      .filter((l) => !store.scheduleItemForDay(l.groupId, l.subjectId, day))
+      .sort((a, b) => a.lessonNumber - b.lessonNumber || a.time.localeCompare(b.time));
+
   return (
     <Screen className="pb-28">
       <BigHeader
-        kicker={weekParity(today) === 1 ? "Сейчас чётная неделя" : "Сейчас нечётная неделя"}
+        kicker={`${formatDotShort(monday)} – ${formatDotShort(addDaysISO(monday, 5))}`}
         title="Расписание"
         actions={<IconBtn icon={Plus} label="Добавить пару" onClick={openAdd} className="bg-surface border border-line" />}
       />
 
-      <Segmented
-        className="mb-3"
-        value={parity}
-        onChange={setParity}
-        options={[
-          { value: "1", label: "Чётная" },
-          { value: "2", label: "Нечётная" },
-        ]}
-      />
-
-      {/* Лента дней недели */}
-      <div className="grid grid-cols-7 gap-1 mb-4">
-        {weekDays.map((iso, i) => {
-          const selected = iso === selectedISO;
-          const isToday = iso === today;
-          return (
-            <button
-              key={iso}
-              onClick={() => setSelectedISO(iso)}
-              className={cn(
-                "pressable flex flex-col items-center py-2 rounded-xl border",
-                selected
-                  ? "bg-accent border-accent text-accentink"
-                  : "bg-surface border-line",
-              )}
-            >
-              <span className={cn(
-                "text-[9.5px] font-bold uppercase tracking-wide",
-                selected ? "text-accentink opacity-80" : "text-faint",
-              )}>
-                {WD[i]}
-              </span>
-              <span className={cn(
-                "text-[15px] font-extrabold tabular-nums leading-tight",
-                !selected && isToday && "text-accent",
-              )}>
-                {Number(iso.slice(8))}
-              </span>
-              <span className={cn(
-                "w-1 h-1 rounded-full mt-0.5",
-                isToday && !selected ? "bg-accent" : selected ? "bg-accentink" : "bg-transparent",
-              )} />
-            </button>
-          );
-        })}
-      </div>
-
-      {items.length === 0 && (
-        <Card>
-          <EmptyState
-            icon={CalendarOff}
-            title="Пар нет"
-            hint={`На ${WD[weekdayOf(selectedISO) - 1].toLowerCase()} (${parity === "1" ? "чётная" : "нечётная"} нед.) ничего не запланировано.`}
-          >
-            <Btn icon={Plus} onClick={openAdd}>Добавить пару</Btn>
-          </EmptyState>
-        </Card>
-      )}
-
-      {items.map((it) => {
-        const g = store.group(it.groupId);
-        const s = store.subject(it.subjectId);
-        if (!g || !s) return null;
+      {[1, 2, 3, 4, 5, 6].map((day) => {
+        const items = itemsOf(day);
+        const manual = manualOf(day);
+        const isToday = day === weekdayOf(today);
         return (
-          <Card
-            key={it.id}
-            className="p-3.5 mb-2 flex items-center gap-3"
-            onClick={() => setActionItem(it)}
-          >
-            <div className="w-[44px] shrink-0 text-center">
-              <div className="text-[15px] font-extrabold tabular-nums leading-none">
-                №{it.lessonNumber}
-              </div>
-              <div className="mt-0.5 text-[9.5px] font-bold uppercase tracking-wide text-faint">
-                пара
-              </div>
-            </div>
-            <div className="w-px self-stretch bg-line" />
-            <AvatarTile text={g.name.slice(0, 2)} className="w-9 h-9 text-[11px]" />
-            <div className="min-w-0 flex-1">
-              <div className="text-[14.5px] font-bold truncate">{s.name}</div>
-              <div className="text-[12px] text-muted truncate">
-                {g.name}
-              </div>
-            </div>
-            {it.parity !== 0 && (
-              <Chip tone="neutral" className="normal-case">
-                <Repeat size={10} />{parityLabel(it.parity)}
-              </Chip>
+          <div key={day}>
+            <SectionTitle action={isToday ? <Chip tone="accent">сегодня</Chip> : undefined}>
+              {DAY_FULL[day]}
+            </SectionTitle>
+
+            {items.map((it) => {
+              const g = store.group(it.groupId);
+              const s = store.subject(it.subjectId);
+              if (!g || !s) return null;
+              return (
+                <Card
+                  key={it.id}
+                  className="p-3.5 mb-2 flex items-center gap-3"
+                  onClick={() => setActionItem(it)}
+                >
+                  <div className="w-[44px] shrink-0 text-center">
+                    <div className="text-[15px] font-extrabold tabular-nums leading-none">
+                      №{it.lessonNumber}
+                    </div>
+                    <div className="mt-0.5 text-[9.5px] font-bold uppercase tracking-wide text-faint">
+                      пара
+                    </div>
+                  </div>
+                  <div className="w-px self-stretch bg-line" />
+                  <AvatarTile text={g.name.slice(0, 2)} className="w-9 h-9 text-[11px]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[14.5px] font-bold truncate">{s.name}</div>
+                    <div className="text-[12px] text-muted truncate">
+                      {g.name}
+                    </div>
+                  </div>
+                  {it.parity !== 0 && (
+                    <Chip tone="neutral" className="normal-case">
+                      <Repeat size={10} />{parityLabel(it.parity)}
+                    </Chip>
+                  )}
+                  <ChevronRight size={16} className="text-faint shrink-0" />
+                </Card>
+              );
+            })}
+
+            {manual.length > 0 && (
+              <>
+                {manual.map((l) => {
+                  const g = store.group(l.groupId);
+                  const s = store.subject(l.subjectId);
+                  if (!g || !s) return null;
+                  return (
+                    <Card
+                      key={l.id}
+                      className="p-3.5 mb-2 flex items-center gap-3"
+                      onClick={() => navigate("/lesson/" + l.id)}
+                    >
+                      <div className="w-[44px] shrink-0 text-center">
+                        <div className="text-[15px] font-extrabold tabular-nums leading-none">
+                          {l.lessonNumber > 0 ? `№${l.lessonNumber}` : "—"}
+                        </div>
+                        <div className="mt-0.5 text-[9.5px] font-bold uppercase tracking-wide text-faint">
+                          пара
+                        </div>
+                      </div>
+                      <div className="w-px self-stretch bg-line" />
+                      <AvatarTile text={g.name.slice(0, 2)} className="w-9 h-9 text-[11px]" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[14.5px] font-bold truncate">{s.name}</div>
+                        <div className="text-[12px] text-muted truncate">{g.name}</div>
+                      </div>
+                      <Chip tone="accent">вручную</Chip>
+                      <ChevronRight size={16} className="text-faint shrink-0" />
+                    </Card>
+                  );
+                })}
+              </>
             )}
-            <ChevronRight size={16} className="text-faint shrink-0" />
-          </Card>
+
+            {items.length === 0 && manual.length === 0 && (
+              <div className="px-1 py-1.5 text-[12.5px] text-faint">Пар нет</div>
+            )}
+          </div>
         );
       })}
 
@@ -185,9 +188,8 @@ export default function ScheduleScreen() {
           const g = store.group(actionItem.groupId);
           const s = store.subject(actionItem.subjectId);
           const lesson = store
-            .lessonsOn(selectedISO)
+            .lessonsOn(today)
             .find((l) => l.groupId === actionItem.groupId && l.subjectId === actionItem.subjectId);
-          const canCreate = selectedISO <= today;
           return (
             <div className="flex flex-col gap-1.5">
               <div className="mb-3 text-[14px]">
@@ -199,19 +201,18 @@ export default function ScheduleScreen() {
                   className="justify-start"
                   onClick={() => { setActionItem(null); navigate("/lesson/" + lesson.id); }}
                 >
-                  Открыть занятие за этот день
+                  Открыть занятие за сегодня
                 </Btn>
               ) : (
                 <Btn
                   className="justify-start"
-                  disabled={!canCreate}
                   onClick={async () => {
-                    const l = await store.createLesson(actionItem.groupId, actionItem.subjectId, selectedISO);
+                    const l = await store.createLesson(actionItem.groupId, actionItem.subjectId, today);
                     setActionItem(null);
                     navigate("/lesson/" + l.id);
                   }}
                 >
-                  {canCreate ? "Создать занятие на этот день" : "День ещё не наступил"}
+                  Создать занятие на сегодня
                 </Btn>
               )}
               <Btn
@@ -250,7 +251,14 @@ export default function ScheduleScreen() {
               placeholder="Например, Компьютерные сети"
             />
           </Field>
-          <Field label={`Повтор (${WD[weekdayOf(selectedISO) - 1].toLowerCase()})`}>
+          <Field label="День недели">
+            <Select value={fWeekday} onChange={(e) => setFWeekday(e.target.value)}>
+              {[1, 2, 3, 4, 5, 6].map((d) => (
+                <option key={d} value={d}>{DAY_FULL[d]}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={`Повтор (${WD[Number(fWeekday) - 1].toLowerCase()})`}>
             <Select value={fParity} onChange={(e) => setFParity(e.target.value)}>
               <option value="0">Каждую неделю</option>
               <option value="1">Только чётные</option>

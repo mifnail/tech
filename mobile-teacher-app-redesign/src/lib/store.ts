@@ -693,6 +693,12 @@ class Store {
         it.weekday === wd && (it.parity === 0 || it.parity === par),
     );
   }
+  /** Пара «предмет—группа» в расписании на день недели (без учёта чёт/нечёт). */
+  scheduleItemForDay(groupId: ID, subjectId: ID, weekday: number): ScheduleItem | undefined {
+    return this.db.schedule.find(
+      (it) => it.groupId === groupId && it.subjectId === subjectId && it.weekday === weekday,
+    );
+  }
 
   /* ── Мутации ───────────────────────────────────────────── */
   addGroup(name: string): Group {
