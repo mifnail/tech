@@ -3,7 +3,7 @@
 
 import { useRef, useState } from "react";
 import {
-  Bot, Check, Coffee, Copy, DatabaseBackup, Download, Moon, RefreshCw,
+  Bot, Check, Coffee, Copy, Download, Moon, RefreshCw,
   Send, Sun, Unlink, Upload,
 } from "lucide-react";
 import { useDB, store } from "../lib/store";
@@ -69,7 +69,6 @@ export default function SettingsScreen() {
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [tgDraft, setTgDraft] = useState<string | null>(null);
   const [maxDraft, setMaxDraft] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const dbFileRef = useRef<HTMLInputElement>(null);
   const [dropTgOpen, setDropTgOpen] = useState(false);
   const [dropMaxOpen, setDropMaxOpen] = useState(false);
@@ -171,32 +170,6 @@ export default function SettingsScreen() {
     } catch (_) {
       toast("Ошибка сети");
     }
-  };
-
-  const downloadBackup = () => {
-    try {
-      const blob = new Blob([store.exportBackup()], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "lessons-backup.json";
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1200);
-      toast("Бэкап сохранён");
-    } catch (_) {
-      toast("Не удалось сохранить бэкап");
-    }
-  };
-
-  const restore = (file: File | null) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const ok = store.importBackup(String(reader.result || ""));
-      toast(ok ? "Данные восстановлены" : "Файл повреждён или не является бэкапом");
-    };
-    reader.readAsText(file);
   };
 
   return (
@@ -373,29 +346,6 @@ export default function SettingsScreen() {
               Отвязать
             </Btn>
           )}
-        </div>
-      </Card>
-
-      <SectionTitle>Бэкап</SectionTitle>
-      <Card className="p-4">
-        <div className="flex flex-col gap-2">
-          <Btn variant="muted" icon={DatabaseBackup} onClick={downloadBackup}>
-            Скачать бэкап (JSON)
-          </Btn>
-          <Btn variant="outline" icon={Upload} onClick={() => fileRef.current?.click()}>
-            Восстановить из файла
-          </Btn>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            onChange={(e) => { restore(e.target.files?.[0] ?? null); e.target.value = ""; }}
-          />
-          <p className="text-[11.5px] text-faint leading-snug mt-1">
-            Копия содержит токены ботов и привязки студентов — не пересылайте её третьим лицам.
-            Перед восстановлением текущие данные лучше сохранить.
-          </p>
         </div>
       </Card>
 

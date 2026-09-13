@@ -1,12 +1,11 @@
 /* Ведомость по паре «группа × предмет»: сетка студенты × даты,
    динамика среднего балла, распределение оценок, экспорт .xlsx. */
 
-import { useMemo } from "react";
-import { Download, Info } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Download, Info, Loader2 } from "lucide-react";
 import { useDB, useVersion, store } from "../lib/store";
-import { formatDot, formatDotShort } from "../lib/date";
+import { formatDotShort } from "../lib/date";
 import { formatAvg, avgOf } from "../lib/grades";
-import { downloadXlsx, type Cell } from "../lib/xlsx";
 import { navigate } from "../lib/router";
 import { BackHeader, Screen } from "../components/shell";
 import { Btn, Card, Sparkline, GradeChip, useToast } from "../components/ui";
@@ -16,6 +15,7 @@ export default function StatementScreen({ groupId, subjectId }: { groupId: numbe
   const db = useDB();
   const ver = useVersion();
   const toast = useToast();
+  const [exporting, setExporting] = useState(false);
   const group = store.group(groupId);
   const subject = store.subject(subjectId);
 
@@ -60,27 +60,34 @@ export default function StatementScreen({ groupId, subjectId }: { groupId: numbe
     );
   }
 
-  const exportXlsx = () => {
-    const header: Cell[] = [
-      "Студент",
-      ...model.lessons.map((l) => formatDot(l.date)),
-      "Средний балл",
-    ];
-    const body: Cell[][] = model.rows.map((r) => [
-      r.s.name,
-      ...r.cells.map((c): Cell => {
-        if (!c) return "";
-        if (!c.present) return "н";
-        return c.value === null ? "" : c.value;
-      }),
-      r.avg === null ? "—" : Math.round(r.avg * 100) / 100,
-    ]);
-    const ok = downloadXlsx(
-      `Ведомость_${group.name}_${subject.name.replace(/[\\/:*?"<>|]/g, "_")}.xlsx`,
-      `${group.name} · ${subject.name}`.slice(0, 31),
-      [header, ...body],
-    );
-    toast(ok ? "Ведомость сохранена (.xlsx)" : "Не удалось сохранить файл");
+  // Серверный экспорт (как в проде): POST share → файл в Загрузки + шторка на Android.
+  // На десктопе share вернёт 400 (ожидаемо, только Android) — уходим в desktop-фолбэк:
+  // прямая ссылка GET /api/export/grades/<id>.xlsx через временный <a download>.
+  const exportXlsx = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const r = await fetch(`/api/export/grades/${subjectId}/share`, { method: "POST" });
+      if (!r.ok) throw new Error("share unavailable");
+      const j = (await r.json()) as { shared?: boolean; error?: string };
+      if (j.shared === false) {
+        toast(`Файл сохранён, шторка не открылась: ${j.error || ""}`);
+        return;
+      }
+      toast("Шторка открыта");
+    } catch (_) {
+      // Desktop fallback: share недоступен вне Android — скачиваем .xlsx напрямую
+      const a = document.createElement("a");
+      a.href = `/api/export/grades/${subjectId}.xlsx`;
+      a.download = `Ведомость_${group.name}_${subject.name.replace(/[\\/:*?"<>|]/g, "_")}.xlsx`;
+      a.target = "_blank";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 1500);
+      toast("Ведомость сохранена (.xlsx)");
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -90,8 +97,15 @@ export default function StatementScreen({ groupId, subjectId }: { groupId: numbe
         sub={`${group.name} · ведомость`}
         fallback={"/group/" + groupId}
         actions={
-          <Btn size="sm" variant="muted" icon={Download} onClick={exportXlsx}>
-            .xlsx
+          <Btn
+            size="sm"
+            variant="muted"
+            icon={exporting ? Loader2 : Download}
+            iconClassName={exporting ? "animate-spin" : undefined}
+            disabled={exporting}
+            onClick={exportXlsx}
+          >
+            {exporting ? "…" : ".xlsx"}
           </Btn>
         }
       />

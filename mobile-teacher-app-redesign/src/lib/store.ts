@@ -1124,21 +1124,6 @@ class Store {
     await this.reloadCurator(groupId);
   }
 
-  exportBackup(): string {
-    return JSON.stringify(this.db, null, 2);
-  }
-  importBackup(json: string): boolean {
-    try {
-      const parsed = JSON.parse(json) as DB;
-      if (!parsed.groups || !parsed.students || !parsed.lessons || !parsed.settings) return false;
-      this.db = parsed;
-      this.persist();
-      this.touch();
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
   resetDemo() {
     this.db = seed();
     this.persist();

@@ -16,10 +16,11 @@ interface BtnProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: BtnVariant;
   size?: "lg" | "md" | "sm";
   icon?: LucideIcon;
+  iconClassName?: string;
 }
 
 export function Btn({
-  variant = "primary", size = "md", icon: Icon, className, children, ...rest
+  variant = "primary", size = "md", icon: Icon, iconClassName, className, children, ...rest
 }: BtnProps) {
   const styles: Record<BtnVariant, string> = {
     primary: "bg-accent text-accentink active:bg-accentdeep",
@@ -42,7 +43,7 @@ export function Btn({
       )}
       {...rest}
     >
-      {Icon && <Icon size={size === "sm" ? 15 : 17} strokeWidth={2.2} />}
+      {Icon && <Icon size={size === "sm" ? 15 : 17} strokeWidth={2.2} className={iconClassName} />}
       {children}
     </button>
   );
