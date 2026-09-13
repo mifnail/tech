@@ -144,7 +144,7 @@ export default function TodayScreen() {
           { label: "Студентов", value: String(stats.students), sub: `${stats.groups} гр.` },
           { label: "Ср. балл недели", value: formatAvg(stats.avg), sub: "домашняя сводка" },
           {
-            label: "Должники", value: String(stats.debtors), sub: "ср. ниже 3.5",
+            label: "Должники", value: String(stats.debtors), sub: "ср. ниже 3",
             tone: stats.debtors > 0 ? "text-g2" : "",
             tap: true,
           },
