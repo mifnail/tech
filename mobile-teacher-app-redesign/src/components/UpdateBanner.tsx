@@ -42,6 +42,7 @@ export default function UpdateBanner() {
     try {
       const u = await downloadUpdate();
       setUri(u);
+      if (info?.version) markInstalled(info.version);
     } catch (_) { /* молча: кнопка остаётся «Скачать» */ }
     setBusy(false);
   };
