@@ -1,11 +1,11 @@
 /* Расписание недели: единый список по дням (пн–сб), без чёт/нечёт,
    + ручные занятия (созданные через «Начать занятие» вне расписания). */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronRight, Plus, Repeat, Trash2 } from "lucide-react";
 import { useDB, store } from "../lib/store";
 import {
-  addDaysISO, formatDotShort, mondayOfWeek, parityLabel, todayISO, weekdayOf,
+  addDaysISO, formatDotShort, mondayOfWeek, parityLabel, todayISO, weekdayOf, weekdayShort,
 } from "../lib/date";
 import { navigate } from "../lib/router";
 import { BigHeader, Screen, AvatarTile } from "../components/shell";
@@ -13,6 +13,7 @@ import {
   Btn, Card, Chip, ConfirmSheet, Field, IconBtn,
   Input, Select, Sheet, SectionTitle, useToast,
 } from "../components/ui";
+import { cn } from "../utils/cn";
 import type { ScheduleItem } from "../lib/types";
 
 const WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -26,6 +27,7 @@ export default function ScheduleScreen() {
   const [actionItem, setActionItem] = useState<ScheduleItem | null>(null);
   const [removeConfirm, setRemoveConfirm] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [selectedISO, setSelectedISO] = useState(today);
 
   // Форма добавления
   const [fGroup, setFGroup] = useState("");
@@ -36,6 +38,23 @@ export default function ScheduleScreen() {
   const [fWeekday, setFWeekday] = useState(String(weekdayOf(today)));
 
   const monday = mondayOfWeek(today);
+
+  /** Лента дат: две недели от понедельника текущей недели (горизонтальный скролл). */
+  const days = useMemo(
+    () => Array.from({ length: 14 }, (_, i) => addDaysISO(monday, i)),
+    [monday],
+  );
+
+  /** Тап по дате → переход к занятиям этого дня (первое занятие дня). */
+  const goToDay = (iso: string) => {
+    setSelectedISO(iso);
+    const lessons = store.lessonsOn(iso);
+    if (lessons.length > 0) {
+      navigate("/lesson/" + lessons[0].id);
+    } else {
+      toast("В этот день занятий нет");
+    }
+  };
 
   const openAdd = () => {
     setFGroup(db.groups[0] ? String(db.groups[0].id) : "");
@@ -90,6 +109,45 @@ export default function ScheduleScreen() {
         title="Расписание"
         actions={<IconBtn icon={Plus} label="Добавить пару" onClick={openAdd} className="bg-surface border border-line" />}
       />
+
+      {/* Лента дат: горизонтальный скролл, тап → занятия дня */}
+      <div className="-mx-4 px-4 mb-4 overflow-x-auto no-scrollbar">
+        <div className="flex gap-1.5 min-w-max">
+          {days.map((iso) => {
+            const selected = iso === selectedISO;
+            const isToday = iso === today;
+            return (
+              <button
+                key={iso}
+                onClick={() => goToDay(iso)}
+                className={cn(
+                  "pressable flex flex-col items-center w-[52px] py-2 rounded-xl border shrink-0",
+                  selected
+                    ? "bg-accent border-accent text-accentink"
+                    : "bg-surface border-line",
+                )}
+              >
+                <span className={cn(
+                  "text-[9.5px] font-bold uppercase tracking-wide",
+                  selected ? "text-accentink opacity-80" : "text-faint",
+                )}>
+                  {weekdayShort(iso)}
+                </span>
+                <span className={cn(
+                  "text-[15px] font-extrabold tabular-nums leading-tight",
+                  !selected && isToday && "text-accent",
+                )}>
+                  {Number(iso.slice(8))}
+                </span>
+                <span className={cn(
+                  "w-1 h-1 rounded-full mt-0.5",
+                  isToday && !selected ? "bg-accent" : selected ? "bg-accentink" : "bg-transparent",
+                )} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {[1, 2, 3, 4, 5, 6].map((day) => {
         const items = itemsOf(day);
