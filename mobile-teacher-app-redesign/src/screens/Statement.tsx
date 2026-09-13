@@ -164,6 +164,9 @@ export default function StatementScreen({ groupId, subjectId }: { groupId: numbe
                       tracking-[0.06em] text-[10px] text-muted px-3 py-2.5 min-w-[132px] max-w-[132px]">
                       Студент
                     </th>
+                    <th className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.06em] text-muted">
+                      Ср.
+                    </th>
                     {model.lessons.map((l) => (
                       <th key={l.id} className="px-1 py-1.5 font-bold text-muted">
                         <button
@@ -179,9 +182,6 @@ export default function StatementScreen({ groupId, subjectId }: { groupId: numbe
                         </button>
                       </th>
                     ))}
-                    <th className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.06em] text-muted">
-                      Ср.
-                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -193,6 +193,13 @@ export default function StatementScreen({ groupId, subjectId }: { groupId: numbe
                       )}>
                         {r.s.name}
                       </td>
+                      <td className="px-2.5 py-1.5 text-center font-extrabold tabular-nums border-t border-line">
+                        <span className={cn(
+                          r.avg === null ? "text-faint" : r.avg >= 4 ? "text-g5" : r.avg >= 3.5 ? "text-g3" : "text-g2",
+                        )}>
+                          {formatAvg(r.avg)}
+                        </span>
+                      </td>
                       {r.cells.map((c, ci) => (
                         <td key={ci} className="px-0.5 py-1.5 text-center border-t border-line">
                           {c === null || (c.present && c.value === null) ? (
@@ -202,13 +209,6 @@ export default function StatementScreen({ groupId, subjectId }: { groupId: numbe
                           )}
                         </td>
                       ))}
-                      <td className="px-2.5 py-1.5 text-center font-extrabold tabular-nums border-t border-line">
-                        <span className={cn(
-                          r.avg === null ? "text-faint" : r.avg >= 4 ? "text-g5" : r.avg >= 3.5 ? "text-g3" : "text-g2",
-                        )}>
-                          {formatAvg(r.avg)}
-                        </span>
-                      </td>
                     </tr>
                   ))}
                 </tbody>

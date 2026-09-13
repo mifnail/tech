@@ -180,6 +180,7 @@ export default function SettingsScreen() {
         return;
       }
       toast("Данные восстановлены. Автобэкап прежней базы сохранён в Загрузки");
+      await store.reloadAll();
     } catch (_) {
       toast("Ошибка сети");
     }
@@ -375,7 +376,7 @@ export default function SettingsScreen() {
             ref={dbFileRef}
             type="file"
             accept=".db,application/x-sqlite3"
-            className="hidden"
+            className="sr-only"
             onChange={(e) => { onPickDb(e.target.files?.[0] ?? null); e.target.value = ""; }}
           />
           <p className="text-[11.5px] text-faint leading-snug mt-1">

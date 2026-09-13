@@ -1134,6 +1134,12 @@ class Store {
     await this.reloadCurator(groupId);
   }
 
+  /** Полная перезагрузка данных с сервера (после restore и т.д.). */
+  async reloadAll() {
+    if (import.meta.env.DEV) return;
+    await this.loadFromApi();
+  }
+
   resetDemo() {
     this.db = seed();
     this.persist();

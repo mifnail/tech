@@ -42,6 +42,14 @@ def _ensure_db(db: Optional[Database]) -> Database:
     return db if db is not None else Database()
 
 
+def _avg_str(grades: dict, student_id: int) -> str:
+    """Среднее студента по числовым оценкам 2–5 (паритет с db.average_grades), 2 знака; «—» если нет."""
+    vals = [int(v) for v in grades.get(str(student_id), {}).values() if v in ('2', '3', '4', '5')]
+    if not vals:
+        return "—"
+    return f"{sum(vals) / len(vals):.2f}"
+
+
 # ──────────────────────────────── PDF ────────────────────────────────
 
 
@@ -77,10 +85,10 @@ def export_grades_pdf(subject_id: int, db: Optional[Database] = None) -> bytes:
     summary = db.subject_summary(subject_id)
     subj_name = dict(summary)['name'] if summary else f'Предмет #{subject_id}'
     students, lessons, grades = db.subject_gradebook(subject_id)
-    headers = ['Студент'] + [str(i + 1) for i in range(len(lessons))]
+    headers = ['Студент', 'Среднее'] + [str(i + 1) for i in range(len(lessons))]
     rows = []
     for s in students:
-        row = [f"{s['last_name']} {s['first_name']}"]
+        row = [f"{s['last_name']} {s['first_name']}", _avg_str(grades, s['id'])]
         for l in lessons:
             raw = grades.get(str(s['id']), {}).get(str(l['id']))
             if raw is None:
@@ -159,10 +167,10 @@ def _gradebook_table(subject_id: int, db: Database) -> tuple[str, list[str], lis
         d = l.get('date') or ''
         d2 = f"{d[8:10]}.{d[5:7]}.{d[:4]}" if len(d) >= 10 else d
         hdr.append(f"{i + 1} {d2}".strip() if d2 else str(i + 1))
-    headers = ['Студент'] + hdr
+    headers = ['Студент', 'Среднее'] + hdr
     rows = []
     for s in students:
-        row = [f"{s['last_name']} {s['first_name']}"]
+        row = [f"{s['last_name']} {s['first_name']}", _avg_str(grades, s['id'])]
         for l in lessons:
             raw = grades.get(str(s['id']), {}).get(str(l['id']))
             if raw is None:
@@ -242,8 +250,8 @@ def export_student_grades_xlsx(subject_id: int, student_id: int, db: Optional[Da
         d = l.get('date') or ''
         d2 = f"{d[8:10]}.{d[5:7]}.{d[:4]}" if len(d) >= 10 else d
         hdr.append(f"{i + 1} {d2}".strip() if d2 else str(i + 1))
-    headers = ['Студент'] + hdr
-    row = [f"{target['last_name']} {target['first_name']}"]
+    headers = ['Студент', 'Среднее'] + hdr
+    row = [f"{target['last_name']} {target['first_name']}", _avg_str(grades, target['id'])]
     for l in lessons:
         raw = grades.get(str(target['id']), {}).get(str(l['id']))
         if raw is None:
@@ -290,10 +298,10 @@ def export_grades_csv(subject_id: int, filepath: Optional[str] = None, db: Optio
     with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
         writer = csv.writer(f)
         writer.writerow([subj_name])
-        header = ['Студент'] + [str(i + 1) for i in range(len(lessons))]
+        header = ['Студент', 'Среднее'] + [str(i + 1) for i in range(len(lessons))]
         writer.writerow(header)
         for s in students:
-            row = [f"{s['last_name']} {s['first_name']}"]
+            row = [f"{s['last_name']} {s['first_name']}", _avg_str(grades, s['id'])]
             for l in lessons:
                 raw = grades.get(str(s['id']), {}).get(str(l['id']))
                 if raw is None:
