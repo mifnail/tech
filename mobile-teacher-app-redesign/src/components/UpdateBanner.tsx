@@ -3,8 +3,8 @@
    Ошибки сети — молча, как в ванили. */
 
 import { useEffect, useState } from "react";
-import { Download, Loader2 } from "lucide-react";
-import { Btn, Card } from "./ui";
+import { ChevronRight, Download, Loader2 } from "lucide-react";
+import { Btn, Card, Sheet } from "./ui";
 import {
   checkUpdate, dismissUpdate, downloadUpdate, fetchVersion,
   installUpdate, isAlreadyInstalled, isUpdateDismissed, markInstalled,
@@ -14,6 +14,7 @@ export default function UpdateBanner() {
   const [info, setInfo] = useState<{ version: string; notes: string } | null>(null);
   const [uri, setUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,35 +62,50 @@ export default function UpdateBanner() {
   };
 
   return (
-    <Card className="p-3.5 mb-3 border-l-[3px] border-l-accent">
-      <div className="text-[14px] font-bold leading-snug">
-        Доступно обновление {info.version}
-        {info.notes ? " · " + info.notes : ""}
-      </div>
-      <div className="flex gap-2 mt-2.5">
-        {uri === null ? (
-          <Btn
-            size="sm"
-            icon={busy ? Loader2 : Download}
-            iconClassName={busy ? "animate-spin" : undefined}
-            disabled={busy}
-            onClick={onDownload}
-          >
-            {busy ? "Загрузка…" : "Скачать"}
-          </Btn>
+    <>
+      <Card
+        className="p-3.5 mb-3 border-l-[3px] border-l-accent cursor-pointer active:bg-surface2 flex items-center justify-between"
+        onClick={() => setSheetOpen(true)}
+      >
+        <div className="text-[14px] font-bold leading-snug">
+          Доступно обновление {info.version}
+        </div>
+        <ChevronRight size={16} className="text-faint shrink-0 ml-2" />
+      </Card>
+
+      <Sheet open={sheetOpen} onClose={() => setSheetOpen(false)} title={`Обновление ${info.version}`}>
+        {info.notes ? (
+          <p className="text-[14px] text-muted leading-relaxed whitespace-pre-wrap mb-5">
+            {info.notes}
+          </p>
         ) : (
-          <Btn
-            size="sm"
-            icon={busy ? Loader2 : Download}
-            iconClassName={busy ? "animate-spin" : undefined}
-            disabled={busy}
-            onClick={onInstall}
-          >
-            {busy ? "Установка…" : "Установить"}
-          </Btn>
+          <p className="text-[14px] text-muted mb-5">Краткое описание изменений появится здесь.</p>
         )}
-        <Btn size="sm" variant="muted" onClick={onDismiss}>Скрыть</Btn>
-      </div>
-    </Card>
+        <div className="flex gap-2.5">
+          {uri === null ? (
+            <Btn
+              icon={busy ? Loader2 : Download}
+              iconClassName={busy ? "animate-spin" : undefined}
+              disabled={busy}
+              className="flex-1"
+              onClick={onDownload}
+            >
+              {busy ? "Загрузка…" : "Скачать"}
+            </Btn>
+          ) : (
+            <Btn
+              icon={busy ? Loader2 : Download}
+              iconClassName={busy ? "animate-spin" : undefined}
+              disabled={busy}
+              className="flex-1"
+              onClick={onInstall}
+            >
+              {busy ? "Установка…" : "Установить"}
+            </Btn>
+          )}
+          <Btn variant="muted" className="flex-1" onClick={onDismiss}>Скрыть</Btn>
+        </div>
+      </Sheet>
+    </>
   );
 }
