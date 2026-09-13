@@ -2,8 +2,8 @@
 
 export type GradeValue = number | null;
 
-/** Порядок перебора вперёд (правая половина строки): — → 0 → 5 → 4 → 3 → 2 */
-export const CYCLE: GradeValue[] = [null, 0, 5, 4, 3, 2];
+/** Порядок перебора вперёд (правая половина строки): . → 5 → 4 → 3 → 2 (Н — отдельно через toggle, 0 не используется) */
+export const CYCLE: GradeValue[] = [null, 5, 4, 3, 2];
 
 export function nextGrade(v: GradeValue): GradeValue {
   const i = CYCLE.indexOf(v);

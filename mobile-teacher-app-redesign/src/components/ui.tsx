@@ -120,7 +120,7 @@ const gradeStyles: Record<GradeTone, string> = {
   g4: "bg-g4bg text-g4",
   g3: "bg-g3bg text-g3",
   g2: "bg-g2bg text-g2",
-  na: "bg-nabg text-na",
+  na: "bg-surface2 text-faint border border-line",
   none: "bg-transparent text-faint border border-dashed border-linestrong",
 };
 
