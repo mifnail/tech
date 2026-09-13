@@ -1,9 +1,9 @@
 /* «Ещё»: профиль, тема, боты (Telegram / MAX), код преподавателя,
    бэкап/восстановление. */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Bot, Check, Coffee, Copy, Download, Moon, RefreshCw,
+  Bot, Check, Coffee, Copy, Download, Loader2, Moon, RefreshCw,
   Send, Sun, Unlink, Upload,
 } from "lucide-react";
 import { useDB, store } from "../lib/store";
@@ -13,6 +13,7 @@ import {
   SectionTitle, Segmented, useToast,
 } from "../components/ui";
 import { cn } from "../utils/cn";
+import { checkUpdate, fetchVersion } from "../lib/update";
 
 function copyText(text: string): boolean {
   try {
@@ -75,6 +76,42 @@ export default function SettingsScreen() {
   const [unbindTeacherOpen, setUnbindTeacherOpen] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [restoreOpen, setRestoreOpen] = useState(false);
+
+  /* ── О приложении: версия с /api/version + форс-проверка обновлений ── */
+  const [appVer, setAppVer] = useState("");
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ver = await fetchVersion();
+      if (!cancelled) setAppVer(ver);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const checkUpdates = async () => {
+    setChecking(true);
+    try {
+      const ver = await fetchVersion();
+      if (!ver) {
+        toast("Ошибка проверки");
+        return;
+      }
+      const r = await checkUpdate(ver);
+      if (!r) {
+        toast("Ошибка проверки");
+      } else if (r.update_available) {
+        toast("Обновление доступно");
+      } else {
+        toast("Вы используете последнюю версию");
+      }
+    } catch (_) {
+      toast("Ошибка проверки");
+    } finally {
+      setChecking(false);
+    }
+  };
 
   /* ── Боты: тумблеры вкл/выкл (POST enabled → перезагрузка среза) ── */
   const toggleTg = async (v: boolean) => {
@@ -390,6 +427,42 @@ export default function SettingsScreen() {
         >
           Поддержать
         </Btn>
+      </Card>
+
+      <SectionTitle>О приложении</SectionTitle>
+      <Card className="p-4">
+        <div className="flex flex-col gap-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[13px] text-muted">Версия</span>
+            <span className="text-[13.5px] font-bold tabular-nums">{appVer || "—"}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[13px] text-muted">Сборка</span>
+            <span className="text-[13.5px] font-bold tabular-nums">{appVer || "Реакт-версия"}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[13px] text-muted">Платформа</span>
+            <span className="text-[13.5px] font-bold">Android</span>
+          </div>
+          <div className="pt-2.5 border-t border-line flex flex-col gap-2">
+            <Btn
+              variant="muted"
+              className="w-full"
+              onClick={() => window.open("https://github.com/mifnail/tech", "_blank")}
+            >
+              Исходный код
+            </Btn>
+            <Btn
+              variant="outline"
+              icon={checking ? Loader2 : RefreshCw}
+              iconClassName={checking ? "animate-spin" : undefined}
+              disabled={checking}
+              onClick={checkUpdates}
+            >
+              Проверить обновления
+            </Btn>
+          </div>
+        </div>
       </Card>
 
       {/* Подтверждения деструктивных действий */}

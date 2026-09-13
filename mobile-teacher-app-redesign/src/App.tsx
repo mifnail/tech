@@ -4,6 +4,7 @@
 import { useRoute } from "./lib/router";
 import { ToastProvider } from "./components/ui";
 import { BottomNav } from "./components/shell";
+import UpdateBanner from "./components/UpdateBanner";
 import TodayScreen from "./screens/Today";
 import GroupsScreen from "./screens/Groups";
 import GroupDetailScreen from "./screens/GroupDetail";
@@ -62,6 +63,11 @@ export default function App() {
   return (
     <ToastProvider>
       <div className="mx-auto w-full max-w-[480px] min-h-screen border-x border-line bg-bg">
+        {showNav && (root === "today" || root === "groups") && (
+          <div className="px-4 pt-3">
+            <UpdateBanner />
+          </div>
+        )}
         <RouterView seg={seg} />
         {showNav && <BottomNav segment={root} />}
       </div>
