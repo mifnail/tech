@@ -369,16 +369,17 @@ export default function SettingsScreen() {
           <Btn variant="muted" icon={Download} onClick={downloadDb}>
             Скачать базу
           </Btn>
-          <Btn variant="outline" icon={Upload} onClick={() => dbFileRef.current?.click()}>
+          <label className="pressable inline-flex items-center justify-center gap-2 font-semibold select-none h-11 px-4 text-[14px] rounded-xl bg-surface text-ink border border-linestrong cursor-pointer active:bg-surface2">
+            <Upload size={17} strokeWidth={2.2} />
             Восстановить базу
-          </Btn>
-          <input
-            ref={dbFileRef}
-            type="file"
-            accept=".db,application/x-sqlite3"
-            className="sr-only"
-            onChange={(e) => { onPickDb(e.target.files?.[0] ?? null); e.target.value = ""; }}
-          />
+            <input
+              ref={dbFileRef}
+              type="file"
+              accept=".db"
+              className="hidden"
+              onChange={(e) => { onPickDb(e.target.files?.[0] ?? null); e.target.value = ""; }}
+            />
+          </label>
           <p className="text-[11.5px] text-faint leading-snug mt-1">
             Полная копия базы SQLite. Сервер сохраняет файл в «Загрузки»; при восстановлении
             прежняя база автоматически сохраняется как автобэкап.
