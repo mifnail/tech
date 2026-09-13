@@ -67,6 +67,21 @@ export function dismissUpdate(): void {
   } catch (_) {}
 }
 
+const INSTALLED_KEY = "update_installed_version";
+export function markInstalled(version: string): void {
+  try {
+    localStorage.setItem(INSTALLED_KEY, version);
+    localStorage.setItem(DISMISS_KEY, String(Date.now()));
+  } catch (_) {}
+}
+export function isAlreadyInstalled(version: string): boolean {
+  try {
+    return localStorage.getItem(INSTALLED_KEY) === version;
+  } catch (_) {
+    return false;
+  }
+}
+
 /** POST /api/update/download → uri APK (Android-only; вне Android — 400). */
 export async function downloadUpdate(): Promise<string> {
   const r = await fetch("/api/update/download", { method: "POST" });

@@ -7,7 +7,7 @@ import { Download, Loader2 } from "lucide-react";
 import { Btn, Card } from "./ui";
 import {
   checkUpdate, dismissUpdate, downloadUpdate, fetchVersion,
-  installUpdate, isUpdateDismissed,
+  installUpdate, isAlreadyInstalled, isUpdateDismissed, markInstalled,
 } from "../lib/update";
 
 export default function UpdateBanner() {
@@ -24,9 +24,11 @@ export default function UpdateBanner() {
         if (!ver || cancelled) return;
         const r = await checkUpdate(ver);
         if (!r || !r.update_available || cancelled) return;
-        if (isUpdateDismissed()) return;
         const latest = r.latest || {};
-        setInfo({ version: latest.version || "", notes: latest.notes || "" });
+        const latestVer = latest.version || "";
+        if (latestVer && isAlreadyInstalled(latestVer)) return;
+        if (isUpdateDismissed()) return;
+        setInfo({ version: latestVer, notes: latest.notes || "" });
       } catch (_) { /* сеть — молча, как в ванили */ }
     })();
     return () => { cancelled = true; };
@@ -47,6 +49,8 @@ export default function UpdateBanner() {
     setBusy(true);
     try {
       await installUpdate(uri || "");
+      if (info?.version) markInstalled(info.version);
+      setInfo(null);
     } catch (_) { /* молча */ }
     setBusy(false);
   };
