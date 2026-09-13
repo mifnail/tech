@@ -40,7 +40,7 @@ export function gradeTone(v: GradeValue, present: boolean): GradeTone {
 
 export function gradeLabel(v: GradeValue, present: boolean): string {
   if (!present) return "Н";
-  return v === null ? "—" : String(v);
+  return v === null ? "." : String(v);
 }
 
 /** Должник: вовсе без оценок 2–5, либо средний по 2–5 ниже 3. */
