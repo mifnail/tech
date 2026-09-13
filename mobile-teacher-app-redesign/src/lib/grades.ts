@@ -43,11 +43,11 @@ export function gradeLabel(v: GradeValue, present: boolean): string {
   return v === null ? "—" : String(v);
 }
 
-/** Должник: средний балл ниже 3 при наличии хотя бы двух оценок. */
+/** Должник: вовсе без оценок 2–5, либо средний по 2–5 ниже 3. */
 export function isDebtor(values: GradeValue[]): boolean {
-  const nums = values.filter((v): v is number => v !== null);
-  if (nums.length < 2) return false;
-  return nums.reduce((a, b) => a + b, 0) / nums.length < 3;
+  const avg = avgOf(values);
+  if (avg === null) return true;
+  return avg < 3;
 }
 
 /** Лёгкий тактильный отклик (API вибрации есть на Android WebView). */

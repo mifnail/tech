@@ -374,7 +374,7 @@ class Store {
           fetchJson("/api/groups") as Promise<Array<{ id: number; name: string }>>,
           fetchJson("/api/subjects") as Promise<Array<{
             id: number; name: string; group_id: number;
-            held_lessons: number; average_grade?: number;
+            total_hours: number; held_lessons: number; average_grade?: number;
           }>>,
           fetchJson("/api/students") as Promise<Array<{
             id: number; group_id: number;
@@ -445,8 +445,12 @@ class Store {
         max: maxSet.has(s.id),
       }));
 
-      // Маппинг предметов (только id + name для React-модели)
-      const subjects: Subject[] = subjectsRaw.map((s) => ({ id: s.id, name: s.name }));
+      // Маппинг предметов (id, name, total_hours, held_lessons из API)
+      const subjects: Subject[] = subjectsRaw.map((s) => ({
+        id: s.id, name: s.name,
+        totalHours: s.total_hours ?? 0,
+        heldLessons: s.held_lessons ?? 0,
+      }));
 
       // Маппинг расписания
       const schedule: ScheduleItem[] = scheduleRaw.map((s) => ({
@@ -788,7 +792,7 @@ class Store {
       (s) => s.name.toLowerCase() === name.trim().toLowerCase(),
     );
     if (existing) return existing;
-    const s: Subject = { id: this.nextId(), name: name.trim() };
+    const s: Subject = { id: this.nextId(), name: name.trim(), totalHours, heldLessons: 0 };
     this.db.subjects.push(s);
     this.touch();
     if (!import.meta.env.DEV && groupId != null) {

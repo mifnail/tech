@@ -92,23 +92,25 @@ export default function TodayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, ver]);
 
-  /** Сводка по предметам: проведённые/всего занятий + прогресс-бар. */
+  /** Сводка по предметам: проведённые/выделенные часы + прогресс-бар. */
   const subjectRows = useMemo(() => {
     const held = new Map<number, number>();
-    const scheduled = new Map<number, number>();
     for (const l of db.lessons) {
       if (l.status === "held") held.set(l.subjectId, (held.get(l.subjectId) ?? 0) + 1);
-      else if (l.status === "scheduled") scheduled.set(l.subjectId, (scheduled.get(l.subjectId) ?? 0) + 1);
     }
-    const maxHeld = Math.max(0, ...held.values());
     return db.subjects.map((s) => {
-      const h = held.get(s.id) ?? 0;
+      const lessonHeld = held.get(s.id) ?? 0;
+      const apiHeld = s.heldLessons ?? 0;
+      // Проведённые: локальный счётчик занятий (консистентен с API held_lessons);
+      // если уроки ещё не загружены — фолбэк на heldLessons из API.
+      const h = lessonHeld > 0 ? lessonHeld : apiHeld;
+      const total = s.totalHours ?? 0;
       const group = db.groups.find((g) => g.subjectIds.includes(s.id));
       return {
         subject: s,
         held: h,
-        total: h + (scheduled.get(s.id) ?? 0),
-        progress: maxHeld > 0 ? Math.round((h / maxHeld) * 100) : 0,
+        total,
+        progress: total > 0 ? Math.round((h / total) * 100) : 0,
         groupId: group?.id ?? 0,
         groupName: group?.name ?? "—",
       };
@@ -207,7 +209,7 @@ export default function TodayScreen() {
                 </div>
                 <Chip tone="neutral">{r.groupName}</Chip>
                 <span className="text-[13px] font-bold tabular-nums shrink-0">
-                  {r.held} / {r.total}
+                  {r.total > 0 ? `${r.held} / ${r.total} ч` : "—"}
                 </span>
                 <ChevronRight size={14} className="text-faint shrink-0" />
               </div>
@@ -215,7 +217,7 @@ export default function TodayScreen() {
                 <div className="h-full rounded-full bg-accent" style={{ width: `${r.progress}%` }} />
               </div>
               {r.total === 0 && (
-                <div className="mt-1 text-[11px] text-faint">нет занятий</div>
+                <div className="mt-1 text-[11px] text-faint">нет выделенных</div>
               )}
             </div>
           ))

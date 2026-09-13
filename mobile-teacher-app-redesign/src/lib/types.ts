@@ -21,6 +21,8 @@ export interface Student {
 export interface Subject {
   id: ID;
   name: string;
+  totalHours?: number;
+  heldLessons?: number;
 }
 
 /** parity: 0 — каждую неделю, 1 — чётная, 2 — нечётная */
