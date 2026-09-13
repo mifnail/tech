@@ -166,9 +166,8 @@ def _notify_group_chats(db, group_id, token, enabled, msg_text):
 def _static_ver() -> str:
     """Версия статики по mtime bundle: новый APK = новый URL = WebView не отдаст кэш."""
     try:
-        base = os.path.join(os.path.dirname(__file__), 'static')
-        m = max(os.path.getmtime(os.path.join(base, f)) for f in ('app.js', 'style.css'))
-        return str(int(m))
+        dist = os.path.join(os.path.dirname(__file__), 'mobile-teacher-app-redesign', 'dist')
+        return str(int(os.path.getmtime(os.path.join(dist, 'index.html'))))
     except Exception:
         return '1'
 
@@ -178,12 +177,17 @@ STATIC_VER = _static_ver()
 
 @app.route('/')
 def index():
-    with open(os.path.join(os.path.dirname(__file__), 'templates', 'index.html'),
-              encoding='utf-8') as f:
+    dist_path = os.path.join(os.path.dirname(__file__),
+                             'mobile-teacher-app-redesign', 'dist', 'index.html')
+    with open(dist_path, encoding='utf-8') as f:
         html = f.read()
-    html = html.replace('/static/app.js', f'/static/app.js?v={STATIC_VER}')
-    html = html.replace('/static/style.css', f'/static/style.css?v={STATIC_VER}')
-    return Response(html, mimetype='text/html')
+    # Vite пишет doctype нижним регистром — нормализуем (валидный HTML).
+    html = html.replace('<!doctype html>', '<!DOCTYPE html>', 1)
+    # Маркер версии статики (singlefile: внешних app.js/style.css нет, версия в документе).
+    html = html.replace('</head>', f'<!-- static: app.js?v={STATIC_VER} --></head>', 1)
+    resp = Response(html, mimetype='text/html')
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 @app.route('/static/<path:path>')
