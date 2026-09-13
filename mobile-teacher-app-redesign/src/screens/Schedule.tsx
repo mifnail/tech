@@ -1,23 +1,24 @@
-/* Расписание недели: единый список по дням (пн–сб), без чёт/нечёт,
-   + ручные занятия (созданные через «Начать занятие» вне расписания). */
+/* Расписание: лента дат (14 дней) + занятия выбранного дня,
+   сгруппированные по группам. Ручные занятия (созданные через
+   «Начать занятие» вне расписания) помечаются чипом «вручную». */
 
 import { useMemo, useState } from "react";
 import {
-  Ban, CalendarOff, ChevronRight, CircleAlert, CircleCheck, Play, Plus, Repeat, Trash2,
+  Ban, CalendarOff, ChevronRight, CircleAlert, CircleCheck, Play, Plus,
 } from "lucide-react";
 import { useDB, useVersion, store } from "../lib/store";
 import {
-  addDaysISO, formatDotShort, formatLong, mondayOfWeek, parityLabel, todayISO, weekdayOf, weekdayShort,
+  addDaysISO, formatDotShort, formatLong, mondayOfWeek, todayISO, weekdayOf, weekdayShort,
 } from "../lib/date";
 import { navigate } from "../lib/router";
 import { BigHeader, Screen, AvatarTile } from "../components/shell";
 import {
-  Btn, Card, Chip, ConfirmSheet, EmptyState, Field, IconBtn,
+  Btn, Card, Chip, EmptyState, Field, IconBtn,
   Input, Select, Sheet, SectionTitle, useToast,
 } from "../components/ui";
 import { NewLessonSheet } from "../components/NewLessonSheet";
 import { cn } from "../utils/cn";
-import type { Group, Lesson, ScheduleItem } from "../lib/types";
+import type { Group, Lesson } from "../lib/types";
 
 const WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const DAY_FULL = ["", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
@@ -28,11 +29,8 @@ export default function ScheduleScreen() {
   const toast = useToast();
   const today = todayISO();
 
-  const [actionItem, setActionItem] = useState<ScheduleItem | null>(null);
-  const [removeConfirm, setRemoveConfirm] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [selectedISO, setSelectedISO] = useState(today);
-  const [daySheetISO, setDaySheetISO] = useState<string | null>(null);
   const [newLessonOpen, setNewLessonOpen] = useState(false);
 
   // Форма добавления
@@ -50,12 +48,6 @@ export default function ScheduleScreen() {
     () => Array.from({ length: 14 }, (_, i) => addDaysISO(monday, i)),
     [monday],
   );
-
-  /** Тап по дате → Sheet со списком занятий дня (сгруппирован по группам). */
-  const goToDay = (iso: string) => {
-    setSelectedISO(iso);
-    setDaySheetISO(iso);
-  };
 
   const openAdd = () => {
     setFGroup(db.groups[0] ? String(db.groups[0].id) : "");
@@ -90,24 +82,10 @@ export default function ScheduleScreen() {
     toast("Пара добавлена в расписание");
   };
 
-  /** Пары дня (все чётности) по номеру пары. */
-  const itemsOf = (day: number) =>
-    db.schedule
-      .filter((it) => it.weekday === day)
-      .sort((a, b) => a.lessonNumber - b.lessonNumber || a.time.localeCompare(b.time));
-
-  /** Ручные занятия дня: созданы вручную и не имеют пары в расписании этого дня. */
-  const manualOf = (day: number) =>
-    db.lessons
-      .filter((l) => weekdayOf(l.date) === day)
-      .filter((l) => !store.scheduleItemForDay(l.groupId, l.subjectId, day))
-      .sort((a, b) => a.lessonNumber - b.lessonNumber || a.time.localeCompare(b.time));
-
   /** Занятия выбранного дня (по расписанию + ручные), сгруппированные по группам. */
   const dayGroups = useMemo(() => {
-    if (!daySheetISO) return [];
     const byGroup = new Map<number, Lesson[]>();
-    for (const l of store.lessonsOn(daySheetISO)) {
+    for (const l of store.lessonsOn(selectedISO)) {
       const arr = byGroup.get(l.groupId);
       if (arr) arr.push(l);
       else byGroup.set(l.groupId, [l]);
@@ -122,7 +100,7 @@ export default function ScheduleScreen() {
       .filter((x): x is { group: Group; items: Lesson[] } => x.group !== undefined)
       .sort((a, b) => a.group.name.localeCompare(b.group.name));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, ver, daySheetISO]);
+  }, [db, ver, selectedISO]);
 
   return (
     <Screen className="pb-28">
@@ -132,7 +110,7 @@ export default function ScheduleScreen() {
         actions={<IconBtn icon={Plus} label="Добавить пару" onClick={openAdd} className="bg-surface border border-line" />}
       />
 
-      {/* Лента дат: горизонтальный скролл, тап → занятия дня */}
+      {/* Лента дат: горизонтальный скролл, тап → занятия выбранного дня */}
       <div className="-mx-4 px-4 mb-4 overflow-x-auto no-scrollbar">
         <div className="flex gap-1.5 min-w-max">
           {days.map((iso) => {
@@ -141,7 +119,7 @@ export default function ScheduleScreen() {
             return (
               <button
                 key={iso}
-                onClick={() => goToDay(iso)}
+                onClick={() => setSelectedISO(iso)}
                 className={cn(
                   "pressable flex flex-col items-center w-[52px] py-2 rounded-xl border shrink-0",
                   selected
@@ -171,199 +149,62 @@ export default function ScheduleScreen() {
         </div>
       </div>
 
-      {[1, 2, 3, 4, 5, 6].map((day) => {
-        const items = itemsOf(day);
-        const manual = manualOf(day);
-        const isToday = day === weekdayOf(today);
-        return (
-          <div key={day}>
-            <SectionTitle action={isToday ? <Chip tone="accent">сегодня</Chip> : undefined}>
-              {DAY_FULL[day]}
-            </SectionTitle>
+      {/* Занятия выбранной даты */}
+      <SectionTitle action={selectedISO === today ? <Chip tone="accent">сегодня</Chip> : undefined}>
+        {formatLong(selectedISO)}
+      </SectionTitle>
 
-            {items.map((it) => {
-              const g = store.group(it.groupId);
-              const s = store.subject(it.subjectId);
-              if (!g || !s) return null;
+      {dayGroups.length === 0 ? (
+        <EmptyState
+          icon={CalendarOff}
+          title="В этот день занятий нет"
+          hint="Начните занятие вручную или выберите другую дату."
+        >
+          <Btn icon={Play} onClick={() => setNewLessonOpen(true)}>
+            Начать занятие
+          </Btn>
+        </EmptyState>
+      ) : (
+        dayGroups.map(({ group, items }) => (
+          <div key={group.id}>
+            <SectionTitle>{group.name}</SectionTitle>
+            {items.map((l) => {
+              const s = store.subject(l.subjectId);
+              if (!s) return null;
+              const manual = !store.scheduleItemForDay(
+                l.groupId, l.subjectId, weekdayOf(l.date),
+              );
               return (
                 <Card
-                  key={it.id}
+                  key={l.id}
                   className="p-3.5 mb-2 flex items-center gap-3"
-                  onClick={() => setActionItem(it)}
+                  onClick={() => navigate("/lesson/" + l.id)}
                 >
                   <div className="w-[44px] shrink-0 text-center">
                     <div className="text-[15px] font-extrabold tabular-nums leading-none">
-                      №{it.lessonNumber}
+                      {l.lessonNumber > 0 ? `№${l.lessonNumber}` : "—"}
                     </div>
                     <div className="mt-0.5 text-[9.5px] font-bold uppercase tracking-wide text-faint">
                       пара
                     </div>
                   </div>
                   <div className="w-px self-stretch bg-line" />
-                  <AvatarTile text={g.name.slice(0, 2)} className="w-9 h-9 text-[11px]" />
+                  <AvatarTile text={group.name.slice(0, 2)} className="w-9 h-9 text-[11px]" />
                   <div className="min-w-0 flex-1">
                     <div className="text-[14.5px] font-bold truncate">{s.name}</div>
-                    <div className="text-[12px] text-muted truncate">
-                      {g.name}
-                    </div>
+                    <div className="text-[12px] text-muted truncate">{group.name}</div>
                   </div>
-                  {it.parity !== 0 && (
-                    <Chip tone="neutral" className="normal-case">
-                      <Repeat size={10} />{parityLabel(it.parity)}
-                    </Chip>
-                  )}
+                  {l.status === "held" && <Chip tone="success"><CircleCheck size={11} />Проведено</Chip>}
+                  {l.status === "scheduled" && <Chip tone="warn"><CircleAlert size={11} />Назначено</Chip>}
+                  {l.status === "cancelled" && <Chip tone="danger"><Ban size={11} />Отменено</Chip>}
+                  {manual && <Chip tone="accent">вручную</Chip>}
                   <ChevronRight size={16} className="text-faint shrink-0" />
                 </Card>
               );
             })}
-
-            {manual.length > 0 && (
-              <>
-                {manual.map((l) => {
-                  const g = store.group(l.groupId);
-                  const s = store.subject(l.subjectId);
-                  if (!g || !s) return null;
-                  return (
-                    <Card
-                      key={l.id}
-                      className="p-3.5 mb-2 flex items-center gap-3"
-                      onClick={() => navigate("/lesson/" + l.id)}
-                    >
-                      <div className="w-[44px] shrink-0 text-center">
-                        <div className="text-[15px] font-extrabold tabular-nums leading-none">
-                          {l.lessonNumber > 0 ? `№${l.lessonNumber}` : "—"}
-                        </div>
-                        <div className="mt-0.5 text-[9.5px] font-bold uppercase tracking-wide text-faint">
-                          пара
-                        </div>
-                      </div>
-                      <div className="w-px self-stretch bg-line" />
-                      <AvatarTile text={g.name.slice(0, 2)} className="w-9 h-9 text-[11px]" />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[14.5px] font-bold truncate">{s.name}</div>
-                        <div className="text-[12px] text-muted truncate">{g.name}</div>
-                      </div>
-                      <Chip tone="accent">вручную</Chip>
-                      <ChevronRight size={16} className="text-faint shrink-0" />
-                    </Card>
-                  );
-                })}
-              </>
-            )}
-
-            {items.length === 0 && manual.length === 0 && (
-              <div className="px-1 py-1.5 text-[12.5px] text-faint">Пар нет</div>
-            )}
           </div>
-        );
-      })}
-
-      {/* Действия с парой */}
-      <Sheet
-        open={actionItem !== null}
-        onClose={() => setActionItem(null)}
-        title="Пара в расписании"
-      >
-        {actionItem && (() => {
-          const g = store.group(actionItem.groupId);
-          const s = store.subject(actionItem.subjectId);
-          const lesson = store
-            .lessonsOn(today)
-            .find((l) => l.groupId === actionItem.groupId && l.subjectId === actionItem.subjectId);
-          return (
-            <div className="flex flex-col gap-1.5">
-              <div className="mb-3 text-[14px]">
-                <span className="font-bold">{s?.name}</span>
-                <span className="text-muted"> · {g?.name}</span>
-              </div>
-              {lesson ? (
-                <Btn
-                  className="justify-start"
-                  onClick={() => { setActionItem(null); navigate("/lesson/" + lesson.id); }}
-                >
-                  Открыть занятие за сегодня
-                </Btn>
-              ) : (
-                <Btn
-                  className="justify-start"
-                  onClick={async () => {
-                    const l = await store.createLesson(actionItem.groupId, actionItem.subjectId, today);
-                    setActionItem(null);
-                    navigate("/lesson/" + l.id);
-                  }}
-                >
-                  Создать занятие на сегодня
-                </Btn>
-              )}
-              <Btn
-                variant="danger" className="justify-start" icon={Trash2}
-                onClick={() => setRemoveConfirm(true)}
-              >
-                Удалить из расписания
-              </Btn>
-            </div>
-          );
-        })()}
-      </Sheet>
-
-      {/* Занятия выбранного дня (тап по дате в ленте) */}
-      <Sheet
-        open={daySheetISO !== null}
-        onClose={() => setDaySheetISO(null)}
-        title={daySheetISO ? formatLong(daySheetISO) : ""}
-      >
-        {dayGroups.length === 0 ? (
-          <EmptyState
-            icon={CalendarOff}
-            title="В этот день занятий нет"
-            hint="Начните занятие вручную или выберите другую дату."
-          >
-            <Btn icon={Play} onClick={() => setNewLessonOpen(true)}>
-              Начать занятие
-            </Btn>
-          </EmptyState>
-        ) : (
-          dayGroups.map(({ group, items }) => (
-            <div key={group.id}>
-              <SectionTitle>{group.name}</SectionTitle>
-              {items.map((l) => {
-                const s = store.subject(l.subjectId);
-                if (!s) return null;
-                const manual = !store.scheduleItemForDay(
-                  l.groupId, l.subjectId, weekdayOf(l.date),
-                );
-                return (
-                  <Card
-                    key={l.id}
-                    className="p-3.5 mb-2 flex items-center gap-3"
-                    onClick={() => { setDaySheetISO(null); navigate("/lesson/" + l.id); }}
-                  >
-                    <div className="w-[44px] shrink-0 text-center">
-                      <div className="text-[15px] font-extrabold tabular-nums leading-none">
-                        {l.lessonNumber > 0 ? `№${l.lessonNumber}` : "—"}
-                      </div>
-                      <div className="mt-0.5 text-[9.5px] font-bold uppercase tracking-wide text-faint">
-                        пара
-                      </div>
-                    </div>
-                    <div className="w-px self-stretch bg-line" />
-                    <AvatarTile text={group.name.slice(0, 2)} className="w-9 h-9 text-[11px]" />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[14.5px] font-bold truncate">{s.name}</div>
-                      <div className="text-[12px] text-muted truncate">{group.name}</div>
-                    </div>
-                    {l.status === "held" && <Chip tone="success"><CircleCheck size={11} />Проведено</Chip>}
-                    {l.status === "scheduled" && <Chip tone="warn"><CircleAlert size={11} />Назначено</Chip>}
-                    {l.status === "cancelled" && <Chip tone="danger"><Ban size={11} />Отменено</Chip>}
-                    {manual && <Chip tone="accent">вручную</Chip>}
-                    <ChevronRight size={16} className="text-faint shrink-0" />
-                  </Card>
-                );
-              })}
-            </div>
-          ))
-        )}
-      </Sheet>
+        ))
+      )}
 
       {/* Добавление пары */}
       <Sheet open={addOpen} onClose={() => setAddOpen(false)} title="Новая пара">
@@ -415,25 +256,11 @@ export default function ScheduleScreen() {
         </div>
       </Sheet>
 
-      <ConfirmSheet
-        open={removeConfirm}
-        onClose={() => setRemoveConfirm(false)}
-        title="Удалить из расписания?"
-        body="Пара исчезнет из расписания на следующие недели. Проведённые занятия и оценки сохранятся."
-        confirmLabel="Удалить"
-        danger
-        onConfirm={() => {
-          if (actionItem) store.removeScheduleItem(actionItem.id);
-          setActionItem(null);
-          toast("Пара удалена из расписания");
-        }}
-      />
-
       <NewLessonSheet
         open={newLessonOpen}
         onClose={() => setNewLessonOpen(false)}
+        date={selectedISO}
         onCreated={(lesson) => {
-          setDaySheetISO(null);
           navigate("/lesson/" + lesson.id);
         }}
       />

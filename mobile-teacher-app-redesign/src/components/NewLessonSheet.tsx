@@ -1,7 +1,7 @@
 /* «Начать занятие»: выбор предмета → календарь-сетка
    (прошлое и сегодня доступны, будущее закрыто). */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check } from "lucide-react";
 import type { ID, Lesson } from "../lib/types";
 import { store, useDB } from "../lib/store";
@@ -15,17 +15,29 @@ import { AvatarTile } from "./shell";
 const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
 export function NewLessonSheet({
-  open, onClose, onCreated,
+  open, onClose, onCreated, date,
 }: {
   open: boolean;
   onClose: () => void;
   onCreated: (lesson: Lesson) => void;
+  /** Начальная дата при открытии (по умолчанию — сегодня). */
+  date?: string;
 }) {
   const today = todayISO();
   const [pair, setPair] = useState<{ groupId: ID; subjectId: ID } | null>(null);
   const [month, setMonth] = useState(today.slice(0, 7));
-  const [date, setDate] = useState(today);
+  const [selDate, setSelDate] = useState(today);
   const [fNum, setFNum] = useState(0); // 0 = авто (из расписания)
+
+  // При каждом открытии — дата из пропа (по умолчанию сегодня).
+  useEffect(() => {
+    if (open) {
+      const d = date ?? todayISO();
+      setSelDate(d);
+      setMonth(d.slice(0, 7));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const db = useDB();
   const pairs = useMemo(
@@ -36,7 +48,7 @@ export function NewLessonSheet({
     [db],
   );
 
-  const fromSchedule = pair ? store.scheduleItemFor(pair, date) : undefined;
+  const fromSchedule = pair ? store.scheduleItemFor(pair, selDate) : undefined;
   const effNum = fNum || fromSchedule?.lessonNumber || 0;
 
   const cells = useMemo(() => {
@@ -56,7 +68,7 @@ export function NewLessonSheet({
 
   const close = () => {
     setPair(null);
-    setDate(todayISO());
+    setSelDate(todayISO());
     setMonth(todayISO().slice(0, 7));
     setFNum(0);
     onClose();
@@ -64,7 +76,7 @@ export function NewLessonSheet({
 
   const create = async () => {
     if (!pair) return;
-    const lesson = await store.createLesson(pair.groupId, pair.subjectId, date, effNum);
+    const lesson = await store.createLesson(pair.groupId, pair.subjectId, selDate, effNum);
     close();
     onCreated(lesson);
   };
@@ -142,13 +154,13 @@ export function NewLessonSheet({
             {cells.map((iso, i) => {
               if (!iso) return <div key={"b" + i} />;
               const future = iso > today;
-              const selected = iso === date;
+              const selected = iso === selDate;
               const isToday = iso === today;
               return (
                 <button
                   key={iso}
                   disabled={future}
-                  onClick={() => setDate(iso)}
+                  onClick={() => setSelDate(iso)}
                   className={cn(
                     "pressable h-10 rounded-[10px] text-[13.5px] font-semibold tabular-nums",
                     selected
@@ -167,7 +179,7 @@ export function NewLessonSheet({
           </div>
 
           <div className="mt-3 mb-4 text-center text-[12.5px] text-muted">
-            {weekdayShort(date)}, {formatDot(date)}
+            {weekdayShort(selDate)}, {formatDot(selDate)}
           </div>
 
           <div className="mb-4">
