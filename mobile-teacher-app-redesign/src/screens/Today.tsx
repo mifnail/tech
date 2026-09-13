@@ -7,9 +7,15 @@ import { formatLong, todayISO, weekParity, addDaysISO, formatDotShort, weekdaySh
 import { isDebtor, avgOf, formatAvg } from "../lib/grades";
 import { navigate } from "../lib/router";
 import { BigHeader, Screen } from "../components/shell";
-import { Btn, Card, Chip, EmptyState, SectionTitle } from "../components/ui";
+import { Btn, Card, Chip, EmptyState, SectionTitle, Sheet } from "../components/ui";
 import { NewLessonSheet } from "../components/NewLessonSheet";
-import type { Lesson } from "../lib/types";
+import type { Lesson, Student } from "../lib/types";
+
+/** Запись списка должников: студент + его средний балл (2–5). */
+interface DebtorRow {
+  student: Student;
+  avg: number | null;
+}
 
 function LessonCard({ lesson }: { lesson: Lesson }) {
   const subject = store.subject(lesson.subjectId);
@@ -58,6 +64,7 @@ export default function TodayScreen() {
   const ver = useVersion();
   const today = todayISO();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [debtorsOpen, setDebtorsOpen] = useState(false);
 
   const lessons = store.lessonsOn(today);
   const parity = weekParity(today);
@@ -70,13 +77,16 @@ export default function TodayScreen() {
     const weekGrades = db.grades
       .filter((g) => weekLessonIds.has(g.lessonId) && g.present)
       .map((g) => g.value);
-    const debtors = db.students.filter((s) =>
-      isDebtor(db.grades.filter((g) => g.studentId === s.id && g.present).map((g) => g.value)),
-    ).length;
+    const debtorRows: DebtorRow[] = [];
+    for (const s of db.students) {
+      const vals = db.grades.filter((g) => g.studentId === s.id && g.present).map((g) => g.value);
+      if (isDebtor(vals)) debtorRows.push({ student: s, avg: avgOf(vals) });
+    }
     return {
       students: db.students.length,
       avg: avgOf(weekGrades),
-      debtors,
+      debtors: debtorRows.length,
+      debtorRows,
       groups: db.groups.length,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -133,19 +143,63 @@ export default function TodayScreen() {
         {[
           { label: "Студентов", value: String(stats.students), sub: `${stats.groups} гр.` },
           { label: "Ср. балл недели", value: formatAvg(stats.avg), sub: "домашняя сводка" },
-          { label: "Должники", value: String(stats.debtors), sub: "ср. ниже 3.5", tone: stats.debtors > 0 ? "text-g2" : "" },
+          {
+            label: "Должники", value: String(stats.debtors), sub: "ср. ниже 3.5",
+            tone: stats.debtors > 0 ? "text-g2" : "",
+            tap: true,
+          },
         ].map((s) => (
-          <div key={s.label} className="px-3 py-3.5 text-center">
+          <div
+            key={s.label}
+            className={`px-3 py-3.5 text-center${s.tap ? " cursor-pointer active:bg-surface2" : ""}`}
+            onClick={s.tap ? () => setDebtorsOpen(true) : undefined}
+          >
             <div className={`text-[22px] font-extrabold tabular-nums leading-none ${s.tone ?? ""}`}>
               {s.value}
             </div>
-            <div className="mt-1.5 text-[10px] font-bold uppercase tracking-[0.07em] text-muted">
+            <div className="mt-1.5 text-[10px] font-bold uppercase tracking-[0.07em] text-muted inline-flex items-center gap-0.5">
               {s.label}
+              {s.tap && <ChevronRight size={10} className="text-faint" />}
             </div>
             <div className="text-[10px] text-faint">{s.sub}</div>
           </div>
         ))}
       </Card>
+
+      <Sheet
+        open={debtorsOpen}
+        onClose={() => setDebtorsOpen(false)}
+        title={`Должники · ${stats.debtors}`}
+      >
+        {stats.debtorRows.length === 0 ? (
+          <div className="py-8 text-center text-[14px] text-muted">Нет должников</div>
+        ) : (
+          <Card className="divide-y divide-line overflow-hidden">
+            {stats.debtorRows.map(({ student, avg }) => {
+              const group = store.group(student.groupId);
+              return (
+                <div
+                  key={student.id}
+                  className="flex items-center gap-2.5 px-3 py-2.5 cursor-pointer active:bg-surface2"
+                  onClick={() => {
+                    setDebtorsOpen(false);
+                    navigate("/group/" + student.groupId);
+                  }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[14px] font-semibold truncate text-g2">{student.name}</div>
+                    <div className="text-[11px] text-faint">{group?.name ?? "—"}</div>
+                  </div>
+                  {avg !== null && (
+                    <span className="text-[13px] font-bold tabular-nums text-g2">{formatAvg(avg)}</span>
+                  )}
+                  <ChevronRight size={14} className="text-faint shrink-0" />
+                </div>
+              );
+            })}
+          </Card>
+        )}
+      </Sheet>
 
       <NewLessonSheet
         open={sheetOpen}
