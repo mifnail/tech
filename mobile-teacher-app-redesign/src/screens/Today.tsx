@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { CalendarOff, ChevronRight, Play, CircleAlert, CircleCheck, Ban } from "lucide-react";
 import { useDB, useVersion, store, lessonAvg } from "../lib/store";
-import { formatLong, todayISO, weekParity, addDaysISO, formatDotShort, weekdayShort } from "../lib/date";
+import { formatLong, todayISO, weekParity, addDaysISO } from "../lib/date";
 import { isDebtor, avgOf, formatAvg } from "../lib/grades";
 import { navigate } from "../lib/router";
 import { BigHeader, Screen } from "../components/shell";
@@ -119,8 +119,6 @@ export default function TodayScreen() {
   }, [db, ver]);
 
   const name = db.settings.teacherName.trim() || "Преподаватель";
-  const yesterdayISO = addDaysISO(today, -1);
-  const yesterdayLessons = store.lessonsOn(yesterdayISO).filter((l) => l.status === "held");
 
   return (
     <Screen className="pb-28">
@@ -154,15 +152,6 @@ export default function TodayScreen() {
       {lessons.map((l) => (
         <LessonCard key={l.id} lesson={l} />
       ))}
-
-      {yesterdayLessons.length > 0 && (
-        <>
-          <SectionTitle>{weekdayShort(yesterdayISO)}, {formatDotShort(yesterdayISO)} — проведённые</SectionTitle>
-          {yesterdayLessons.slice(0, 3).map((l) => (
-            <LessonCard key={l.id} lesson={l} />
-          ))}
-        </>
-      )}
 
       <SectionTitle>Сводка</SectionTitle>
       <Card className="grid grid-cols-3 divide-x divide-line">
@@ -200,7 +189,7 @@ export default function TodayScreen() {
           subjectRows.map((r) => (
             <div
               key={r.subject.id}
-              className="px-3 py-2.5 cursor-pointer active:bg-surface2"
+              className="px-3.5 py-3 cursor-pointer active:bg-surface2"
               onClick={() => navigate("/group/" + r.groupId)}
             >
               <div className="flex items-center gap-2.5">
@@ -213,8 +202,13 @@ export default function TodayScreen() {
                 </span>
                 <ChevronRight size={14} className="text-faint shrink-0" />
               </div>
-              <div className="mt-2 h-1.5 rounded-full bg-line overflow-hidden">
-                <div className="h-full rounded-full bg-accent" style={{ width: `${r.progress}%` }} />
+              <div className="mt-2.5 flex items-center gap-2.5">
+                <div className="flex-1 h-2.5 rounded-full bg-line overflow-hidden">
+                  <div className="h-full rounded-full bg-accent" style={{ width: `${r.progress}%` }} />
+                </div>
+                <span className="w-9 shrink-0 text-right text-[12px] font-bold tabular-nums text-muted">
+                  {r.total > 0 ? `${r.progress}%` : "—"}
+                </span>
               </div>
               {r.total === 0 && (
                 <div className="mt-1 text-[11px] text-faint">нет выделенных</div>
