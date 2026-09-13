@@ -31,16 +31,17 @@ export type GradeTone = "g5" | "g4" | "g3" | "g2" | "na" | "none";
 
 export function gradeTone(v: GradeValue, present: boolean): GradeTone {
   if (!present) return "na";
-  if (v === null) return "none";
+  if (v === null || v === 0) return "none";
   if (v === 5) return "g5";
   if (v === 4) return "g4";
   if (v === 3) return "g3";
-  return "g2"; // 2 и 0 — красные
+  return "g2"; // 2 — красная
 }
 
 export function gradeLabel(v: GradeValue, present: boolean): string {
   if (!present) return "Н";
-  return v === null ? "." : String(v);
+  if (v === null || v === 0) return ".";
+  return String(v);
 }
 
 /** Должник: вовсе без оценок 2–5, либо средний по 2–5 ниже 3. */

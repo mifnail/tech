@@ -82,7 +82,14 @@ def export_grades_pdf(subject_id: int, db: Optional[Database] = None) -> bytes:
     for s in students:
         row = [f"{s['last_name']} {s['first_name']}"]
         for l in lessons:
-            row.append(grades.get(str(s['id']), {}).get(str(l['id']), ''))
+            raw = grades.get(str(s['id']), {}).get(str(l['id']))
+            if raw is None:
+                val = "Н"
+            elif raw == "0":
+                val = "."
+            else:
+                val = raw
+            row.append(val)
         rows.append(row)
     return _build_pdf(f'Ведомость: {subj_name}', headers, rows)
 
@@ -157,7 +164,14 @@ def _gradebook_table(subject_id: int, db: Database) -> tuple[str, list[str], lis
     for s in students:
         row = [f"{s['last_name']} {s['first_name']}"]
         for l in lessons:
-            row.append(grades.get(str(s['id']), {}).get(str(l['id']), ''))
+            raw = grades.get(str(s['id']), {}).get(str(l['id']))
+            if raw is None:
+                val = "Н"
+            elif raw == "0":
+                val = "."
+            else:
+                val = raw
+            row.append(val)
         rows.append(row)
     return subj_name, headers, rows
 
@@ -231,7 +245,14 @@ def export_student_grades_xlsx(subject_id: int, student_id: int, db: Optional[Da
     headers = ['Студент'] + hdr
     row = [f"{target['last_name']} {target['first_name']}"]
     for l in lessons:
-        row.append(grades.get(str(target['id']), {}).get(str(l['id']), ''))
+        raw = grades.get(str(target['id']), {}).get(str(l['id']))
+        if raw is None:
+            val = "Н"
+        elif raw == "0":
+            val = "."
+        else:
+            val = raw
+        row.append(val)
     return _build_xlsx(f'Ведомость: {subj_name}', headers, [row])
 
 
@@ -274,7 +295,14 @@ def export_grades_csv(subject_id: int, filepath: Optional[str] = None, db: Optio
         for s in students:
             row = [f"{s['last_name']} {s['first_name']}"]
             for l in lessons:
-                row.append(grades.get(str(s['id']), {}).get(str(l['id']), ''))
+                raw = grades.get(str(s['id']), {}).get(str(l['id']))
+                if raw is None:
+                    val = "Н"
+                elif raw == "0":
+                    val = "."
+                else:
+                    val = raw
+                row.append(val)
             writer.writerow(row)
     return filepath
 
