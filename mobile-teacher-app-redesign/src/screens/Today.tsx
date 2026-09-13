@@ -92,6 +92,30 @@ export default function TodayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, ver]);
 
+  /** Сводка по предметам: проведённые/всего занятий + прогресс-бар. */
+  const subjectRows = useMemo(() => {
+    const held = new Map<number, number>();
+    const scheduled = new Map<number, number>();
+    for (const l of db.lessons) {
+      if (l.status === "held") held.set(l.subjectId, (held.get(l.subjectId) ?? 0) + 1);
+      else if (l.status === "scheduled") scheduled.set(l.subjectId, (scheduled.get(l.subjectId) ?? 0) + 1);
+    }
+    const maxHeld = Math.max(0, ...held.values());
+    return db.subjects.map((s) => {
+      const h = held.get(s.id) ?? 0;
+      const group = db.groups.find((g) => g.subjectIds.includes(s.id));
+      return {
+        subject: s,
+        held: h,
+        total: h + (scheduled.get(s.id) ?? 0),
+        progress: maxHeld > 0 ? Math.round((h / maxHeld) * 100) : 0,
+        groupId: group?.id ?? 0,
+        groupName: group?.name ?? "—",
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db, ver]);
+
   const name = db.settings.teacherName.trim() || "Преподаватель";
   const yesterdayISO = addDaysISO(today, -1);
   const yesterdayLessons = store.lessonsOn(yesterdayISO).filter((l) => l.status === "held");
@@ -164,6 +188,38 @@ export default function TodayScreen() {
             <div className="text-[10px] text-faint">{s.sub}</div>
           </div>
         ))}
+      </Card>
+
+      <SectionTitle>По предметам</SectionTitle>
+      <Card className="divide-y divide-line overflow-hidden">
+        {subjectRows.length === 0 ? (
+          <div className="py-6 text-center text-[13px] text-muted">Нет предметов</div>
+        ) : (
+          subjectRows.map((r) => (
+            <div
+              key={r.subject.id}
+              className="px-3 py-2.5 cursor-pointer active:bg-surface2"
+              onClick={() => navigate("/group/" + r.groupId)}
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[14px] font-semibold truncate">{r.subject.name}</div>
+                </div>
+                <Chip tone="neutral">{r.groupName}</Chip>
+                <span className="text-[13px] font-bold tabular-nums shrink-0">
+                  {r.held} / {r.total}
+                </span>
+                <ChevronRight size={14} className="text-faint shrink-0" />
+              </div>
+              <div className="mt-2 h-1.5 rounded-full bg-line overflow-hidden">
+                <div className="h-full rounded-full bg-accent" style={{ width: `${r.progress}%` }} />
+              </div>
+              {r.total === 0 && (
+                <div className="mt-1 text-[11px] text-faint">нет занятий</div>
+              )}
+            </div>
+          ))
+        )}
       </Card>
 
       <Sheet
