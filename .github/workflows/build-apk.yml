@@ -27,6 +27,8 @@ on:
       - 'seed_db.py'
       - 'schedule_file.py'
       - '.github/workflows/build-apk.yml'
+      - 'VERSION'
+      - 'mobile-teacher-app-redesign/**'
   workflow_dispatch: {}
 
 jobs:
