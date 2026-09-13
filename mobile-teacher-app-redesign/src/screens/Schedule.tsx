@@ -2,25 +2,29 @@
    + ручные занятия (созданные через «Начать занятие» вне расписания). */
 
 import { useMemo, useState } from "react";
-import { ChevronRight, Plus, Repeat, Trash2 } from "lucide-react";
-import { useDB, store } from "../lib/store";
 import {
-  addDaysISO, formatDotShort, mondayOfWeek, parityLabel, todayISO, weekdayOf, weekdayShort,
+  Ban, CalendarOff, ChevronRight, CircleAlert, CircleCheck, Play, Plus, Repeat, Trash2,
+} from "lucide-react";
+import { useDB, useVersion, store } from "../lib/store";
+import {
+  addDaysISO, formatDotShort, formatLong, mondayOfWeek, parityLabel, todayISO, weekdayOf, weekdayShort,
 } from "../lib/date";
 import { navigate } from "../lib/router";
 import { BigHeader, Screen, AvatarTile } from "../components/shell";
 import {
-  Btn, Card, Chip, ConfirmSheet, Field, IconBtn,
+  Btn, Card, Chip, ConfirmSheet, EmptyState, Field, IconBtn,
   Input, Select, Sheet, SectionTitle, useToast,
 } from "../components/ui";
+import { NewLessonSheet } from "../components/NewLessonSheet";
 import { cn } from "../utils/cn";
-import type { ScheduleItem } from "../lib/types";
+import type { Group, Lesson, ScheduleItem } from "../lib/types";
 
 const WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const DAY_FULL = ["", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
 
 export default function ScheduleScreen() {
   const db = useDB();
+  const ver = useVersion();
   const toast = useToast();
   const today = todayISO();
 
@@ -28,6 +32,8 @@ export default function ScheduleScreen() {
   const [removeConfirm, setRemoveConfirm] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [selectedISO, setSelectedISO] = useState(today);
+  const [daySheetISO, setDaySheetISO] = useState<string | null>(null);
+  const [newLessonOpen, setNewLessonOpen] = useState(false);
 
   // Форма добавления
   const [fGroup, setFGroup] = useState("");
@@ -45,15 +51,10 @@ export default function ScheduleScreen() {
     [monday],
   );
 
-  /** Тап по дате → переход к занятиям этого дня (первое занятие дня). */
+  /** Тап по дате → Sheet со списком занятий дня (сгруппирован по группам). */
   const goToDay = (iso: string) => {
     setSelectedISO(iso);
-    const lessons = store.lessonsOn(iso);
-    if (lessons.length > 0) {
-      navigate("/lesson/" + lessons[0].id);
-    } else {
-      toast("В этот день занятий нет");
-    }
+    setDaySheetISO(iso);
   };
 
   const openAdd = () => {
@@ -101,6 +102,27 @@ export default function ScheduleScreen() {
       .filter((l) => weekdayOf(l.date) === day)
       .filter((l) => !store.scheduleItemForDay(l.groupId, l.subjectId, day))
       .sort((a, b) => a.lessonNumber - b.lessonNumber || a.time.localeCompare(b.time));
+
+  /** Занятия выбранного дня (по расписанию + ручные), сгруппированные по группам. */
+  const dayGroups = useMemo(() => {
+    if (!daySheetISO) return [];
+    const byGroup = new Map<number, Lesson[]>();
+    for (const l of store.lessonsOn(daySheetISO)) {
+      const arr = byGroup.get(l.groupId);
+      if (arr) arr.push(l);
+      else byGroup.set(l.groupId, [l]);
+    }
+    return [...byGroup.entries()]
+      .map(([groupId, items]) => ({
+        group: store.group(groupId),
+        items: items.sort(
+          (a, b) => a.lessonNumber - b.lessonNumber || a.time.localeCompare(b.time),
+        ),
+      }))
+      .filter((x): x is { group: Group; items: Lesson[] } => x.group !== undefined)
+      .sort((a, b) => a.group.name.localeCompare(b.group.name));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db, ver, daySheetISO]);
 
   return (
     <Screen className="pb-28">
@@ -284,6 +306,65 @@ export default function ScheduleScreen() {
         })()}
       </Sheet>
 
+      {/* Занятия выбранного дня (тап по дате в ленте) */}
+      <Sheet
+        open={daySheetISO !== null}
+        onClose={() => setDaySheetISO(null)}
+        title={daySheetISO ? formatLong(daySheetISO) : ""}
+      >
+        {dayGroups.length === 0 ? (
+          <EmptyState
+            icon={CalendarOff}
+            title="В этот день занятий нет"
+            hint="Начните занятие вручную или выберите другую дату."
+          >
+            <Btn icon={Play} onClick={() => setNewLessonOpen(true)}>
+              Начать занятие
+            </Btn>
+          </EmptyState>
+        ) : (
+          dayGroups.map(({ group, items }) => (
+            <div key={group.id}>
+              <SectionTitle>{group.name}</SectionTitle>
+              {items.map((l) => {
+                const s = store.subject(l.subjectId);
+                if (!s) return null;
+                const manual = !store.scheduleItemForDay(
+                  l.groupId, l.subjectId, weekdayOf(l.date),
+                );
+                return (
+                  <Card
+                    key={l.id}
+                    className="p-3.5 mb-2 flex items-center gap-3"
+                    onClick={() => { setDaySheetISO(null); navigate("/lesson/" + l.id); }}
+                  >
+                    <div className="w-[44px] shrink-0 text-center">
+                      <div className="text-[15px] font-extrabold tabular-nums leading-none">
+                        {l.lessonNumber > 0 ? `№${l.lessonNumber}` : "—"}
+                      </div>
+                      <div className="mt-0.5 text-[9.5px] font-bold uppercase tracking-wide text-faint">
+                        пара
+                      </div>
+                    </div>
+                    <div className="w-px self-stretch bg-line" />
+                    <AvatarTile text={group.name.slice(0, 2)} className="w-9 h-9 text-[11px]" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[14.5px] font-bold truncate">{s.name}</div>
+                      <div className="text-[12px] text-muted truncate">{group.name}</div>
+                    </div>
+                    {l.status === "held" && <Chip tone="success"><CircleCheck size={11} />Проведено</Chip>}
+                    {l.status === "scheduled" && <Chip tone="warn"><CircleAlert size={11} />Назначено</Chip>}
+                    {l.status === "cancelled" && <Chip tone="danger"><Ban size={11} />Отменено</Chip>}
+                    {manual && <Chip tone="accent">вручную</Chip>}
+                    <ChevronRight size={16} className="text-faint shrink-0" />
+                  </Card>
+                );
+              })}
+            </div>
+          ))
+        )}
+      </Sheet>
+
       {/* Добавление пары */}
       <Sheet open={addOpen} onClose={() => setAddOpen(false)} title="Новая пара">
         <div className="flex flex-col gap-4">
@@ -345,6 +426,15 @@ export default function ScheduleScreen() {
           if (actionItem) store.removeScheduleItem(actionItem.id);
           setActionItem(null);
           toast("Пара удалена из расписания");
+        }}
+      />
+
+      <NewLessonSheet
+        open={newLessonOpen}
+        onClose={() => setNewLessonOpen(false)}
+        onCreated={(lesson) => {
+          setDaySheetISO(null);
+          navigate("/lesson/" + lesson.id);
         }}
       />
     </Screen>
