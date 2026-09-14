@@ -1,7 +1,142 @@
 from __future__ import annotations
 import sqlite3
 import os
+import threading
+import time
+import tempfile
+import weakref
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Optional, Sequence, Any
+
+
+class DatabaseBusyError(RuntimeError):
+    """Maintenance cannot proceed while another operation owns the database."""
+
+
+_access = threading.Condition(threading.RLock())
+_active: dict[str, int] = {}
+_maintenance: set[str] = set()
+
+
+def _path_key(path):
+    return os.path.normcase(os.path.realpath(os.fspath(path)))
+
+
+def _acquire_database(path):
+    key = _path_key(path)
+    with _access:
+        if not _access.wait_for(lambda: key not in _maintenance, timeout=10):
+            raise DatabaseBusyError("База восстанавливается. Повторите запрос позже.")
+        _active[key] = _active.get(key, 0) + 1
+    return key
+
+
+def _release_database(key):
+    with _access:
+        count = _active.get(key, 0) - 1
+        if count > 0:
+            _active[key] = count
+        else:
+            _active.pop(key, None)
+        _access.notify_all()
+
+
+@contextmanager
+def database_maintenance(path, timeout=10):
+    """Drain application connections and block new ones; never close a busy peer."""
+    key = _path_key(path)
+    with _access:
+        if key in _maintenance:
+            raise DatabaseBusyError("Восстановление уже выполняется.")
+        _maintenance.add(key)
+        if not _access.wait_for(lambda: not _active.get(key), timeout=timeout):
+            _maintenance.remove(key)
+            _access.notify_all()
+            raise DatabaseBusyError("База занята. Завершите текущую операцию и повторите.")
+    try:
+        yield
+    finally:
+        with _access:
+            _maintenance.discard(key)
+            _access.notify_all()
+
+
+def snapshot_database(path):
+    """Read a consistent SQLite snapshot, including committed WAL pages."""
+    key = _acquire_database(path)
+    try:
+        return _snapshot_database(path)
+    finally:
+        _release_database(key)
+
+
+def _snapshot_database(path):
+    # Raw read-only connection: backups must not run application migrations.
+    source = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+    fd, temp_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        target = sqlite3.connect(temp_path)
+        try:
+            deadline = time.monotonic() + 10
+            def progress(status, remaining, total):
+                if time.monotonic() > deadline:
+                    raise DatabaseBusyError("Не удалось создать снимок занятой базы.")
+            source.backup(target, pages=256, progress=progress, sleep=0.01)
+        finally:
+            target.close()
+        with open(temp_path, "rb") as f:
+            return f.read()
+    finally:
+        source.close()
+        os.unlink(temp_path)
+
+
+def validate_database_file(path, require_schedule=False):
+    """Validate application columns, integrity and declared foreign keys read-only."""
+    required = {
+        'groups': {'id', 'name'},
+        'students': {'id', 'group_id', 'last_name', 'first_name', 'middle_name'},
+        'subjects': {'id', 'name', 'group_id', 'total_hours'},
+        'lessons': {'id', 'subject_id', 'actual_subject_id', 'date'},
+        'grades': {'id', 'lesson_id', 'student_id', 'grade'},
+    }
+    conn = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if require_schedule or 'schedule' in tables:
+            required['schedule'] = {'id', 'day_of_week', 'lesson_number', 'subject_id', 'week_type'}
+        missing = required.keys() - tables
+        if missing:
+            raise ValueError('missing tables: ' + ', '.join(sorted(missing)))
+        for table, columns in required.items():
+            actual = {r[1] for r in conn.execute(f'PRAGMA table_info({table})')}
+            if columns - actual:
+                raise ValueError(f'incompatible schema: {table}: ' + ', '.join(sorted(columns - actual)))
+        if conn.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
+            raise ValueError('database integrity check failed')
+        if conn.execute('PRAGMA foreign_key_check').fetchone() is not None:
+            raise ValueError('database foreign key check failed')
+    except sqlite3.Error as exc:
+        raise ValueError('invalid database: ' + str(exc)) from exc
+    finally:
+        conn.close()
+    # Verify the real initialization and migrations on this disposable file.
+    with Database(str(path)):
+        pass
+
+
+def checkpoint_database(path):
+    """Checkpoint under maintenance; refuse replacement on a busy external writer."""
+    conn = sqlite3.connect(path, timeout=5)
+    try:
+        result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if result and result[0]:
+            raise DatabaseBusyError("База используется другим процессом.")
+    finally:
+        conn.close()
+
 
 # ─────────────────────── DB path resolution ───────────────────────
 # Desktop: lessons.db рядом со скриптом (как раньше).
@@ -34,19 +169,23 @@ DB_PATH = _resolve_db_path()
 class Database:
     def __init__(self, db_path: Optional[str] = None) -> None:
         self.db_path = db_path or DB_PATH
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
+        self._closed = False
+        key = _acquire_database(self.db_path)
+        self._release = weakref.finalize(self, _release_database, key)
         try:
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA foreign_keys = ON")
             self.conn.execute("PRAGMA journal_mode=WAL")
-        except Exception:
-            pass
-        try:
             self.conn.execute("PRAGMA busy_timeout = 5000")
+            self.init_schema()
+            self._migrate()
         except Exception:
-            pass
-        self.init_schema()
-        self._migrate()
+            if hasattr(self, "conn"):
+                self.conn.close()
+            self._closed = True
+            self._release()
+            raise
 
     def __enter__(self) -> 'Database':
         return self
@@ -496,10 +635,14 @@ class Database:
         self.conn.commit()
 
     def add_lesson(self, subject_id: int, date: str, actual_subject_id: Optional[int] = None, status: str = 'held', lesson_number: Optional[int] = None) -> int:
-        cur = self.conn.execute(
-            "INSERT INTO lessons (subject_id, actual_subject_id, date, status, lesson_number) VALUES (?, ?, ?, ?, ?)",
-            (subject_id, actual_subject_id, date, status, lesson_number))
-        self.conn.commit()
+        if status not in ('held', 'scheduled', 'cancelled'):
+            raise ValueError("Invalid lesson status")
+        if actual_subject_id is None and status != 'cancelled':
+            actual_subject_id = subject_id
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO lessons (subject_id, actual_subject_id, date, status, lesson_number) VALUES (?, ?, ?, ?, ?)",
+                (subject_id, actual_subject_id, date, status, lesson_number))
         return cur.lastrowid
 
     def get_lesson(self, lesson_id: int) -> Optional[sqlite3.Row]:
@@ -519,13 +662,15 @@ class Database:
             "SELECT * FROM students WHERE id = ?", (student_id,)).fetchone()
 
     def set_lesson_status(self, lesson_id: int, status: str) -> None:
-        self.conn.execute("UPDATE lessons SET status = ? WHERE id = ?", (status, lesson_id))
-        self.conn.commit()
+        if status not in ('held', 'scheduled', 'cancelled'):
+            raise ValueError("Invalid lesson status")
+        with self.conn:
+            self.conn.execute("UPDATE lessons SET status = ? WHERE id = ?", (status, lesson_id))
+            if status == 'cancelled':
+                self.conn.execute("DELETE FROM grades WHERE lesson_id = ?", (lesson_id,))
 
     def cancel_lesson(self, lesson_id: int) -> None:
-        self.conn.execute("UPDATE lessons SET status = 'cancelled' WHERE id = ?", (lesson_id,))
-        self.conn.execute("DELETE FROM grades WHERE lesson_id = ?", (lesson_id,))
-        self.conn.commit()
+        self.set_lesson_status(lesson_id, 'cancelled')
 
     def delete_lesson(self, lesson_id: int) -> None:
         self.conn.execute("DELETE FROM grades WHERE lesson_id = ?", (lesson_id,))
@@ -585,30 +730,69 @@ class Database:
         return prev_id, next_id
 
     def substitute_lesson(self, lesson_id: int, new_subject_id: int) -> int:
-        lesson = self.conn.execute("SELECT date, lesson_number FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
-        if not lesson:
-            raise ValueError("Lesson not found")
-        self.cancel_lesson(lesson_id)
-        new_id = self.add_lesson(new_subject_id, lesson['date'], new_subject_id, 'held', lesson['lesson_number'])
-        return new_id
+        if type(new_subject_id) is not int or new_subject_id <= 0:
+            raise ValueError("Invalid replacement subject")
+        with self.conn:
+            lesson = self.conn.execute("""
+                SELECT l.date, l.lesson_number, s.group_id
+                FROM lessons l JOIN subjects s ON s.id = l.subject_id
+                WHERE l.id = ?
+            """, (lesson_id,)).fetchone()
+            if not lesson:
+                raise ValueError("Lesson not found")
+            subject = self.conn.execute(
+                "SELECT group_id FROM subjects WHERE id = ?", (new_subject_id,)).fetchone()
+            if not subject or subject['group_id'] != lesson['group_id']:
+                raise ValueError("Replacement subject must belong to the same group")
+            self.conn.execute("UPDATE lessons SET status = 'cancelled' WHERE id = ?", (lesson_id,))
+            self.conn.execute("DELETE FROM grades WHERE lesson_id = ?", (lesson_id,))
+            cur = self.conn.execute(
+                "INSERT INTO lessons (subject_id, actual_subject_id, date, status, lesson_number) VALUES (?, ?, ?, 'held', ?)",
+                (new_subject_id, new_subject_id, lesson['date'], lesson['lesson_number']))
+        return cur.lastrowid
 
     def get_substitutions(self) -> Sequence[sqlite3.Row]:
         return []
 
-    def mark_attendance(self, lesson_id: int, student_id: int, grade: str) -> None:
-        if not grade:
-            self.conn.execute("DELETE FROM grades WHERE lesson_id = ? AND student_id = ?", (lesson_id, student_id))
-        else:
-            self.conn.execute("""
-                INSERT INTO grades (lesson_id, student_id, grade) VALUES (?, ?, ?)
-                ON CONFLICT(lesson_id, student_id) DO UPDATE SET grade = excluded.grade
-            """, (lesson_id, student_id, grade))
-        self.conn.commit()
+    def mark_attendance(self, lesson_id: int, student_id: int, grade: Optional[str]) -> None:
+        self.mark_attendance_bulk(lesson_id, [{'student_id': student_id, 'grade': grade}])
 
     def mark_attendance_bulk(self, lesson_id: int, records: list[dict]) -> None:
-        mark = self.mark_attendance
-        for r in records:
-            mark(lesson_id, r['student_id'], r['grade'])
+        if not isinstance(records, list):
+            raise ValueError("Attendance records must be a list")
+        if not records:
+            return
+        with self.conn:
+            lesson = self.conn.execute("""
+                SELECT l.status, s.group_id
+                FROM lessons l JOIN subjects s ON s.id = l.subject_id
+                WHERE l.id = ?
+            """, (lesson_id,)).fetchone()
+            if not lesson:
+                raise ValueError("Lesson not found")
+            if lesson['status'] == 'cancelled':
+                raise ValueError("Cannot mark attendance for a cancelled lesson")
+            student_ids = {r['id'] for r in self.conn.execute(
+                "SELECT id FROM students WHERE group_id = ?", (lesson['group_id'],))}
+            for record in records:
+                if not isinstance(record, dict) or 'student_id' not in record or 'grade' not in record:
+                    raise ValueError("Expected student_id and grade for each record")
+                student_id, grade = record['student_id'], record['grade']
+                if type(student_id) is not int or student_id not in student_ids:
+                    raise ValueError("Student must belong to the lesson's group")
+                if grade is not None and (not isinstance(grade, str) or grade not in (
+                        '', '0', '2', '3', '4', '5', 'absent', 'pass', 'present')):
+                    raise ValueError("Invalid grade")
+            for record in records:
+                student_id, grade = record['student_id'], record['grade']
+                if grade is None or grade == '':
+                    self.conn.execute(
+                        "DELETE FROM grades WHERE lesson_id = ? AND student_id = ?", (lesson_id, student_id))
+                else:
+                    self.conn.execute("""
+                        INSERT INTO grades (lesson_id, student_id, grade) VALUES (?, ?, ?)
+                        ON CONFLICT(lesson_id, student_id) DO UPDATE SET grade = excluded.grade
+                    """, (lesson_id, student_id, grade))
 
     def get_attendance(self, lesson_id: int) -> Sequence[sqlite3.Row]:
         return self.conn.execute("""
@@ -685,13 +869,15 @@ class Database:
     def students_without_recent_grades(self, group_id: int, min_grades: int = 3, days: int = 14) -> Sequence[sqlite3.Row]:
         return self.conn.execute("""
             SELECT s.id, s.last_name, s.first_name, s.middle_name,
-                COUNT(g.id) AS recent_grades
+                COUNT(l.id) AS recent_grades
             FROM students s
             LEFT JOIN grades g ON g.student_id = s.id
-            LEFT JOIN lessons l ON g.lesson_id = l.id AND l.date >= date('now', ? || ' days') AND l.status NOT IN ('cancelled', 'replaced')
+            LEFT JOIN lessons l ON g.lesson_id = l.id
+                AND l.date BETWEEN date('now', ? || ' days') AND date('now')
+                AND l.status NOT IN ('cancelled', 'replaced')
             WHERE s.group_id = ?
             GROUP BY s.id
-            HAVING COUNT(g.id) < ?
+            HAVING COUNT(l.id) < ?
         """, (f'-{days}', group_id, min_grades)).fetchall()
 
     def _is_empty(self) -> bool:
@@ -720,8 +906,19 @@ class Database:
         self.add_schedule_entry(6, 2, math_id, 2)
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         try:
-            self.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        except Exception:
-            pass
-        self.conn.close()
+            self.conn.close()
+        finally:
+            self._release()
+
+    def __del__(self):
+        # Legacy callers may omit close(); do not leave an open connection
+        # invisible to the maintenance gate until sqlite's next GC cycle.
+        if not getattr(self, "_closed", True):
+            try:
+                self.close()
+            except Exception:
+                pass

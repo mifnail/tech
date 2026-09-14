@@ -1,10 +1,11 @@
 /* «Ещё»: профиль, тема, боты (Telegram / MAX), код преподавателя,
    бэкап/восстановление. */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import RestoreDatabase from "../components/RestoreDatabase";
 import {
   Bot, Check, Coffee, Copy, Download, Moon, RefreshCw,
-  Send, Sun, Unlink, Upload,
+  Send, Sun, Unlink,
 } from "lucide-react";
 import { useDB, store } from "../lib/store";
 import { BigHeader, Screen } from "../components/shell";
@@ -70,12 +71,9 @@ export default function SettingsScreen() {
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [tgDraft, setTgDraft] = useState<string | null>(null);
   const [maxDraft, setMaxDraft] = useState<string | null>(null);
-  const dbFileRef = useRef<HTMLInputElement>(null);
   const [dropTgOpen, setDropTgOpen] = useState(false);
   const [dropMaxOpen, setDropMaxOpen] = useState(false);
   const [unbindTeacherOpen, setUnbindTeacherOpen] = useState(false);
-  const [restoreFile, setRestoreFile] = useState<File | null>(null);
-  const [restoreOpen, setRestoreOpen] = useState(false);
 
   /* ── Версия с /api/version (подпись внизу экрана) ── */
   const [appVer, setAppVer] = useState("");
@@ -159,30 +157,6 @@ export default function SettingsScreen() {
       } catch (_) {
         toast("Ошибка");
       }
-    }
-  };
-
-  /* ── База данных: восстановить из файла (FormData → /api/restore) ── */
-  const onPickDb = (file: File | null) => {
-    if (!file) return;
-    setRestoreFile(file);
-    setRestoreOpen(true);
-  };
-  const doRestoreDb = async () => {
-    if (!restoreFile) return;
-    try {
-      const fd = new FormData();
-      fd.append("file", restoreFile);
-      const r = await fetch("/api/restore", { method: "POST", body: fd });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j || !j.ok) {
-        toast((j && j.error) || "Ошибка восстановления");
-        return;
-      }
-      toast("Данные восстановлены. Автобэкап прежней базы сохранён в Загрузки");
-      await store.reloadAll();
-    } catch (_) {
-      toast("Ошибка сети");
     }
   };
 
@@ -369,21 +343,7 @@ export default function SettingsScreen() {
           <Btn variant="muted" icon={Download} onClick={downloadDb}>
             Скачать базу
           </Btn>
-          <label className="pressable inline-flex items-center justify-center gap-2 font-semibold select-none h-11 px-4 text-[14px] rounded-xl bg-surface text-ink border border-linestrong cursor-pointer active:bg-surface2">
-            <Upload size={17} strokeWidth={2.2} />
-            Восстановить базу
-            <input
-              ref={dbFileRef}
-              type="file"
-              accept=".db"
-              className="hidden"
-              onChange={(e) => { onPickDb(e.target.files?.[0] ?? null); e.target.value = ""; }}
-            />
-          </label>
-          <p className="text-[11.5px] text-faint leading-snug mt-1">
-            Полная копия базы SQLite. Сервер сохраняет файл в «Загрузки»; при восстановлении
-            прежняя база автоматически сохраняется как автобэкап.
-          </p>
+          <RestoreDatabase />
         </div>
       </Card>
 
@@ -438,15 +398,6 @@ export default function SettingsScreen() {
         confirmLabel="Отвязать"
         danger
         onConfirm={unbindTeacher}
-      />
-      <ConfirmSheet
-        open={restoreOpen}
-        onClose={() => setRestoreOpen(false)}
-        title="Восстановить базу?"
-        body="Текущая база данных будет заменена выбранным файлом. Сервер перед заменой сохранит автобэкап прежней базы в «Загрузки»."
-        confirmLabel="Да, заменить"
-        danger
-        onConfirm={doRestoreDb}
       />
     </Screen>
   );

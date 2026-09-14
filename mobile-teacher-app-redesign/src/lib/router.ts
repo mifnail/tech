@@ -29,8 +29,12 @@ let inAppNav = false;
 export async function navigate(to: string): Promise<void> {
   if (current() === to) return;
   inAppNav = true;
-  await store.flushAttendance();
-  window.location.hash = to;
+  try {
+    await store.flushAttendance();
+    window.location.hash = to;
+  } catch (e) {
+    console.error("[router] attendance could not be saved before navigation:", e);
+  }
 }
 
 export function goBack(fallback: string): void {

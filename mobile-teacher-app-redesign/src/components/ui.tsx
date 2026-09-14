@@ -242,12 +242,13 @@ export function SectionTitle({
 
 /* ── Нижний лист (bottom sheet) ───────────────────────────── */
 export function Sheet({
-  open, onClose, title, children,
+  open, onClose, title, children, dismissible = true,
 }: {
   open: boolean;
   onClose: () => void;
   title?: string;
   children: ReactNode;
+  dismissible?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -262,7 +263,7 @@ export function Sheet({
       <div
         className="an-fade absolute inset-0"
         style={{ background: "rgba(9,13,19,0.72)" }}
-        onClick={onClose}
+        onClick={dismissible ? onClose : undefined}
       />
       <div
         className="an-sheet relative w-full max-w-[480px] bg-surface rounded-t-[22px]
@@ -299,6 +300,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setMsg(null), 2400);
   }, []);
+
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("th-restore-success") === "1") {
+        sessionStorage.removeItem("th-restore-success");
+        show("Database restored. A safe recovery copy was created.");
+      }
+    } catch (_) {}
+  }, [show]);
 
   return (
     <ToastCtx.Provider value={show}>

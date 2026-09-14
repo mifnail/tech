@@ -29,14 +29,60 @@ _pending: dict[tuple[int, int], threading.Timer] = {}
 CURATOR_PUSH_DELAY = 60.0  # grade-push debounce: 60s balances settle-window vs timer survival (was 180, debugged at 10)
 _pending_curator: dict[tuple[int, int], threading.Timer] = {}
 
-from flask import Flask, Blueprint, Response, request, jsonify, send_from_directory, send_file
+from flask import Flask, Blueprint, Response, request, jsonify, send_from_directory, send_file, g, has_request_context
 
-from database import Database
+from database import (Database, DatabaseBusyError, database_maintenance,
+                      snapshot_database, _snapshot_database, checkpoint_database,
+                      validate_database_file)
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
+MAX_DATABASE_BYTES = 50 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = MAX_DATABASE_BYTES + 1024 * 1024
+
+
+@app.before_request
+def protect_local_api():
+    from urllib.parse import urlsplit
+    host = urlsplit('http://' + request.host).hostname
+    if host not in {'localhost', '127.0.0.1', '::1'}:
+        return jsonify({'error': 'Only localhost is allowed'}), 403
+    origin = request.headers.get('Origin')
+    if origin:
+        parsed = urlsplit(origin)
+        if parsed.scheme not in {'http', 'https'} or parsed.netloc != request.host:
+            return jsonify({'error': 'Cross-origin access is not allowed'}), 403
+    if request.headers.get('Sec-Fetch-Site') == 'cross-site':
+        return jsonify({'error': 'Cross-site access is not allowed'}), 403
+
+
+@app.errorhandler(413)
+def upload_too_large(error):
+    return jsonify({'error': 'Файл слишком большой (макс. 50 МБ).'}), 413
+
 
 def get_db() -> Database:
-    return Database()
+    if not has_request_context():
+        return Database()
+    if 'database' not in g or g.database._closed:
+        g.database = Database()
+    return g.database
+
+
+@app.teardown_appcontext
+def close_request_database(error=None):
+    db = g.pop('database', None)
+    if db is not None:
+        db.close()
+
+
+@app.errorhandler(DatabaseBusyError)
+def database_busy(error):
+    return jsonify({'error': str(error)}), 409
+
+
+@app.errorhandler(sqlite3.IntegrityError)
+def invalid_database_relation(error):
+    return jsonify({'error': 'Недопустимая связь или дубликат записи'}), 400
 
 
 def require_fields(*fields: str) -> Any:
@@ -44,7 +90,9 @@ def require_fields(*fields: str) -> Any:
     def decorator(f):
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
-            data = request.json or {}
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({'error': 'Expected a JSON object'}), 400
             missing = [f for f in fields if f not in data or data[f] is None]
             if missing:
                 return jsonify({'error': f'missing fields: {", ".join(missing)}'}), 400
@@ -477,7 +525,7 @@ def create_lesson():
     if raw_date:
         try:
             lesson_date = date.fromisoformat(raw_date)
-        except ValueError:
+        except (ValueError, TypeError):
             return jsonify({'error': 'bad date'}), 400
         if lesson_date > date.today():
             return jsonify({'error': 'date in future'}), 400
@@ -528,7 +576,10 @@ def substitute_lesson(lesson_id: int):
     except Exception:
         new_name = ''
     msg_text = f"Замена {ddmm}: {old_name} → {new_name}" if ddmm else f"Замена: {old_name} → {new_name}"
-    new_id = db.substitute_lesson(lesson_id, new_subject_id)
+    try:
+        new_id = db.substitute_lesson(lesson_id, new_subject_id)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     try:
         token = db.get_setting('max_bot_token')
         enabled = db.get_setting('max_bot_enabled')
@@ -591,10 +642,13 @@ def get_attendance(lesson_id: int):
 def mark_attendance(lesson_id: int):
     data = request.json
     db = get_db()
-    if isinstance(data, list):
-        db.mark_attendance_bulk(lesson_id, data)
-    else:
-        db.mark_attendance(lesson_id, data['student_id'], data['grade'])
+    records = data if isinstance(data, list) else [data]
+    if any(not isinstance(r, dict) or 'student_id' not in r or 'grade' not in r for r in records):
+        return jsonify({'error': 'Expected student_id and grade for each record'}), 400
+    try:
+        db.mark_attendance_bulk(lesson_id, records)
+    except (ValueError, TypeError) as exc:
+        return jsonify({'error': str(exc)}), 400
 
     # ---- Schedule debounced grade push via MAX bot ----
     try:
@@ -1347,42 +1401,25 @@ def _validate_sqlite_bytes(data: bytes, require_schedule: bool = False) -> None:
     When *require_schedule* is True the ``schedule`` table is also required
     (used by the MAX-bot restore path).
     """
+    if len(data) > MAX_DATABASE_BYTES:
+        raise ValueError('Файл слишком большой (макс. 50 МБ).')
     if len(data) < 100:
         raise ValueError('file too small to be SQLite')
     if data[:16] != b'SQLite format 3\x00':
         raise ValueError('not a SQLite file')
-    required = {'groups', 'students', 'subjects', 'lessons', 'grades'}
-    if require_schedule:
-        required = required | {'schedule'}
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
     try:
         tmp.write(data)
         tmp.close()
         try:
-            conn = sqlite3.connect(tmp.name)
-            try:
-                rows = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-                found = {r[0] for r in rows}
-                missing = required - found
-                if missing:
-                    raise ValueError(f'missing tables: {", ".join(sorted(missing))}')
-                # integrity check
-                try:
-                    quick = conn.execute("PRAGMA quick_check").fetchone()[0]
-                except Exception:
-                    quick = None
-                if quick != 'ok':
-                    raise ValueError('database integrity check failed')
-            finally:
-                conn.close()
-        except ValueError:
-            raise
-        except sqlite3.Error as e:
-            raise ValueError(f'invalid database: {e}') from e
+            validate_database_file(tmp.name, require_schedule=require_schedule)
+        except sqlite3.Error as exc:
+            raise ValueError('incompatible database: ' + str(exc)) from exc
     finally:
-        os.unlink(tmp.name)
+        tmp.close()
+        for path in (tmp.name, tmp.name + '-wal', tmp.name + '-shm'):
+            if os.path.exists(path):
+                os.unlink(path)
 
 
 def _atomic_replace_db(data: bytes) -> None:
@@ -1391,25 +1428,28 @@ def _atomic_replace_db(data: bytes) -> None:
     Also removes -wal / -shm sidecar files. Does **not** validate the data —
     callers must validate beforehand. Safe to call from any thread.
     """
-    # Checkpoint WAL and close all connections
-    try:
-        db = Database()
+    # Caller owns database_maintenance(): all application handles are drained.
+    if os.path.exists(_DB_PATH):
         try:
-            db.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        finally:
-            db.close()
-    except Exception:
-        pass
-    # Atomic replace
-    tmp_path = _DB_PATH + '.tmp_restore'
-    with open(tmp_path, 'wb') as f:
-        f.write(data)
-    os.replace(tmp_path, _DB_PATH)
-    for sidecar in (_DB_PATH + '-wal', _DB_PATH + '-shm'):
-        try:
-            os.unlink(sidecar)
-        except OSError:
+            checkpoint_database(_DB_PATH)
+        except sqlite3.DatabaseError:
+            # A damaged current DB can still be recovered; its raw file and
+            # sidecars have already been preserved in the recovery directory.
             pass
+    fd, tmp_path = tempfile.mkstemp(prefix='.restore-', suffix='.db',
+                                    dir=os.path.dirname(os.path.abspath(_DB_PATH)))
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, _DB_PATH)
+        for sidecar in (_DB_PATH + '-wal', _DB_PATH + '-shm'):
+            if os.path.exists(sidecar):
+                os.unlink(sidecar)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 def _restore_from_bytes(data: bytes) -> None:
@@ -1418,15 +1458,47 @@ def _restore_from_bytes(data: bytes) -> None:
     Raises ValueError with a human message on bad input.
     """
     _validate_sqlite_bytes(data)
-    # Best-effort auto-backup of current DB
-    try:
-        with open(_DB_PATH, 'rb') as f:
-            old_data = f.read()
-        bak_name = f'teachhelper_backup_{_time.strftime("%Y%m%d_%H%M%S")}.db'
-        _save_to_downloads_full(old_data, bak_name, 'application/x-sqlite3')
-    except Exception:
-        pass
-    _atomic_replace_db(data)
+    # A file replacement is only safe after EVERY application connection closes.
+    # Do not force-close a worker or silently replace a busy database.
+    with database_maintenance(_DB_PATH):
+        if os.path.exists(_DB_PATH):
+            raw_recovery = False
+            try:
+                old_data = _snapshot_database(_DB_PATH)
+            except sqlite3.DatabaseError:
+                raw_recovery = True
+                with open(_DB_PATH, 'rb') as f:
+                    old_data = f.read()
+            recovery_dir = os.path.join(os.path.dirname(os.path.abspath(_DB_PATH)), '.recovery')
+            os.makedirs(recovery_dir, exist_ok=True)
+            bak_name = f'teachhelper_backup_{_time.strftime("%Y%m%d_%H%M%S")}_{uuid.uuid4().hex[:8]}.db'
+            recovery_path = os.path.join(recovery_dir, bak_name)
+            # Mandatory local recovery copy. Disk/permission errors abort restore.
+            with open(recovery_path, 'xb') as f:
+                f.write(old_data)
+                f.flush()
+                os.fsync(f.fileno())
+            with open(recovery_path, 'rb') as f:
+                if f.read() != old_data:
+                    raise OSError('Recovery backup verification failed')
+            for suffix in ('-wal', '-shm') if raw_recovery else ():
+                sidecar = _DB_PATH + suffix
+                if os.path.exists(sidecar):
+                    with open(sidecar, 'rb') as source, open(recovery_path + suffix, 'xb') as target:
+                        target.write(source.read())
+                        target.flush()
+                        os.fsync(target.fileno())
+            # Downloads is convenience only; an app-private recovery exists even
+            # when Android's scoped storage denies exporting the backup.
+            try:
+                _save_to_downloads_full(old_data, bak_name, 'application/x-sqlite3')
+            except Exception:
+                pass
+        for pending in (_pending, _pending_curator):
+            for timer in list(pending.values()):
+                timer.cancel()
+            pending.clear()
+        _atomic_replace_db(data)
 
 
 def _drain_pfd(pfd) -> bytes:
@@ -1439,11 +1511,15 @@ def _drain_pfd(pfd) -> bytes:
             pass
         raise
     chunks: list[bytes] = []
+    total = 0
     try:
         while True:
-            chunk = os.read(fd, 65536)
+            chunk = os.read(fd, min(65536, MAX_DATABASE_BYTES - total + 1))
             if not chunk:
                 break
+            total += len(chunk)
+            if total > MAX_DATABASE_BYTES:
+                raise ValueError('Файл слишком большой (макс. 50 МБ).')
             chunks.append(chunk)
     finally:
         try:
@@ -1662,6 +1738,23 @@ _PICK_TIMEOUT = 120  # seconds the Flask thread waits for the UI-thread callback
 _file_pick = {'event': threading.Event(), 'uri': None, 'name': None,
               'code': -1, 'error': None, 'stage': None}
 _picker_bound = False
+_picker_lock = threading.Lock()
+
+
+def _single_picker(fn):
+    @functools.wraps(fn)
+    def guarded(*args, **kwargs):
+        global _REQUEST_CODE
+        if not _picker_lock.acquire(blocking=False):
+            return jsonify({'error': 'Выбор файла уже открыт'}), 409
+        try:
+            # Android request codes are 16-bit. Stale callbacks from a timed-out
+            # dialog cannot complete a subsequent restore request.
+            _REQUEST_CODE = 4242 if _REQUEST_CODE >= 65534 else _REQUEST_CODE + 1
+            return fn(*args, **kwargs)
+        finally:
+            _picker_lock.release()
+    return guarded
 
 
 def _resolve_display_name(resolver, uri):
@@ -1686,11 +1779,10 @@ def _resolve_display_name(resolver, uri):
 
 
 def _drain_istream(stream) -> bytes:
-    """Read a pyjnius InputStream fully. Best-effort, never raises.
+    """Read a complete InputStream; never treat a truncated prefix as a file.
 
-    Prefers chunked reads into a Java byte[]; falls back to a bounded
-    single-byte read() loop when the pyjnius array helper is unavailable.
-    Returns b'' when nothing could be read so the caller can fall back.
+    Return empty only when the array adapter is unavailable/broken before any
+    data is read, so the caller can reopen a file descriptor from the start.
     """
     try:
         try:
@@ -1701,28 +1793,33 @@ def _drain_istream(stream) -> bytes:
     except Exception:
         jarray = None
     if jarray is not None:
+        out = bytearray()
         try:
             buf = jarray('b')([0] * 65536)
-            out = bytearray()
             while True:
                 n = stream.read(buf)
-                if n is None or n <= 0:
+                if n is None or n < 0:
                     break
-                out.extend(buf[:n])
+                if n == 0:
+                    raise OSError('Empty read before end of file')
+                if len(out) + n > MAX_DATABASE_BYTES:
+                    raise ValueError('Файл слишком большой (макс. 50 МБ).')
+                out.extend((int(b) & 255) for b in buf[:n])
             return bytes(out)
-        except Exception:
+        except ValueError:
+            raise
+        except Exception as exc:
+            if out:
+                raise OSError('Не удалось полностью прочитать файл') from exc
             return b''
-    # No array helper: bounded single-byte loop.
     out = bytearray()
-    try:
-        while len(out) < 50 * 1024 * 1024:
-            b = stream.read()
-            if b is None or b < 0:
-                break
-            out.append(b)
-    except Exception:
-        pass
-    return bytes(out)
+    while True:
+        b = stream.read()
+        if b is None or b < 0:
+            return bytes(out)
+        if len(out) >= MAX_DATABASE_BYTES:
+            raise ValueError('Файл слишком большой (макс. 50 МБ).')
+        out.append(int(b) & 255)
 
 
 def _read_picked_uri(uri) -> bytes:
@@ -1744,6 +1841,8 @@ def _read_picked_uri(uri) -> bytes:
                     pass
             if data:
                 return data
+    except ValueError:
+        raise
     except Exception:
         pass
     pfd = resolver.openFileDescriptor(uri, 'r')
@@ -1858,9 +1957,13 @@ def _start_picker():
         _file_pick['event'].set()
         return 'unavailable'
 
+    request_code = _REQUEST_CODE
+
     def _ui():
         # Runs on the Android main/UI thread.
         global _picker_bound
+        if request_code != _REQUEST_CODE:
+            return
         if not _picker_bound:
             try:
                 from android.activity import bind as activity_bind
@@ -1877,7 +1980,7 @@ def _start_picker():
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             intent.setType('*/*')
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            activity.startActivityForResult(intent, _REQUEST_CODE)
+            activity.startActivityForResult(intent, request_code)
         except Exception as e:
             _file_pick['stage'] = 'launch'
             _file_pick['error'] = str(e)
@@ -1898,19 +2001,8 @@ backup_bp = Blueprint('backup', __name__, url_prefix='/api')
 
 @backup_bp.route('/backup', methods=['POST'])
 def backup_db():
-    # Checkpoint WAL first: in WAL mode recent commits may live only in -wal,
-    # so a raw file copy without checkpoint would be stale/incomplete.
     try:
-        _ck = get_db()
-        try:
-            _ck.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        finally:
-            _ck.close()
-    except Exception:
-        pass
-    try:
-        with open(_DB_PATH, 'rb') as f:
-            data = f.read()
+        data = snapshot_database(_DB_PATH)
     except Exception as e:
         return jsonify({'error': f'read db failed: {e}'}), 500
     filename = f'teachhelper_{date.today().isoformat()}.db'
@@ -1928,18 +2020,8 @@ def backup_share():
     Response: {ok, path, shared: True/False, [error]}
     On desktop where uri is None, shared is False but file is still saved.
     """
-    # Checkpoint WAL first
     try:
-        _ck = get_db()
-        try:
-            _ck.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        finally:
-            _ck.close()
-    except Exception:
-        pass
-    try:
-        with open(_DB_PATH, 'rb') as f:
-            data = f.read()
+        data = snapshot_database(_DB_PATH)
     except Exception as e:
         return jsonify({'error': f'read db failed: {e}'}), 500
     filename = f'teachhelper_{date.today().isoformat()}.db'
@@ -2098,6 +2180,7 @@ def restore_request_access():
 
 
 @backup_bp.route('/restore/pick', methods=['POST'])
+@_single_picker
 def restore_pick():
     """Restore a DB file the user picks via the native Android document picker.
 

@@ -283,38 +283,67 @@ class Store {
     }
     this.dirtyLessons.add(lessonId);
     if (this.gradeFlushTimer) clearTimeout(this.gradeFlushTimer);
-    this.gradeFlushTimer = setTimeout(() => this.flushAttendance(), Store.GRADE_PUSH_DELAY);
+    this.gradeFlushTimer = setTimeout(() => {
+      void this.flushAttendance().catch((e) => console.error("[store] automatic attendance flush failed:", e));
+    }, Store.GRADE_PUSH_DELAY);
   }
 
   /** Флаш: bulk POST attendance по всем «грязным» занятиям; откат при ошибке.
       Публичный: вызывается перед навигацией и на pagehide/visibilitychange. */
-  async flushAttendance() {
-    const dirty = [...this.dirtyLessons];
-    const snapshots = new Map(this.gradeSnapshots);
-    this.dirtyLessons.clear();
-    this.gradeSnapshots.clear();
-    this.gradeFlushTimer = null;
+  private attendanceFlush: Promise<void> | null = null;
 
-    for (const lessonId of dirty) {
-      const snapshot = snapshots.get(lessonId);
-      if (!snapshot) continue;
-      try {
-        const recs = this.db.grades.filter((g) => g.lessonId === lessonId);
-        const payload = recs.map((g) => ({ student_id: g.studentId, grade: gradeToText(g) }));
-        await _post(`/api/lessons/${lessonId}/attendance`, payload);
-      } catch (e) {
-        console.error(`[store] grade flush for lesson ${lessonId}:`, e);
-        this.db.grades = this.db.grades.filter((g) => g.lessonId !== lessonId);
-        this.db.grades.push(...snapshot);
-        this.touch();
+  flushAttendance(): Promise<void> {
+    if (this.gradeFlushTimer) clearTimeout(this.gradeFlushTimer);
+    this.gradeFlushTimer = null;
+    if (this.attendanceFlush) return this.attendanceFlush;
+    if (!this.dirtyLessons.size) return Promise.resolve();
+    const pending = this.flushGradeBatches();
+    this.attendanceFlush = pending;
+    const release = () => { this.attendanceFlush = null; };
+    pending.then(release, release);
+    return pending;
+  }
+
+  private async flushGradeBatches() {
+    while (this.dirtyLessons.size) {
+      if (this.gradeFlushTimer) clearTimeout(this.gradeFlushTimer);
+      this.gradeFlushTimer = null;
+      // Freeze all payloads before awaiting; later edits belong to the next batch.
+      const batch = [...this.dirtyLessons].map((lessonId) => ({
+        lessonId,
+        snapshot: this.gradeSnapshots.get(lessonId)!,
+        payload: this.db.grades.filter((g) => g.lessonId === lessonId)
+          .map((g) => ({ student_id: g.studentId, grade: gradeToText(g) })),
+      }));
+      this.dirtyLessons.clear();
+      this.gradeSnapshots.clear();
+      let failure: unknown;
+      for (const { lessonId, snapshot, payload } of batch) {
+        try {
+          await _post(`/api/lessons/${lessonId}/attendance`, payload);
+        } catch (e) {
+          failure = e;
+          console.error(`[store] grade flush for lesson ${lessonId}:`, e);
+          if (this.dirtyLessons.has(lessonId)) {
+            // Keep newer edits queued, but retain the last confirmed rollback state.
+            this.gradeSnapshots.set(lessonId, snapshot);
+          } else {
+            this.db.grades = this.db.grades.filter((g) => g.lessonId !== lessonId);
+            this.db.grades.push(...snapshot);
+            this.touch();
+          }
+        }
       }
+      if (failure) throw failure;
     }
   }
 
   /** Best-effort флаш при уходе со страницы (закрытие/сворачивание WebView). */
   private bindLifecycleFlush() {
     if (import.meta.env.DEV) return;
-    const flush = () => { void this.flushAttendance(); };
+    const flush = () => {
+      void this.flushAttendance().catch((e) => console.error("[store] lifecycle attendance flush failed:", e));
+    };
     window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") flush();
@@ -337,7 +366,7 @@ class Store {
     } else {
       /* ── PROD: пустая БД + async загрузка с сервера ───── */
       this.db = emptyDB();
-      this.loadFromApi();
+      void this.loadFromApi().catch(() => {});
       this.bindLifecycleFlush();
     }
   }
@@ -366,7 +395,7 @@ class Store {
   }
 
   /* ── PROD: загрузка данных с сервера ─────────────────── */
-  private async loadFromApi() {
+  private async loadFromApi(strict = false) {
     try {
       // Batch 1: основные данные (параллельно)
       const [groupsRaw, subjectsRaw, studentsRaw, scheduleRaw, todayRaw, tgLinks, maxLinks] =
@@ -400,7 +429,6 @@ class Store {
       // Обратная карта: subjectId → groupId
       const sg = new Map<ID, ID>();
       for (const s of subjectsRaw) sg.set(s.id, s.group_id);
-      this.subjectGroup = sg;
 
       // Множества привязок ботов
       const tgSet = new Set(tgLinks.map((l) => l.student_id));
@@ -410,14 +438,20 @@ class Store {
       const curatorP = groupsRaw.map((g) =>
         fetchJson(`/api/groups/${g.id}/curator`)
           .then((c) => (c as { code: string; bound: boolean }))
-          .catch(() => ({ code: "", bound: false })),
+          .catch((e) => {
+            if (strict) throw e;
+            return { code: "", bound: false };
+          }),
       );
       const gbP = subjectsRaw.map((s) =>
         (fetchJson(`/api/subjects/${s.id}/gradebook`) as Promise<{
           lessons: Array<{ id: number; date: string; lesson_number: number | null }>;
           grades: Record<string, Record<string, string>>;
           students: Array<{ id: number }>;
-        }>).catch(() => ({ lessons: [], grades: {}, students: [] })),
+        }>).catch((e) => {
+          if (strict) throw e;
+          return { lessons: [], grades: {}, students: [] };
+        }),
       );
       const [curators, gradebooks] = await Promise.all([
         Promise.all(curatorP),
@@ -535,7 +569,9 @@ class Store {
         maxHasToken = ms.has_token;
         teacherBound = !!ms.teacher_bound;
         teacherCode = ms.teacher_code || "";
-      } catch (_) { /* ignore */ }
+      } catch (e) {
+        if (strict) throw e;
+      }
 
       // Вычисляем max seq
       const maxId = Math.max(
@@ -547,6 +583,7 @@ class Store {
         0,
       );
 
+      this.subjectGroup = sg;
       this.db = {
         groups, students, subjects, schedule, lessons, grades,
         settings: {
@@ -564,6 +601,7 @@ class Store {
       this.touch();
     } catch (e) {
       console.error("[store] loadFromApi failed:", e);
+      throw e;
     }
   }
 
@@ -979,15 +1017,15 @@ class Store {
   cycleGrade(lessonId: ID, studentId: ID, dir: 1 | -1) {
     const rec = this.gradeOf(lessonId, studentId);
     if (!rec || !rec.present) return;
-    rec.value = dir === 1 ? nextGrade(rec.value) : prevGrade(rec.value);
     this.markGradeDirty(lessonId);
+    rec.value = dir === 1 ? nextGrade(rec.value) : prevGrade(rec.value);
     this.touch();
   }
   togglePresent(lessonId: ID, studentId: ID) {
     const rec = this.gradeOf(lessonId, studentId);
     if (!rec) return;
-    rec.present = !rec.present;
     this.markGradeDirty(lessonId);
+    rec.present = !rec.present;
     this.touch();
   }
   async updateSettings(patch: Partial<Settings>) {
@@ -1137,7 +1175,7 @@ class Store {
   /** Полная перезагрузка данных с сервера (после restore и т.д.). */
   async reloadAll() {
     if (import.meta.env.DEV) return;
-    await this.loadFromApi();
+    await this.loadFromApi(true);
   }
 
   resetDemo() {

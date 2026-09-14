@@ -139,14 +139,7 @@ def upload_file(token: str, data: bytes, filename: str, urlopen=None) -> str:
     except urllib.error.HTTPError as e:
         raise MaxError(f'upload step2 HTTP {e.code}')
     except urllib.error.URLError as e:
-        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
-            try:
-                with urllib.request.urlopen(req2, timeout=60, context=_UNVERIFIED_CTX) as r:
-                    body2 = _read_body(r)
-            except Exception as e2:
-                raise MaxError(f'upload step2: {e2}')
-        else:
-            raise MaxError(f'upload step2: {e.reason}')
+        raise MaxError(f'upload step2: {e.reason}')
     file_token = body2.get('token')
     if not file_token:
         raise MaxError('upload step2: no token')
@@ -454,7 +447,7 @@ _MAX_FILE_RESTORE_CAP = 50 * 1024 * 1024  # 50 MB
 
 
 def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlopen=None):
-    """Handle .db file sent by teacher/curator in bot chat.
+    """Handle a .db file sent by the authenticated teacher in bot chat.
 
     Downloads the file, validates, and restores the DB. Always best-effort
     (never crashes polling).
@@ -464,37 +457,13 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
     import tempfile
     from database import Database
 
-    # Authorization check + snapshot bindings (single db open)
-    _snap = {}
+    # Restore replaces ALL groups, so a group curator is not authorized.
     is_teacher = False
-    is_curator = False
     try:
         db = db_factory()
         try:
             teacher_chat = db.get_setting('max_teacher_chat')
-            is_teacher = str(teacher_chat) == str(cid)
-            cur_gid = db.curator_group_for_chat(cid)
-            is_curator = cur_gid is not None
-            # Snapshot bindings BEFORE restore (best-effort)
-            _snap['teacher_chat'] = teacher_chat
-            try:
-                _snap['curators'] = [dict(r) for r in db.conn.execute(
-                    "SELECT group_id, chat_id, code FROM curators WHERE chat_id IS NOT NULL"
-                ).fetchall()]
-            except Exception:
-                _snap['curators'] = []
-            try:
-                _snap['max_links'] = [dict(r) for r in db.conn.execute(
-                    "SELECT chat_id, student_id FROM max_links"
-                ).fetchall()]
-            except Exception:
-                _snap['max_links'] = []
-            try:
-                _snap['bot_links'] = [dict(r) for r in db.conn.execute(
-                    "SELECT chat_id, student_id FROM bot_links"
-                ).fetchall()]
-            except Exception:
-                _snap['bot_links'] = []
+            is_teacher = teacher_chat is not None and str(teacher_chat) == str(cid)
         finally:
             try:
                 db.close()
@@ -504,10 +473,10 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
         send_message(token, cid, 'Ошибка восстановления базы.', urlopen=urlopen)
         return
 
-    if not is_teacher and not is_curator:
+    if not is_teacher:
         try:
             send_message(token, cid,
-                         'Файлы принимает только преподаватель/куратор.',
+                         'Полную базу может восстановить только преподаватель.',
                          urlopen=urlopen)
         except Exception:
             pass
@@ -521,7 +490,7 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
         req = urllib.request.Request(file_url)
         resp = open_raw_with_fallback(req, urlopen=urlopen, timeout=60)
         with resp:
-            data = resp.read()
+            data = resp.read(_MAX_FILE_RESTORE_CAP + 1)
     except Exception:
         try:
             send_message(token, cid, 'Не удалось загрузить файл.', urlopen=urlopen)
@@ -558,43 +527,14 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
             pass
         return
 
-    # Re-apply bindings after restore (best-effort, fresh connection to restored DB)
-    if _snap:
-        try:
-            _db_r = Database()
-            try:
-                for _link in _snap.get('max_links', []):
-                    try:
-                        _db_r.conn.execute(
-                            "INSERT OR REPLACE INTO max_links (chat_id, student_id) VALUES (?, ?)",
-                            (_link['chat_id'], _link['student_id']))
-                    except Exception:
-                        pass
-                for _cur in _snap.get('curators', []):
-                    try:
-                        _db_r.conn.execute(
-                            "INSERT OR REPLACE INTO curators (group_id, chat_id, code) VALUES (?, ?, ?)",
-                            (_cur['group_id'], _cur['chat_id'], _cur['code']))
-                    except Exception:
-                        pass
-                for _bl in _snap.get('bot_links', []):
-                    try:
-                        _db_r.conn.execute(
-                            "INSERT OR REPLACE INTO bot_links (chat_id, student_id) VALUES (?, ?)",
-                            (_bl['chat_id'], _bl['student_id']))
-                    except Exception:
-                        pass
-                _tc = _snap.get('teacher_chat')
-                if _tc is not None:
-                    _db_r.set_setting('max_teacher_chat', _tc)
-                _db_r.conn.commit()
-            finally:
-                try:
-                    _db_r.close()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+    # Do not copy student/curator bindings by numeric ID into an unrelated
+    # database: the same ID may identify another person or group. The uploaded
+    # backup carries its own bindings. Keep only the authenticated teacher chat.
+    try:
+        with Database() as restored:
+            restored.set_setting('max_teacher_chat', str(cid))
+    except Exception:
+        pass
 
     # Report success with counts
     try:

@@ -32,7 +32,8 @@ def _ctx():
         return ssl.create_default_context()
 
 
-_UNVERIFIED_CTX = ssl._create_unverified_context()
+# Compatibility alias for older imports. It intentionally verifies certificates.
+_UNVERIFIED_CTX = _ctx()
 
 
 def _read_body(resp) -> dict:
@@ -49,61 +50,16 @@ def _read_body(resp) -> dict:
 
 
 def open_url_with_fallback(req, urlopen=None, timeout: int = 35) -> dict:
-    """Perform urlopen (or injected fake), on CERTIFICATE_VERIFY_FAILED with urlopen=None retries unverified.
-
-    Lets HTTPError propagate, returns body dict.
-    """
-    try:
-        if urlopen is not None:
-            resp = urlopen(req, timeout=timeout)
-        else:
-            resp = urllib.request.urlopen(req, timeout=timeout, context=_ctx())
-        with resp:
-            return _read_body(resp)
-    except urllib.error.HTTPError:
-        raise
-    except urllib.error.URLError as e:
-        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
-            try:
-                with urllib.request.urlopen(req, timeout=timeout, context=_UNVERIFIED_CTX) as resp2:
-                    return _read_body(resp2)
-            except urllib.error.HTTPError:
-                raise
-            except urllib.error.URLError as e2:
-                raise e2
-            except Exception as e2:
-                # For fallback failures that are not URLError, wrap as URLError-like?
-                raise e2
-        raise
+    """Read JSON over verified TLS; keep the name for callers and test doubles."""
+    with open_raw_with_fallback(req, urlopen=urlopen, timeout=timeout) as resp:
+        return _read_body(resp)
 
 
 def open_raw_with_fallback(req, urlopen=None, timeout: int = 35):
-    """Perform urlopen, return the raw open response object (caller must read/close).
-
-    Mirror of open_url_with_fallback but does NOT parse the body — the caller
-    gets back the raw urllib response so it can read binary data etc.
-    Lets HTTPError propagate.  On CERTIFICATE_VERIFY_FAILED retries unverified
-    only when no injected urlopen.
-    """
-    try:
-        if urlopen is not None:
-            resp = urlopen(req, timeout=timeout)
-        else:
-            resp = urllib.request.urlopen(req, timeout=timeout, context=_ctx())
-        return resp
-    except urllib.error.HTTPError:
-        raise
-    except urllib.error.URLError as e:
-        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
-            try:
-                return urllib.request.urlopen(req, timeout=timeout, context=_UNVERIFIED_CTX)
-            except urllib.error.HTTPError:
-                raise
-            except urllib.error.URLError as e2:
-                raise e2
-            except Exception as e2:
-                raise e2
-        raise
+    """Return a raw response; certificate errors fail closed, never downgrade TLS."""
+    if urlopen is not None:
+        return urlopen(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout, context=_ctx())
 
 
 def retry_on_connection(fn, retries: int = 3, sleep: int = 2):

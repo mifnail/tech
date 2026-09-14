@@ -71,7 +71,9 @@ def _maybe_start_maxbot(debug: bool) -> None:
 if __name__ == '__main__':
     prod = '--prod' in sys.argv or os.environ.get('MODE') == 'prod'
     debug = not prod and 'ANDROID_ARGUMENT' not in os.environ
-    host = '0.0.0.0' if prod else '127.0.0.1'
+    # This single-user journal has no network authentication boundary.
+    # Production disables debug; it must not expose grades/tokens to the LAN.
+    host = '127.0.0.1'
     port = int(os.environ.get('PORT', 5000))
 
     if not prod and 'ANDROID_ARGUMENT' not in os.environ:
