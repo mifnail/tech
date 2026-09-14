@@ -12,6 +12,7 @@ def _make_db_bytes(*tables, schedule=False):
     """Build valid SQLite bytes with the given table names.
 
     *tables* are base table names; if schedule=True adds 'schedule'.
+    Tables carry the application columns required by validate_database_file.
     Returns raw bytes written to a temp file. No internal seq table.
     """
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
@@ -19,9 +20,20 @@ def _make_db_bytes(*tables, schedule=False):
     try:
         conn = sqlite3.connect(tmp.name)
         for t in tables:
-            conn.execute(f"CREATE TABLE {t} (id INTEGER PRIMARY KEY)")
+            if t == 'groups':
+                conn.execute("CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT)")
+            elif t == 'students':
+                conn.execute("CREATE TABLE students (id INTEGER PRIMARY KEY, group_id INTEGER, last_name TEXT, first_name TEXT, middle_name TEXT)")
+            elif t == 'subjects':
+                conn.execute("CREATE TABLE subjects (id INTEGER PRIMARY KEY, name TEXT, group_id INTEGER, total_hours INTEGER)")
+            elif t == 'lessons':
+                conn.execute("CREATE TABLE lessons (id INTEGER PRIMARY KEY, subject_id INTEGER, actual_subject_id INTEGER, date TEXT)")
+            elif t == 'grades':
+                conn.execute("CREATE TABLE grades (id INTEGER PRIMARY KEY, lesson_id INTEGER, student_id INTEGER, grade TEXT)")
+            else:
+                conn.execute(f"CREATE TABLE {t} (id INTEGER PRIMARY KEY)")
         if schedule:
-            conn.execute("CREATE TABLE schedule (id INTEGER PRIMARY KEY, day_of_week INTEGER, lesson_number INTEGER, subject_id INTEGER)")
+            conn.execute("CREATE TABLE schedule (id INTEGER PRIMARY KEY, day_of_week INTEGER, lesson_number INTEGER, subject_id INTEGER, week_type INTEGER)")
         conn.close()
         with open(tmp.name, 'rb') as f:
             return f.read()

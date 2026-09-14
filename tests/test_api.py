@@ -655,7 +655,9 @@ class TestCuratorPush:
         db = get_db()
         db.set_setting('max_bot_token', 'fake-token')
         db.set_setting('max_bot_enabled', '1')
-        student_id = db.add_student(gid_b, 'Петров', 'Пётр')
+        # Student belongs to the lesson's subject group (group A); the actual
+        # subject is from group B, whose curator should be notified.
+        student_id = db.add_student(gid_a, 'Петров', 'Пётр')
 
         # Bind curator to group B only
         db.bind_curator(gid_b, 8888)
@@ -706,7 +708,9 @@ class TestCuratorPush:
         db = get_db()
         db.set_setting('max_bot_token', 'fake-token')
         db.set_setting('max_bot_enabled', '1')
-        student_id = db.add_student(gid_b, 'Петров', 'Пётр')
+        # Student belongs to the lesson's subject group (group A); the actual
+        # subject is from group B, whose curator should be notified.
+        student_id = db.add_student(gid_a, 'Петров', 'Пётр')
         db.bind_curator(gid_b, 8888)
 
         lid = client.post('/api/lessons', json={

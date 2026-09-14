@@ -28,10 +28,10 @@ def _make_valid_db_bytes():
         conn = sqlite3.connect(tmp.name)
         conn.executescript("""
             CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT);
-            CREATE TABLE students (id INTEGER PRIMARY KEY, group_id INTEGER, last_name TEXT, first_name TEXT);
+            CREATE TABLE students (id INTEGER PRIMARY KEY, group_id INTEGER, last_name TEXT, first_name TEXT, middle_name TEXT);
             CREATE TABLE subjects (id INTEGER PRIMARY KEY, name TEXT, group_id INTEGER, total_hours INTEGER);
-            CREATE TABLE schedule (id INTEGER PRIMARY KEY, day_of_week INTEGER, lesson_number INTEGER, subject_id INTEGER);
-            CREATE TABLE lessons (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, status TEXT, lesson_number INTEGER);
+            CREATE TABLE schedule (id INTEGER PRIMARY KEY, day_of_week INTEGER, lesson_number INTEGER, subject_id INTEGER, week_type INTEGER);
+            CREATE TABLE lessons (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, status TEXT, lesson_number INTEGER, actual_subject_id INTEGER);
             CREATE TABLE grades (id INTEGER PRIMARY KEY, lesson_id INTEGER, student_id INTEGER, grade TEXT);
             CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT);
         """)
@@ -64,12 +64,9 @@ class TestBackup:
 
     def test_backup_read_error(self, client, monkeypatch):
         """Backup handles read error gracefully."""
-        real_open = open
-        def bad_open(path, *args, **kwargs):
-            if isinstance(path, str) and path == _api_module._DB_PATH and args and args[0] == 'rb':
-                raise PermissionError('nope')
-            return real_open(path, *args, **kwargs)
-        monkeypatch.setattr('builtins.open', bad_open)
+        def bad_snapshot(path):
+            raise PermissionError('nope')
+        monkeypatch.setattr(_api_module, 'snapshot_database', bad_snapshot)
         rv = client.post('/api/backup')
         assert rv.status_code == 500
         assert 'error' in rv.json
@@ -578,8 +575,9 @@ class TestRestorePick:
             raise AssertionError('must not read bytes on the UI thread')
         monkeypatch.setattr(_api_module, '_read_picked_uri', must_not_read)
 
-        _api_module._on_pick_result(_api_module._REQUEST_CODE, -1, FakeIntent())
-        assert _api_module._file_pick['code'] == 4242
+        code = _api_module._REQUEST_CODE
+        _api_module._on_pick_result(code, -1, FakeIntent())
+        assert _api_module._file_pick['code'] == code
         assert _api_module._file_pick['uri'] is not None
         assert _api_module._file_pick['name'] == 'picked.db'
         assert _api_module._file_pick['event'].is_set()
@@ -849,12 +847,9 @@ class TestBackupShare:
 
     def test_share_read_error(self, client, monkeypatch):
         """Handles DB read error gracefully."""
-        real_open = open
-        def bad_open(path, *args, **kwargs):
-            if isinstance(path, str) and path == _api_module._DB_PATH and args and args[0] == 'rb':
-                raise PermissionError('nope')
-            return real_open(path, *args, **kwargs)
-        monkeypatch.setattr('builtins.open', bad_open)
+        def bad_snapshot(path):
+            raise PermissionError('nope')
+        monkeypatch.setattr(_api_module, 'snapshot_database', bad_snapshot)
         rv = client.post('/api/backup/share')
         assert rv.status_code == 500
         assert 'error' in rv.json

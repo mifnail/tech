@@ -596,7 +596,9 @@ class TestGrades:
         sid = db.add_subject('Математика', 32, gid)
         student_id = db.add_student(gid, 'Иванов', 'Иван')
         lid = db.add_lesson(sid, '2026-09-01', sid, 'cancelled')
-        db.mark_attendance(lid, student_id, '5')
+        # New contract: attendance cannot be marked on a cancelled lesson.
+        with pytest.raises(ValueError):
+            db.mark_attendance(lid, student_id, '5')
         avgs = db.average_grades(sid)
         assert avgs == []
 
