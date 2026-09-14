@@ -21,6 +21,15 @@ export default function RestoreDatabase() {
   const [listLoading, setListLoading] = useState(false);
   const listing = useRef(false);
   const [backupName, setBackupName] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const input = fileRef.current;
+    if (!input) return;
+    const onCancel = () => setMessage("File selection cancelled. The database was not replaced.");
+    input.addEventListener("cancel", onCancel);
+    return () => input.removeEventListener("cancel", onCancel);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,8 +165,8 @@ export default function RestoreDatabase() {
         <Upload size={17} strokeWidth={2.2} />
         Restore database from file
         <input id="restore-database-file" type="file" accept="application/x-sqlite3,.db"
+          ref={fileRef}
           className="restore-file-input" disabled={busy || listLoading}
-          onCancel={() => setMessage("File selection cancelled. The database was not replaced.")}
           onChange={(event) => {
             const file = event.currentTarget.files?.[0];
             event.currentTarget.value = "";
