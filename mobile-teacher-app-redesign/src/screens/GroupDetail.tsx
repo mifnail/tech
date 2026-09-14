@@ -60,6 +60,11 @@ export default function GroupDetailScreen({ id }: { id: number }) {
   const [editStudentId, setEditStudentId] = useState<number | null>(null);
   const [editStudentName, setEditStudentName] = useState("");
   const [editStudentOpen, setEditStudentOpen] = useState(false);
+  const [editSubjectId, setEditSubjectId] = useState<number | null>(null);
+  const [editSubjectName, setEditSubjectName] = useState("");
+  const [editSubjectHours, setEditSubjectHours] = useState("");
+  const [editSubjectOpen, setEditSubjectOpen] = useState(false);
+  const [removeSubjectId, setRemoveSubjectId] = useState<number | null>(null);
 
   const unbindCurator = async () => {
     if (!group) return;
@@ -94,6 +99,24 @@ export default function GroupDetailScreen({ id }: { id: number }) {
     setEditStudentOpen(false);
     setEditStudentId(null);
     toast("Сохранено");
+  };
+
+  const doEditSubject = () => {
+    if (!editSubjectName.trim() || editSubjectId === null) return;
+    store.updateSubject(editSubjectId, {
+      name: editSubjectName,
+      totalHours: Number(editSubjectHours) || 0,
+    });
+    setEditSubjectOpen(false);
+    setEditSubjectId(null);
+    toast("Сохранено");
+  };
+
+  const doRemoveSubject = () => {
+    if (removeSubjectId === null) return;
+    store.removeSubject(removeSubjectId);
+    setRemoveSubjectId(null);
+    toast("Предмет удалён");
   };
 
   const students = useMemo(
@@ -259,6 +282,27 @@ export default function GroupDetailScreen({ id }: { id: number }) {
               {formatAvg(avg)}
             </Chip>
           )}
+          <IconBtn
+            icon={Pencil}
+            label={"Редактировать " + subj.name}
+            className="w-8 h-8 text-faint"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditSubjectId(subj.id);
+              setEditSubjectName(subj.name);
+              setEditSubjectHours(String(subj.totalHours ?? ""));
+              setEditSubjectOpen(true);
+            }}
+          />
+          <IconBtn
+            icon={Trash2}
+            label={"Удалить " + subj.name}
+            className="w-8 h-8 text-faint"
+            onClick={(e) => {
+              e.stopPropagation();
+              setRemoveSubjectId(subj.id);
+            }}
+          />
           <ChevronRight size={16} className="text-faint shrink-0" />
         </Card>
       ))}
@@ -547,6 +591,43 @@ export default function GroupDetailScreen({ id }: { id: number }) {
           Сохранить
         </Btn>
       </Sheet>
+
+      <Sheet open={editSubjectOpen} onClose={() => setEditSubjectOpen(false)} title="Редактировать предмет">
+        <div className="flex flex-col gap-4">
+          <Field label="Название предмета">
+            <Input
+              value={editSubjectName}
+              onChange={(e) => setEditSubjectName(e.target.value)}
+              placeholder="Например, Компьютерные сети"
+              autoFocus
+              onKeyDown={(e) => e.key === "Enter" && doEditSubject()}
+            />
+          </Field>
+          <Field label="Часов (всего)">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={editSubjectHours}
+              onChange={(e) => setEditSubjectHours(e.target.value)}
+              placeholder="Например, 72"
+            />
+          </Field>
+          <Btn size="lg" className="w-full" onClick={doEditSubject} disabled={!editSubjectName.trim()}>
+            Сохранить
+          </Btn>
+        </div>
+      </Sheet>
+
+      <ConfirmSheet
+        open={removeSubjectId !== null}
+        onClose={() => setRemoveSubjectId(null)}
+        title="Удалить предмет?"
+        body="Удалятся занятия, оценки и расписание предмета. Действие необратимо."
+        confirmLabel="Удалить"
+        danger
+        onConfirm={doRemoveSubject}
+      />
     </Screen>
   );
 }

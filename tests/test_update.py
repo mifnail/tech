@@ -84,7 +84,7 @@ class TestVersion:
         d = rv.get_json()
         assert d['ver']  # mtime dist/index.html (кэш-бастер)
         assert d['static_ver'] == d['ver']
-        assert d['app_version']  # semver (0.237 из VERSION/env/дефолта)
+        assert d['app_version']  # semver из VERSION/env/дефолта
 
     def test_app_version_is_semver(self):
         client = _make_client()
@@ -237,7 +237,7 @@ class TestUpdateCheck:
         assert d['update_available'] is False
 
     def test_equal_current_version(self):
-        """current == latest (0.237) → no update."""
+        """current > latest → no update."""
         client = _make_client()
         _reset_cache()
         with patch('urllib.request.urlopen', return_value=_fake_release_response()):

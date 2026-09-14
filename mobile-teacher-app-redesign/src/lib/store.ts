@@ -918,6 +918,55 @@ class Store {
     }
     return s;
   }
+  updateSubject(id: ID, patch: { name?: string; totalHours?: number }) {
+    const s = this.db.subjects.find((x) => x.id === id);
+    if (!s) return;
+    const prev = { name: s.name, totalHours: s.totalHours };
+    if (patch.name !== undefined) s.name = patch.name.trim();
+    if (patch.totalHours !== undefined) s.totalHours = patch.totalHours;
+    this.touch();
+    if (!import.meta.env.DEV) {
+      _patch(`/api/subjects/${id}`, {
+        name: s.name,
+        total_hours: s.totalHours ?? 0,
+      }).catch((e) => {
+        console.error("[store] updateSubject failed:", e);
+        s.name = prev.name;
+        s.totalHours = prev.totalHours;
+        this.touch();
+      });
+    }
+  }
+  removeSubject(id: ID) {
+    const snap = {
+      subjects: [...this.db.subjects],
+      schedule: [...this.db.schedule],
+      lessons: [...this.db.lessons],
+      grades: [...this.db.grades],
+      groups: this.db.groups.map((g) => ({ ...g, subjectIds: [...g.subjectIds] })),
+    };
+    // Каскад: удаляем расписание, занятия, оценки, отвязываем от групп.
+    this.db.schedule = this.db.schedule.filter((s) => s.subjectId !== id);
+    const lessonIds = this.db.lessons.filter((l) => l.subjectId === id).map((l) => l.id);
+    this.db.grades = this.db.grades.filter((g) => !lessonIds.includes(g.lessonId));
+    this.db.lessons = this.db.lessons.filter((l) => l.subjectId !== id);
+    for (const g of this.db.groups) {
+      g.subjectIds = g.subjectIds.filter((x) => x !== id);
+    }
+    this.db.subjects = this.db.subjects.filter((s) => s.id !== id);
+    this.touch();
+    if (!import.meta.env.DEV) {
+      _del(`/api/subjects/${id}`).catch((e) => {
+        console.error("[store] removeSubject failed:", e);
+        this.db.subjects = snap.subjects;
+        this.db.schedule = snap.schedule;
+        this.db.lessons = snap.lessons;
+        this.db.grades = snap.grades;
+        this.db.groups = snap.groups;
+        this.touch();
+      });
+    }
+  }
   assignSubject(groupId: ID, subjectId: ID) {
     const g = this.group(groupId);
     if (g && !g.subjectIds.includes(subjectId)) {

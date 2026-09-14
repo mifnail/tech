@@ -37,6 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Write VERSION from run number
+        run: echo "0.${{ github.run_number }}" > VERSION
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
