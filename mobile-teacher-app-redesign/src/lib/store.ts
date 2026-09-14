@@ -806,6 +806,34 @@ class Store {
       });
     }
   }
+  addStudentsBulk(groupId: ID, names: string[]): Promise<{ total: number; added: number }> {
+    const parsed = names.map((n) => n.trim()).filter((n) => n.length > 0);
+    const total = parsed.length;
+    if (total === 0) return Promise.resolve({ total: 0, added: 0 });
+    const studs: Student[] = parsed.map((n) => ({
+      id: this.nextId(), groupId, name: n,
+    }));
+    this.db.students.push(...studs);
+    this.touch();
+    if (import.meta.env.DEV) {
+      return Promise.resolve({ total, added: total });
+    }
+    const parts = parsed.map((n) => splitName(n));
+    return _post("/api/students/bulk", {
+      group_id: groupId,
+      students: parts,
+    }).then((r) => {
+      const { added } = r as { added: number };
+      return { total, added };
+    }).catch((e) => {
+      console.error("[store] addStudentsBulk failed:", e);
+      for (const st of studs) {
+        this.db.students = this.db.students.filter((x) => x !== st);
+      }
+      this.touch();
+      throw e;
+    });
+  }
   addStudent(groupId: ID, name: string): Student {
     const st: Student = { id: this.nextId(), groupId, name: name.trim() };
     this.db.students.push(st);

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  BookOpen, ChevronRight, Copy, Pencil, Plus, Send, MessageCircle, Trash2, Unlink, UserPlus, X,
+  BookOpen, ChevronRight, Copy, ListChecks, Pencil, Plus, Send, MessageCircle, Trash2, Unlink, UserPlus, X,
 } from "lucide-react";
 import { useDB, useVersion, store } from "../lib/store";
 import { avgOf, formatAvg, isDebtor } from "../lib/grades";
@@ -10,7 +10,7 @@ import { navigate } from "../lib/router";
 import { BackHeader, Screen } from "../components/shell";
 import {
   Btn, Card, Chip, ConfirmSheet, Field, IconBtn, Input, SectionTitle,
-  Select, Sheet, useToast,
+  Select, Segmented, Sheet, useToast,
 } from "../components/ui";
 import { cn } from "../utils/cn";
 
@@ -44,6 +44,8 @@ export default function GroupDetailScreen({ id }: { id: number }) {
 
   const [addStudentOpen, setAddStudentOpen] = useState(false);
   const [studentName, setStudentName] = useState("");
+  const [addStudentMode, setAddStudentMode] = useState<"single" | "bulk">("single");
+  const [bulkNames, setBulkNames] = useState("");
   const [addSubjectOpen, setAddSubjectOpen] = useState(false);
   const [subjectPick, setSubjectPick] = useState("");
   const [subjectNew, setSubjectNew] = useState("");
@@ -152,6 +154,20 @@ export default function GroupDetailScreen({ id }: { id: number }) {
     setStudentName("");
     setAddStudentOpen(false);
     toast("Студент добавлен");
+  };
+
+  const addStudentsBulkHandler = async () => {
+    if (!bulkNames.trim() || !group) return;
+    const names = bulkNames.split("\n").filter((n) => n.trim().length > 0);
+    if (names.length === 0) return;
+    try {
+      const { total, added } = await store.addStudentsBulk(group.id, names);
+      setBulkNames("");
+      setAddStudentOpen(false);
+      toast(added < total ? `Добавлено ${added} из ${total}` : `Добавлено ${added}`);
+    } catch (_) {
+      toast("Ошибка добавления");
+    }
   };
 
   const assignSubject = () => {
@@ -371,18 +387,52 @@ export default function GroupDetailScreen({ id }: { id: number }) {
 
       {/* Листы */}
       <Sheet open={addStudentOpen} onClose={() => setAddStudentOpen(false)} title="Новый студент">
-        <Field label="Фамилия и имя">
-          <Input
-            value={studentName}
-            onChange={(e) => setStudentName(e.target.value)}
-            placeholder="Иванова Мария"
-            autoFocus
-            onKeyDown={(e) => e.key === "Enter" && addStudent()}
-          />
-        </Field>
-        <Btn size="lg" className="w-full mt-4" onClick={addStudent} disabled={!studentName.trim()}>
-          Добавить
-        </Btn>
+        <Segmented
+          options={[
+            { value: "single", label: "Один" },
+            { value: "bulk", label: "Списком" },
+          ]}
+          value={addStudentMode}
+          onChange={(v) => setAddStudentMode(v)}
+          className="mb-4"
+        />
+        {addStudentMode === "single" ? (
+          <>
+            <Field label="Фамилия и имя">
+              <Input
+                value={studentName}
+                onChange={(e) => setStudentName(e.target.value)}
+                placeholder="Иванова Мария"
+                autoFocus
+                onKeyDown={(e) => e.key === "Enter" && addStudent()}
+              />
+            </Field>
+            <Btn size="lg" className="w-full mt-4" onClick={addStudent} disabled={!studentName.trim()}>
+              Добавить
+            </Btn>
+          </>
+        ) : (
+          <>
+            <Field label="По одному ФИО на строку">
+              <textarea
+                value={bulkNames}
+                onChange={(e) => setBulkNames(e.target.value)}
+                placeholder={"Иванова Мария\nПетров Иван\nСидорова Анна"}
+                rows={6}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-linestrong text-[15px] placeholder:text-faint resize-none"
+              />
+            </Field>
+            <Btn
+              size="lg"
+              className="w-full mt-4"
+              icon={ListChecks}
+              onClick={addStudentsBulkHandler}
+              disabled={!bulkNames.trim()}
+            >
+              Добавить всех
+            </Btn>
+          </>
+        )}
       </Sheet>
 
       <Sheet open={addSubjectOpen} onClose={() => setAddSubjectOpen(false)} title="Предмет группы">

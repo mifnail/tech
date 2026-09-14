@@ -9,7 +9,7 @@ import {
   addDaysISO, fromISO, formatDot, monthYearLabel, todayISO, toISO, weekdayShort,
 } from "../lib/date";
 import { cn } from "../utils/cn";
-import { Btn, Sheet } from "./ui";
+import { Btn, Sheet, useToast } from "./ui";
 import { AvatarTile } from "./shell";
 
 const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -24,6 +24,7 @@ export function NewLessonSheet({
   date?: string;
 }) {
   const today = todayISO();
+  const toast = useToast();
   const [pair, setPair] = useState<{ groupId: ID; subjectId: ID } | null>(null);
   const [month, setMonth] = useState(today.slice(0, 7));
   const [selDate, setSelDate] = useState(today);
@@ -33,8 +34,9 @@ export function NewLessonSheet({
   useEffect(() => {
     if (open) {
       const d = date ?? todayISO();
-      setSelDate(d);
-      setMonth(d.slice(0, 7));
+      const clamped = d > today ? today : d;
+      setSelDate(clamped);
+      setMonth(clamped.slice(0, 7));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -76,6 +78,11 @@ export function NewLessonSheet({
 
   const create = async () => {
     if (!pair) return;
+    if (selDate > today) {
+      setSelDate(today);
+      toast("Нельзя создать занятие в будущем");
+      return;
+    }
     const lesson = await store.createLesson(pair.groupId, pair.subjectId, selDate, effNum);
     close();
     onCreated(lesson);
