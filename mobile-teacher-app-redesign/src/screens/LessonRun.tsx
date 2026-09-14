@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  Ban, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  ArrowLeftRight, Ban, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
   CircleCheck, MoreVertical, RotateCcw, Trash2,
 } from "lucide-react";
 import { useDB, store, lessonAvg } from "../lib/store";
@@ -13,6 +13,7 @@ import { formatDot, formatLong } from "../lib/date";
 import { buzz, formatAvg } from "../lib/grades";
 import { navigate, goBack } from "../lib/router";
 import { Btn, Chip, ConfirmSheet, GradeChip, IconBtn, Sheet, useToast } from "../components/ui";
+import { AvatarTile } from "../components/shell";
 import { cn } from "../utils/cn";
 import type { Lesson, Student } from "../lib/types";
 
@@ -112,6 +113,9 @@ export default function LessonRunScreen({ id }: { id: number }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [substituteOpen, setSubstituteOpen] = useState(false);
+  const [substituteConfirm, setSubstituteConfirm] = useState(false);
+  const [selectedSubjectId, setSelectedSubjectId] = useState<number | null>(null);
 
   const siblings = useMemo(
     () => (lesson ? store.lessonsOfPair(lesson.groupId, lesson.subjectId) : []),
@@ -146,6 +150,10 @@ export default function LessonRunScreen({ id }: { id: number }) {
   const avg = lessonAvg(recs);
   const cancelled = lesson.status === "cancelled";
 
+  const allPairs = store.db.groups.flatMap((g) =>
+    g.subjectIds.map((sid) => ({ groupId: g.id, subjectId: sid })),
+  );
+
   const idx = siblings.findIndex((l) => l.id === lesson.id);
   const prev = idx > 0 ? siblings[idx - 1] : null;
   const next = idx >= 0 && idx < siblings.length - 1 ? siblings[idx + 1] : null;
@@ -153,6 +161,26 @@ export default function LessonRunScreen({ id }: { id: number }) {
   const finish = () => {
     store.setLessonStatus(lesson.id, "held");
     toast("Занятие сохранено · ср. " + formatAvg(lessonAvg(store.gradesOfLesson(lesson.id))));
+  };
+
+  const doSubstitute = async () => {
+    if (!selectedSubjectId) return;
+    try {
+      const newId = await store.substituteLesson(lesson.id, selectedSubjectId);
+      setSubstituteConfirm(false);
+      setSelectedSubjectId(null);
+      if (newId) {
+        await store.loadLesson(newId);
+        navigate("/lesson/" + newId);
+        toast("Занятие заменено");
+      } else {
+        toast("Не удалось заменить занятие");
+      }
+    } catch {
+      setSubstituteConfirm(false);
+      setSelectedSubjectId(null);
+      toast("Ошибка замены занятия");
+    }
   };
 
   return (
@@ -263,6 +291,12 @@ export default function LessonRunScreen({ id }: { id: number }) {
             </Btn>
           )}
           <Btn
+            variant="muted" className="justify-start" icon={ArrowLeftRight}
+            onClick={() => { setMenuOpen(false); setSubstituteOpen(true); }}
+          >
+            Заменить занятие
+          </Btn>
+          <Btn
             variant="danger" className="justify-start" icon={Trash2}
             onClick={() => { setMenuOpen(false); setDeleteConfirm(true); }}
           >
@@ -296,6 +330,63 @@ export default function LessonRunScreen({ id }: { id: number }) {
           navigate("/today");
           toast("Занятие удалено");
         }}
+      />
+
+      {/* Выбор предмета для замены */}
+      <Sheet
+        open={substituteOpen}
+        onClose={() => { setSubstituteOpen(false); setSelectedSubjectId(null); }}
+        title="Замена занятия"
+      >
+        <div className="flex flex-col gap-2">
+          <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted mb-1">
+            Выберите предмет
+          </div>
+          {allPairs.length === 0 && (
+            <p className="text-[14px] text-muted py-4 text-center">
+              Нет предметов — добавьте предмет на вкладке «Предметы/Группы».
+            </p>
+          )}
+          {allPairs.length > 0 && (
+            <div className="bg-surface border border-line rounded-2xl divide-y divide-line overflow-hidden">
+              {allPairs.map((p) => {
+                const g = store.group(p.groupId);
+                const s = store.subject(p.subjectId);
+                if (!g || !s) return null;
+                return (
+                  <button
+                    key={p.groupId + "/" + p.subjectId}
+                    onClick={() => {
+                      setSelectedSubjectId(p.subjectId);
+                      setSubstituteOpen(false);
+                      setSubstituteConfirm(true);
+                    }}
+                    className="pressable flex items-center gap-3 p-3 w-full text-left active:bg-surface2"
+                  >
+                    <AvatarTile text={s.name.slice(0, 2)} />
+                    <span className="min-w-0">
+                      <span className="block text-[14.5px] font-bold truncate">{s.name}</span>
+                      <span className="block text-[12px] text-muted">{g.name}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </Sheet>
+
+      {/* Подтверждение замены */}
+      <ConfirmSheet
+        open={substituteConfirm}
+        onClose={() => { setSubstituteConfirm(false); setSelectedSubjectId(null); }}
+        title="Заменить занятие?"
+        body={
+          `Старое занятие будет отменено, оценки удалятся${graded ? ` (${graded} шт.)` : ""}, ` +
+          `откроется новое занятие по предмету «${selectedSubjectId ? (store.subject(selectedSubjectId)?.name ?? "") : ""}».`
+        }
+        confirmLabel="Заменить"
+        onConfirm={doSubstitute}
       />
     </div>
   );

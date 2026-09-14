@@ -973,13 +973,35 @@ class Store {
       }
     }
   }
-  /** Замена занятия: PATCH substitute (сервер отменяет старое и создаёт новое). */
+  /** Замена занятия: PATCH substitute (сервер отменяет старое и создаёт новое).
+      DEV: локальная эмуляция. PROD: PATCH + локальный апдейт. */
   async substituteLesson(lessonId: ID, newSubjectId: ID): Promise<ID | null> {
-    if (import.meta.env.DEV) return null;
+    const old = this.lesson(lessonId);
+    if (!old) return null;
+
+    if (import.meta.env.DEV) {
+      // Эмуляция: отменяем старое, создаём новое.
+      old.status = "cancelled";
+      this.db.grades = this.db.grades.filter((g) => g.lessonId !== lessonId);
+      const newLesson: Lesson = {
+        id: this.nextId(), groupId: old.groupId, subjectId: newSubjectId,
+        date: old.date, status: "scheduled", time: old.time, room: old.room,
+        lessonNumber: old.lessonNumber,
+      };
+      this.db.lessons.push(newLesson);
+      this.touch();
+      return newLesson.id;
+    }
+
     try {
       const r = await _patch(`/api/lessons/${lessonId}/substitute`, {
         new_subject_id: newSubjectId,
       }) as { new_lesson_id: number };
+      // Локально: отменяем старое, чистим оценки, добавляем заглушку нового.
+      old.status = "cancelled";
+      this.db.grades = this.db.grades.filter((g) => g.lessonId !== lessonId);
+      this.ensureLessonStub(r.new_lesson_id, old.groupId, newSubjectId);
+      this.touch();
       return r.new_lesson_id;
     } catch (e) {
       console.error("[store] substituteLesson failed:", e);
