@@ -4,7 +4,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  Ban, CalendarOff, ChevronRight, CircleAlert, CircleCheck, Play, Plus,
+  Ban, CalendarOff, ChevronRight, CircleAlert, CircleCheck, Pencil, Play, Plus,
 } from "lucide-react";
 import { useDB, useVersion, store } from "../lib/store";
 import {
@@ -40,6 +40,7 @@ export default function ScheduleScreen() {
   const [fParity, setFParity] = useState("0");
   const [fLessonNum, setFLessonNum] = useState("1");
   const [fWeekday, setFWeekday] = useState(String(weekdayOf(today)));
+  const [editScheduleId, setEditScheduleId] = useState<number | null>(null);
 
   const monday = mondayOfWeek(today);
 
@@ -67,6 +68,18 @@ export default function ScheduleScreen() {
     // Мягкая валидация дублирующегося номера в тот же день — сервер остаётся источником истины.
     const num = Number(fLessonNum);
     const wd = Number(fWeekday);
+    if (editScheduleId !== null) {
+      store.updateScheduleItem(editScheduleId, {
+        subjectId: sid,
+        weekday: wd,
+        parity: Number(fParity) as 0 | 1 | 2,
+        lessonNumber: num,
+      });
+      setAddOpen(false);
+      setEditScheduleId(null);
+      toast("Пара обновлена");
+      return;
+    }
     const dup = db.schedule.some((it) => it.weekday === wd && it.lessonNumber === num);
     if (dup) toast("Номер пары уже занят в этот день — сервер решит");
     store.addScheduleItem({
@@ -174,6 +187,21 @@ export default function ScheduleScreen() {
               const manual = !store.scheduleItemForDay(
                 l.groupId, l.subjectId, weekdayOf(l.date),
               );
+              const schedItem = store.scheduleItemForDay(
+                l.groupId, l.subjectId, weekdayOf(l.date),
+              );
+              const openEditSchedule = (e: { stopPropagation: () => void }) => {
+                e.stopPropagation();
+                if (!schedItem) return;
+                setEditScheduleId(schedItem.id);
+                setFGroup(String(schedItem.groupId));
+                setFSubject(String(schedItem.subjectId));
+                setFNewSubject("");
+                setFParity(String(schedItem.parity));
+                setFLessonNum(String(schedItem.lessonNumber));
+                setFWeekday(String(schedItem.weekday));
+                setAddOpen(true);
+              };
               return (
                 <Card
                   key={l.id}
@@ -198,6 +226,14 @@ export default function ScheduleScreen() {
                   {l.status === "scheduled" && <Chip tone="warn"><CircleAlert size={11} />Назначено</Chip>}
                   {l.status === "cancelled" && <Chip tone="danger"><Ban size={11} />Отменено</Chip>}
                   {manual && <Chip tone="accent">вручную</Chip>}
+                  {!manual && (
+                    <IconBtn
+                      icon={Pencil}
+                      label="Редактировать пару"
+                      className="w-8 h-8 text-faint"
+                      onClick={openEditSchedule}
+                    />
+                  )}
                   <ChevronRight size={16} className="text-faint shrink-0" />
                 </Card>
               );
@@ -206,8 +242,12 @@ export default function ScheduleScreen() {
         ))
       )}
 
-      {/* Добавление пары */}
-      <Sheet open={addOpen} onClose={() => setAddOpen(false)} title="Новая пара">
+      {/* Добавление/редактирование пары */}
+      <Sheet
+        open={addOpen}
+        onClose={() => { setAddOpen(false); setEditScheduleId(null); }}
+        title={editScheduleId !== null ? "Редактировать пару" : "Новая пара"}
+      >
         <div className="flex flex-col gap-4">
           <Field label="Группа">
             <Select value={fGroup} onChange={(e) => setFGroup(e.target.value)}>
@@ -252,7 +292,9 @@ export default function ScheduleScreen() {
               ))}
             </Select>
           </Field>
-          <Btn size="lg" onClick={saveItem}>Добавить</Btn>
+          <Btn size="lg" onClick={saveItem}>
+            {editScheduleId !== null ? "Сохранить" : "Добавить"}
+          </Btn>
         </div>
       </Sheet>
 

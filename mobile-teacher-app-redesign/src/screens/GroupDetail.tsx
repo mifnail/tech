@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  BookOpen, ChevronRight, Copy, Plus, Send, MessageCircle, Trash2, Unlink, UserPlus, X,
+  BookOpen, ChevronRight, Copy, Pencil, Plus, Send, MessageCircle, Trash2, Unlink, UserPlus, X,
 } from "lucide-react";
 import { useDB, useVersion, store } from "../lib/store";
 import { avgOf, formatAvg, isDebtor } from "../lib/grades";
@@ -53,6 +53,11 @@ export default function GroupDetailScreen({ id }: { id: number }) {
   const [curatorUnbindOpen, setCuratorUnbindOpen] = useState(false);
   const [unbindStudent, setUnbindStudent] = useState<{ id: number; kind: "tg" | "max" } | null>(null);
   const [filter, setFilter] = useState("");
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameName, setRenameName] = useState("");
+  const [editStudentId, setEditStudentId] = useState<number | null>(null);
+  const [editStudentName, setEditStudentName] = useState("");
+  const [editStudentOpen, setEditStudentOpen] = useState(false);
 
   const unbindCurator = async () => {
     if (!group) return;
@@ -72,6 +77,21 @@ export default function GroupDetailScreen({ id }: { id: number }) {
     } catch (_) {
       toast("Ошибка");
     }
+  };
+
+  const doRename = () => {
+    if (!renameName.trim() || !group) return;
+    store.renameGroup(group.id, renameName);
+    setRenameOpen(false);
+    toast("Сохранено");
+  };
+
+  const doEditStudent = () => {
+    if (!editStudentName.trim() || editStudentId === null) return;
+    store.updateStudent(editStudentId, editStudentName);
+    setEditStudentOpen(false);
+    setEditStudentId(null);
+    toast("Сохранено");
   };
 
   const students = useMemo(
@@ -152,7 +172,19 @@ export default function GroupDetailScreen({ id }: { id: number }) {
 
   return (
     <Screen className="pb-28">
-      <BackHeader title={group.name} sub="Группа" fallback="/groups" />
+      <BackHeader
+        title={group.name}
+        sub="Группа"
+        fallback="/groups"
+        actions={
+          <IconBtn
+            icon={Pencil}
+            label="Переименовать группу"
+            className="text-faint"
+            onClick={() => { setRenameName(group.name); setRenameOpen(true); }}
+          />
+        }
+      />
 
       <Card className="grid grid-cols-3 divide-x divide-line mb-1">
         {[
@@ -275,6 +307,16 @@ export default function GroupDetailScreen({ id }: { id: number }) {
                 {formatAvg(avg)}
               </span>
             )}
+            <IconBtn
+              icon={Pencil}
+              label={"Редактировать " + s.name}
+              className="w-8 h-8 text-faint"
+              onClick={() => {
+                setEditStudentId(s.id);
+                setEditStudentName(s.name);
+                setEditStudentOpen(true);
+              }}
+            />
             <IconBtn
               icon={X}
               label={"Удалить " + s.name}
@@ -425,6 +467,36 @@ export default function GroupDetailScreen({ id }: { id: number }) {
         danger
         onConfirm={unbindStudentBot}
       />
+
+      <Sheet open={renameOpen} onClose={() => setRenameOpen(false)} title="Переименовать группу">
+        <Field label="Название группы">
+          <Input
+            value={renameName}
+            onChange={(e) => setRenameName(e.target.value)}
+            placeholder="Например, ИС-24"
+            autoFocus
+            onKeyDown={(e) => e.key === "Enter" && doRename()}
+          />
+        </Field>
+        <Btn size="lg" className="w-full mt-4" onClick={doRename} disabled={!renameName.trim()}>
+          Сохранить
+        </Btn>
+      </Sheet>
+
+      <Sheet open={editStudentOpen} onClose={() => setEditStudentOpen(false)} title="Редактировать студента">
+        <Field label="Фамилия и имя">
+          <Input
+            value={editStudentName}
+            onChange={(e) => setEditStudentName(e.target.value)}
+            placeholder="Иванова Мария"
+            autoFocus
+            onKeyDown={(e) => e.key === "Enter" && doEditStudent()}
+          />
+        </Field>
+        <Btn size="lg" className="w-full mt-4" onClick={doEditStudent} disabled={!editStudentName.trim()}>
+          Сохранить
+        </Btn>
+      </Sheet>
     </Screen>
   );
 }

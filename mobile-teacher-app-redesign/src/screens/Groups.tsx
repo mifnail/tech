@@ -1,7 +1,7 @@
 /* Экран «Группы»: поиск, список групп, создание. */
 
 import { useMemo, useState } from "react";
-import { ChevronRight, Plus, Search, UsersRound } from "lucide-react";
+import { ChevronRight, Pencil, Plus, Search, UsersRound } from "lucide-react";
 import { useDB, useVersion, store } from "../lib/store";
 import { avgOf, formatAvg } from "../lib/grades";
 import { navigate } from "../lib/router";
@@ -19,6 +19,9 @@ export default function GroupsScreen() {
   const [subjectName, setSubjectName] = useState("");
   const [subjectHours, setSubjectHours] = useState("");
   const [subjectGroup, setSubjectGroup] = useState("");
+  const [renameId, setRenameId] = useState<number | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameOpen, setRenameOpen] = useState(false);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -59,6 +62,14 @@ export default function GroupsScreen() {
     setSubjectGroup("");
     setAddSubjectOpen(false);
     toast("Предмет «" + subjectName.trim() + "» добавлен");
+  };
+
+  const doRename = () => {
+    if (!renameName.trim() || renameId === null) return;
+    store.renameGroup(renameId, renameName);
+    setRenameOpen(false);
+    setRenameId(null);
+    toast("Сохранено");
   };
 
   return (
@@ -115,6 +126,17 @@ export default function GroupsScreen() {
             </div>
           </div>
           {avg !== null && <Chip tone={avg >= 4 ? "success" : avg >= 3.5 ? "warn" : "danger"}>{formatAvg(avg)}</Chip>}
+          <IconBtn
+            icon={Pencil}
+            label={"Переименовать " + g.name}
+            className="w-8 h-8 text-faint"
+            onClick={(e) => {
+              e.stopPropagation();
+              setRenameId(g.id);
+              setRenameName(g.name);
+              setRenameOpen(true);
+            }}
+          />
           <ChevronRight size={16} className="text-faint shrink-0" />
         </Card>
       ))}
@@ -179,6 +201,21 @@ export default function GroupsScreen() {
             Добавить предмет
           </Btn>
         </div>
+      </Sheet>
+
+      <Sheet open={renameOpen} onClose={() => setRenameOpen(false)} title="Переименовать группу">
+        <Field label="Название группы">
+          <Input
+            value={renameName}
+            onChange={(e) => setRenameName(e.target.value)}
+            placeholder="Например, ИС-24"
+            autoFocus
+            onKeyDown={(e) => e.key === "Enter" && doRename()}
+          />
+        </Field>
+        <Btn size="lg" className="w-full mt-4" onClick={doRename} disabled={!renameName.trim()}>
+          Сохранить
+        </Btn>
       </Sheet>
     </Screen>
   );

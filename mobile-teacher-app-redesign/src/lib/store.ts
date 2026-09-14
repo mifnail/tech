@@ -762,6 +762,20 @@ class Store {
     }
     return g;
   }
+  renameGroup(id: ID, name: string) {
+    const g = this.db.groups.find((x) => x.id === id);
+    if (!g) return;
+    const prev = g.name;
+    g.name = name.trim();
+    this.touch();
+    if (!import.meta.env.DEV) {
+      _patch(`/api/groups/${id}`, { name: name.trim() }).catch((e) => {
+        console.error("[store] renameGroup failed:", e);
+        g.name = prev;
+        this.touch();
+      });
+    }
+  }
   removeGroup(id: ID) {
     const snap = {
       groups: [...this.db.groups],
@@ -827,6 +841,25 @@ class Store {
         console.error("[store] removeStudent failed:", e);
         if (st) this.db.students.push(st);
         this.db.grades.push(...affectedGrades);
+        this.touch();
+      });
+    }
+  }
+  updateStudent(id: ID, name: string) {
+    const st = this.db.students.find((s) => s.id === id);
+    if (!st) return;
+    const prevName = st.name;
+    st.name = name.trim();
+    this.touch();
+    if (!import.meta.env.DEV) {
+      const parts = splitName(name);
+      _patch(`/api/students/${id}`, {
+        last_name: parts.last_name,
+        first_name: parts.first_name,
+        middle_name: parts.middle_name,
+      }).catch((e) => {
+        console.error("[store] updateStudent failed:", e);
+        st.name = prevName;
         this.touch();
       });
     }
@@ -905,6 +938,31 @@ class Store {
       _del(`/api/schedule/${id}`).catch((e) => {
         console.error("[store] removeScheduleItem failed:", e);
         if (it) this.db.schedule.push(it);
+        this.touch();
+      });
+    }
+  }
+  updateScheduleItem(id: ID, patch: { weekday?: number; lessonNumber?: number; subjectId?: ID; parity?: 0 | 1 | 2 }) {
+    const it = this.db.schedule.find((s) => s.id === id);
+    if (!it) return;
+    const snap = { weekday: it.weekday, lessonNumber: it.lessonNumber, subjectId: it.subjectId, parity: it.parity };
+    if (patch.weekday !== undefined) it.weekday = patch.weekday;
+    if (patch.lessonNumber !== undefined) it.lessonNumber = patch.lessonNumber;
+    if (patch.subjectId !== undefined) it.subjectId = patch.subjectId;
+    if (patch.parity !== undefined) it.parity = patch.parity;
+    this.touch();
+    if (!import.meta.env.DEV) {
+      _patch(`/api/schedule/${id}`, {
+        day_of_week: it.weekday,
+        lesson_number: it.lessonNumber,
+        subject_id: it.subjectId,
+        week_type: it.parity,
+      }).catch((e) => {
+        console.error("[store] updateScheduleItem failed:", e);
+        it.weekday = snap.weekday;
+        it.lessonNumber = snap.lessonNumber;
+        it.subjectId = snap.subjectId;
+        it.parity = snap.parity;
         this.touch();
       });
     }
