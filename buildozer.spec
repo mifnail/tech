@@ -26,7 +26,7 @@ fullscreen = 0
 osx.python_version = 3
 osx.kivy_version = 2.2.0
 presplash.filename =
-icon.filename =
+icon.filename = icon-512.png
 
 # NOTE: buildozer's android.permissions is a plain comma-separated name list
 # (python-for-android emits <uses-permission> without maxSdkVersion), so a
