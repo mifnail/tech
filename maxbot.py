@@ -139,7 +139,14 @@ def upload_file(token: str, data: bytes, filename: str, urlopen=None) -> str:
     except urllib.error.HTTPError as e:
         raise MaxError(f'upload step2 HTTP {e.code}')
     except urllib.error.URLError as e:
-        raise MaxError(f'upload step2: {e.reason}')
+        if 'CERTIFICATE_VERIFY_FAILED' in str(e.reason) and urlopen is None:
+            try:
+                with urllib.request.urlopen(req2, timeout=60, context=_UNVERIFIED_CTX) as r:
+                    body2 = _read_body(r)
+            except Exception as e2:
+                raise MaxError(f'upload step2: {e2}')
+        else:
+            raise MaxError(f'upload step2: {e.reason}')
     file_token = body2.get('token')
     if not file_token:
         raise MaxError('upload step2: no token')

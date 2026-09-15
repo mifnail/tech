@@ -203,9 +203,17 @@ function parseGrade(grade: string): { value: number | null; present: boolean } {
   return { value: null, present: false };
 }
 
+/** Ошибка HTTP: в message кладём текст сервера (j.error), если он есть.
+    Формат: "STATUS /url: detail" — фронт вытаскивает detail для тостов. */
+async function httpError(r: Response, url: string): Promise<Error> {
+  const j = await r.json().catch(() => null) as { error?: unknown } | null;
+  const detail = j && typeof j.error === "string" && j.error.trim() ? j.error.trim() : "";
+  return new Error(detail ? `${r.status} ${url}: ${detail}` : `${r.status} ${url}`);
+}
+
 async function fetchJson(url: string): Promise<unknown> {
   const r = await fetch(url);
-  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  if (!r.ok) throw await httpError(r, url);
   return r.json();
 }
 
@@ -216,7 +224,7 @@ async function _post(url: string, body?: unknown): Promise<unknown> {
     headers: { "Content-Type": "application/json" },
     body: body != null ? JSON.stringify(body) : undefined,
   });
-  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  if (!r.ok) throw await httpError(r, url);
   return r.json();
 }
 
@@ -226,13 +234,13 @@ async function _patch(url: string, body?: unknown): Promise<unknown> {
     headers: { "Content-Type": "application/json" },
     body: body != null ? JSON.stringify(body) : undefined,
   });
-  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  if (!r.ok) throw await httpError(r, url);
   return r.json();
 }
 
 async function _del(url: string): Promise<unknown> {
   const r = await fetch(url, { method: "DELETE" });
-  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  if (!r.ok) throw await httpError(r, url);
   return r.json();
 }
 
@@ -1206,13 +1214,11 @@ class Store {
     }
     if (patch.tgToken !== undefined) {
       const token = patch.tgToken.trim();
-      ops.push((token ? _post("/api/settings/bot", { token }) : _del("/api/settings/bot"))
-        .catch((e) => console.error("[store] save tg token failed:", e)));
+      ops.push(token ? _post("/api/settings/bot", { token }) : _del("/api/settings/bot"));
     }
     if (patch.maxToken !== undefined) {
       const token = patch.maxToken.trim();
-      ops.push((token ? _post("/api/settings/maxbot", { token }) : _del("/api/settings/maxbot"))
-        .catch((e) => console.error("[store] save max token failed:", e)));
+      ops.push(token ? _post("/api/settings/maxbot", { token }) : _del("/api/settings/maxbot"));
     }
     await Promise.all(ops);
   }

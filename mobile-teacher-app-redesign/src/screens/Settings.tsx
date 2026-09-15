@@ -36,6 +36,17 @@ function copyText(text: string): boolean {
   } catch (_) { return false; }
 }
 
+/** Текст ошибки для тоста: j.error сервера из message store-хелперов
+    ("STATUS /url: detail"), до 80 символов. */
+function errText(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  const i = msg.indexOf(": ");
+  const detail = (i >= 0 ? msg.slice(i + 2) : msg).trim();
+  if (!detail) return "Ошибка";
+  if (/failed to fetch/i.test(detail)) return "Нет связи с сервером";
+  return detail.slice(0, 80);
+}
+
 /* ── Тумблер вкл/выкл ─────────────────────────────────────── */
 function Toggle({ checked, onChange, label }: {
   checked: boolean;
@@ -64,6 +75,72 @@ function Toggle({ checked, onChange, label }: {
   );
 }
 
+/* ── Статус бота: тихий GET /api/settings/{bot,maxbot}/check ── */
+type BotStatus =
+  | { kind: "checking" }
+  | { kind: "no-token" }
+  | { kind: "ok"; username?: string }
+  | { kind: "error"; text: string }
+  | { kind: "offline" };
+
+function BotStatusLine({ checkUrl, checkKey }: {
+  checkUrl: string;
+  checkKey: number;
+}) {
+  const [st, setSt] = useState<BotStatus>({ kind: "checking" });
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    setSt({ kind: "checking" });
+    (async () => {
+      try {
+        const r = await fetch(checkUrl, { signal: ctrl.signal });
+        const j = await r.json().catch(() => null) as
+          { ok?: boolean; error?: string; username?: string } | null;
+        if (ctrl.signal.aborted) return;
+        if (r.ok && j && j.ok) {
+          setSt({ kind: "ok", username: typeof j.username === "string" ? j.username : undefined });
+        } else if (r.status === 400 || (j && j.error === "no bot token")) {
+          setSt({ kind: "no-token" });
+        } else if (j && typeof j.error === "string") {
+          setSt({ kind: "error", text: j.error });
+        } else {
+          setSt({ kind: "error", text: `HTTP ${r.status}` });
+        }
+      } catch (_) {
+        if (ctrl.signal.aborted) return;
+        setSt({ kind: "offline" });
+      } finally {
+        clearTimeout(timer);
+      }
+    })();
+    return () => { clearTimeout(timer); ctrl.abort(); };
+  }, [checkUrl, checkKey]);
+
+  if (st.kind === "checking") {
+    return <div className="text-[11px] text-faint">Проверка…</div>;
+  }
+  if (st.kind === "no-token") {
+    return <Chip tone="neutral" className="text-[11px] normal-case">Не задан</Chip>;
+  }
+  if (st.kind === "ok") {
+    return (
+      <Chip tone="success" className="text-[11px] normal-case">
+        На связи{st.username ? ` · @${st.username}` : ""}
+      </Chip>
+    );
+  }
+  if (st.kind === "error") {
+    return (
+      <Chip tone="danger" className="text-[11px] normal-case whitespace-normal h-auto min-h-[22px] py-[3px] leading-tight">
+        {st.text.slice(0, 60)}
+      </Chip>
+    );
+  }
+  return <Chip tone="warn" className="text-[11px] normal-case">Нет связи с сервером</Chip>;
+}
+
 export default function SettingsScreen() {
   const db = useDB();
   const toast = useToast();
@@ -75,6 +152,9 @@ export default function SettingsScreen() {
   const [dropTgOpen, setDropTgOpen] = useState(false);
   const [dropMaxOpen, setDropMaxOpen] = useState(false);
   const [unbindTeacherOpen, setUnbindTeacherOpen] = useState(false);
+  /* Ключи ре-проверки статуса ботов (после сохранения/отвязки токена) */
+  const [tgCheckKey, setTgCheckKey] = useState(0);
+  const [maxCheckKey, setMaxCheckKey] = useState(0);
 
   /* ── Обновления: ключ ремоунта баннера после ручной проверки ── */
   const [updateCheckKey, setUpdateCheckKey] = useState(0);
@@ -118,8 +198,8 @@ export default function SettingsScreen() {
       await store.updateSettings({ tgEnabled: v });
       await store.reloadBotState();
       toast(v ? "Бот включён" : "Бот выключен");
-    } catch (_) {
-      toast("Ошибка");
+    } catch (e) {
+      toast("Ошибка: " + errText(e));
     }
   };
   const toggleMax = async (v: boolean) => {
@@ -127,8 +207,8 @@ export default function SettingsScreen() {
       await store.updateSettings({ maxEnabled: v });
       await store.reloadBotState();
       toast(v ? "Бот включён" : "Бот выключен");
-    } catch (_) {
-      toast("Ошибка");
+    } catch (e) {
+      toast("Ошибка: " + errText(e));
     }
   };
 
@@ -137,16 +217,18 @@ export default function SettingsScreen() {
     try {
       await store.dropBotToken("tg");
       toast("Токен Telegram отвязан");
-    } catch (_) {
-      toast("Ошибка");
+      setTgCheckKey((k) => k + 1);
+    } catch (e) {
+      toast("Ошибка: " + errText(e));
     }
   };
   const dropMax = async () => {
     try {
       await store.dropBotToken("max");
       toast("Токен MAX отвязан");
-    } catch (_) {
-      toast("Ошибка");
+      setMaxCheckKey((k) => k + 1);
+    } catch (e) {
+      toast("Ошибка: " + errText(e));
     }
   };
 
@@ -155,8 +237,8 @@ export default function SettingsScreen() {
     try {
       await store.unbindTeacher();
       toast("Преподаватель отвязан");
-    } catch (_) {
-      toast("Ошибка");
+    } catch (e) {
+      toast("Ошибка: " + errText(e));
     }
   };
 
@@ -277,14 +359,23 @@ export default function SettingsScreen() {
           <Btn
             variant="muted" icon={Check}
             disabled={tgDraft === null}
-            onClick={() => {
-              store.updateSettings({ tgToken: (tgDraft ?? "").trim() });
-              setTgDraft(null);
-              toast("Токен Telegram сохранён");
+            onClick={async () => {
+              const token = (tgDraft ?? "").trim();
+              try {
+                await store.updateSettings({ tgToken: token });
+                setTgDraft(null);
+                toast("Токен Telegram сохранён");
+                setTgCheckKey((k) => k + 1);
+              } catch (e) {
+                toast("Ошибка: " + errText(e));
+              }
             }}
           >
             ОК
           </Btn>
+        </div>
+        <div className="mt-2 flex items-center gap-1.5 min-h-[22px]">
+          <BotStatusLine checkUrl="/api/settings/bot/check" checkKey={tgCheckKey} />
         </div>
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-line">
           <div>
@@ -325,14 +416,23 @@ export default function SettingsScreen() {
           <Btn
             variant="muted" icon={Check}
             disabled={maxDraft === null}
-            onClick={() => {
-              store.updateSettings({ maxToken: (maxDraft ?? "").trim() });
-              setMaxDraft(null);
-              toast("Токен MAX сохранён");
+            onClick={async () => {
+              const token = (maxDraft ?? "").trim();
+              try {
+                await store.updateSettings({ maxToken: token });
+                setMaxDraft(null);
+                toast("Токен MAX сохранён");
+                setMaxCheckKey((k) => k + 1);
+              } catch (e) {
+                toast("Ошибка: " + errText(e));
+              }
             }}
           >
             ОК
           </Btn>
+        </div>
+        <div className="mt-2 flex items-center gap-1.5 min-h-[22px]">
+          <BotStatusLine checkUrl="/api/settings/maxbot/check" checkKey={maxCheckKey} />
         </div>
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-line">
           <div>
