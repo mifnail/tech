@@ -1,10 +1,10 @@
-/* Расписание: лента дат (14 дней) + занятия выбранного дня,
-   сгруппированные по группам. Ручные занятия (созданные через
-   «Начать занятие» вне расписания) помечаются чипом «вручную». */
+/* Расписание: понедельная лента дат (пн–вс, стрелки ←/→ в обе стороны)
+   + занятия выбранного дня, сгруппированные по группам. Ручные занятия
+   (созданные через «Начать занятие» вне расписания) помечаются чипом «вручную». */
 
 import { useMemo, useState } from "react";
 import {
-  Ban, CalendarOff, ChevronRight, CircleAlert, CircleCheck, Pencil, Play, Plus,
+  Ban, CalendarOff, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Pencil, Play, Plus,
 } from "lucide-react";
 import { useDB, useVersion, store } from "../lib/store";
 import {
@@ -32,6 +32,7 @@ export default function ScheduleScreen() {
   const [addOpen, setAddOpen] = useState(false);
   const [selectedISO, setSelectedISO] = useState(today);
   const [newLessonOpen, setNewLessonOpen] = useState(false);
+  const [weekOffset, setWeekOffset] = useState(0);
 
   // Форма добавления
   const [fGroup, setFGroup] = useState("");
@@ -42,13 +43,18 @@ export default function ScheduleScreen() {
   const [fWeekday, setFWeekday] = useState(String(weekdayOf(today)));
   const [editScheduleId, setEditScheduleId] = useState<number | null>(null);
 
-  const monday = mondayOfWeek(today);
+  const monday = addDaysISO(mondayOfWeek(today), weekOffset * 7);
 
-  /** Лента дат: две недели от понедельника текущей недели (горизонтальный скролл). */
+  /** Лента дат: неделя (пн–вс) от monday текущего weekOffset. */
   const days = useMemo(
-    () => Array.from({ length: 14 }, (_, i) => addDaysISO(monday, i)),
+    () => Array.from({ length: 7 }, (_, i) => addDaysISO(monday, i)),
     [monday],
   );
+
+  const goToday = () => {
+    setWeekOffset(0);
+    setSelectedISO(today);
+  };
 
   const openAdd = () => {
     setFGroup(db.groups[0] ? String(db.groups[0].id) : "");
@@ -118,14 +124,20 @@ export default function ScheduleScreen() {
   return (
     <Screen className="pb-28">
       <BigHeader
-        kicker={`${formatDotShort(monday)} – ${formatDotShort(addDaysISO(monday, 5))}`}
+        kicker={`${formatDotShort(monday)} – ${formatDotShort(addDaysISO(monday, 6))}`}
         title="Расписание"
         actions={<IconBtn icon={Plus} label="Добавить пару" onClick={openAdd} className="bg-surface border border-line" />}
       />
 
-      {/* Лента дат: горизонтальный скролл, тап → занятия выбранного дня */}
-      <div className="-mx-4 px-4 mb-4 overflow-x-auto no-scrollbar">
-        <div className="flex gap-1.5 min-w-max">
+      {/* Лента дат: неделя (пн–вс) со стрелками ←/→ и кнопкой «Сегодня» */}
+      <div className="flex items-center gap-1.5 mb-2">
+        <IconBtn
+          icon={ChevronLeft}
+          label="Предыдущая неделя"
+          onClick={() => setWeekOffset((w) => w - 1)}
+          className="shrink-0 bg-surface border border-line"
+        />
+        <div className="flex flex-1 gap-1">
           {days.map((iso) => {
             const selected = iso === selectedISO;
             const isToday = iso === today;
@@ -134,7 +146,7 @@ export default function ScheduleScreen() {
                 key={iso}
                 onClick={() => setSelectedISO(iso)}
                 className={cn(
-                  "pressable flex flex-col items-center w-[52px] py-2 rounded-xl border shrink-0",
+                  "pressable flex flex-col items-center flex-1 py-2 rounded-xl border",
                   selected
                     ? "bg-accent border-accent text-accentink"
                     : "bg-surface border-line",
@@ -160,6 +172,17 @@ export default function ScheduleScreen() {
             );
           })}
         </div>
+        <IconBtn
+          icon={ChevronRight}
+          label="Следующая неделя"
+          onClick={() => setWeekOffset((w) => w + 1)}
+          className="shrink-0 bg-surface border border-line"
+        />
+      </div>
+      <div className="flex justify-end mb-4">
+        <Btn size="sm" variant="muted" onClick={goToday}>
+          Сегодня
+        </Btn>
       </div>
 
       {/* Занятия выбранной даты */}
