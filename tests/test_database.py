@@ -623,7 +623,9 @@ class TestReports:
         sid = db.add_subject('Математика', 32, gid)
         s1 = db.add_student(gid, 'Иванов', 'Иван')
         s2 = db.add_student(gid, 'Петров', 'Петр')
-        today_str = date.today().isoformat()
+        # Use SQLite's date('now') to stay in sync with the query that also
+        # uses date('now') — Python's date.today() may differ from UTC.
+        today_str = db.conn.execute("SELECT date('now')").fetchone()[0]
         lid = db.add_lesson(sid, today_str, sid, 'held')
         db.mark_attendance(lid, s1, '5')
         neglected = db.students_without_recent_grades(gid, min_grades=1, days=30)
