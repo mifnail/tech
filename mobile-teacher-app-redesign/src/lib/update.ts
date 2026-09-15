@@ -67,6 +67,13 @@ export function dismissUpdate(): void {
   } catch (_) {}
 }
 
+/** Сбросить dismiss (24ч-скрытие) — чтобы баннер показался снова. */
+export function clearUpdateDismiss(): void {
+  try {
+    localStorage.removeItem(DISMISS_KEY);
+  } catch (_) {}
+}
+
 const INSTALLED_KEY = "update_installed_version";
 export function markInstalled(version: string): void {
   try {

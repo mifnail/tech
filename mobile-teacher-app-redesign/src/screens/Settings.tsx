@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import RestoreDatabase from "../components/RestoreDatabase";
+import UpdateBanner from "../components/UpdateBanner";
 import {
   Bot, Check, Coffee, Copy, Download, Moon, RefreshCw,
   Send, Sun, Unlink,
@@ -14,7 +15,7 @@ import {
   SectionTitle, Segmented, useToast,
 } from "../components/ui";
 import { cn } from "../utils/cn";
-import { fetchVersion } from "../lib/update";
+import { checkUpdate, clearUpdateDismiss, fetchVersion } from "../lib/update";
 
 function copyText(text: string): boolean {
   try {
@@ -74,6 +75,30 @@ export default function SettingsScreen() {
   const [dropTgOpen, setDropTgOpen] = useState(false);
   const [dropMaxOpen, setDropMaxOpen] = useState(false);
   const [unbindTeacherOpen, setUnbindTeacherOpen] = useState(false);
+
+  /* ── Обновления: ключ ремоунта баннера после ручной проверки ── */
+  const [updateCheckKey, setUpdateCheckKey] = useState(0);
+
+  const checkForUpdates = async () => {
+    try {
+      const v = await fetchVersion();
+      const ver = v.app_version || v.ver;
+      if (!ver) { toast("Ошибка проверки"); return; }
+      const r = await checkUpdate(ver);
+      if (!r) { toast("Ошибка проверки"); return; }
+      if (r.update_available) {
+        const latest = r.latest || {};
+        const latestVer = latest.version || "";
+        clearUpdateDismiss();
+        setUpdateCheckKey((k) => k + 1); // ремоунт баннера → авто-проверка покажет его
+        toast(latestVer ? `Доступно обновление ${latestVer}` : "Доступно обновление");
+      } else {
+        toast("Вы используете последнюю версию");
+      }
+    } catch (_) {
+      toast("Ошибка проверки");
+    }
+  };
 
   /* ── Версия с /api/version (подпись внизу экрана) ── */
   const [appVer, setAppVer] = useState("");
@@ -346,6 +371,12 @@ export default function SettingsScreen() {
           <RestoreDatabase />
         </div>
       </Card>
+
+      <SectionTitle>Обновления</SectionTitle>
+      <UpdateBanner key={updateCheckKey} />
+      <Btn variant="muted" icon={RefreshCw} className="w-full" onClick={checkForUpdates}>
+        Проверить обновления
+      </Btn>
 
       <SectionTitle>Поддержать проект</SectionTitle>
       <Card className="p-4 opacity-90">
