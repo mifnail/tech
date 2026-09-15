@@ -1026,7 +1026,7 @@ def check_bot():
         return jsonify({'error': 'no bot token'}), 400
     try:
         info = tgbot.get_me(token) or {}
-    except tgbot.BotError as e:
+    except Exception as e:
         msg = str(e)
         code = 401 if '401' in msg else 502
         return jsonify({'error': msg}), code
@@ -1090,7 +1090,7 @@ def check_maxbot():
         return jsonify({'error': 'no bot token'}), 400
     try:
         info = maxbot.check(token) or {}
-    except maxbot.MaxError as e:
+    except Exception as e:
         msg = str(e)
         code = 401 if '401' in msg else 502
         return jsonify({'error': msg}), code

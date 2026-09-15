@@ -1,7 +1,7 @@
 # Учет занятий — журнал преподавателя
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Privacy](https://img.shields.io/badge/Политика-приватности-green.svg)](https://mifnail.github.io/tech/PRIVACY.md)
+[![Privacy](https://img.shields.io/badge/Политика-приватности-green.svg)](docs/PRIVACY.md)
 
 Мобильный журнал преподавателя: группы, предметы, занятия, оценки и посещаемость,
 экспорт ведомостей в Excel, уведомления студентов через Telegram и MAX,
@@ -9,10 +9,18 @@
 Занятия — вручную или через календарь расписания, без интернета.
 Работает как Android-приложение (WebView) и как desktop-версия в браузере.
 
+## Как выглядит
+
+| Главная | Занятие | Ведомость |
+|:---:|:---:|:---:|
+| ![Главная](docs/screenshots/today.png) | ![Занятие](docs/screenshots/lesson.png) | ![Ведомость](docs/screenshots/statement.png) |
+
+> Скриншоты: положить 4–6 PNG с телефона в `docs/screenshots/` (имена как в таблице выше).
+
 ## Стек
 
 - **Backend:** Python 3, Flask (REST API), SQLite (WAL)
-- **Frontend:** Vanilla JS SPA + CSS, без фреймворков (оптимизировано под WebView)
+- **Frontend:** React + TypeScript + Vite (`mobile-teacher-app-redesign/`), singlefile-сборка под WebView; legacy — Vanilla JS SPA (`static/app.js`)
 - **Экспорт:** openpyxl (только `.xlsx`)
 - **Боты:** только стандартная библиотека Python + certifi (long-polling в фоне, общий транспорт — `botcore.py`)
 - **APK:** Buildozer (python-for-android, WebView bootstrap), сборка и подпись в GitHub Actions
@@ -28,11 +36,18 @@
 | `report_export.py` | Ведомости `.xlsx`: групповая и личная (одна строка студента) |
 | `tgbot.py` | Telegram-бот «Мои оценки» (read-only + постоянная клавиатура) |
 | `maxbot.py` | MAX-бот: сводки, файлы, пуши оценок, напоминания, кураторы |
-| `static/app.js`, `static/style.css` | SPA-интерфейс, мобильная вёрстка |
+| `static/app.js`, `static/style.css` | Legacy SPA-интерфейс (до перехода на React) |
+| `mobile-teacher-app-redesign/` | React-фронт: исходники + `dist/index.html` (то, что раздаёт сервер и едет в APK) |
+| `VERSION` | Версия приложения (читает `/api/version`; CI перезаписывает из номера релиза) |
+| `crash_reporter.py` | Сбор и отправка краш-отчётов |
+| `calendar_export.py` | Экспорт расписания/занятий в ICS |
 | `lessons.db` | Рабочая база (священна: тесты всегда на `:memory:`) |
 | `AGENT.md` | Конституция проекта для разработчиков |
 | `docs/SPECIFICATION.md` | Подробная спецификация и архитектура |
 | `docs/DIAGRAMS.md` | Диаграммы для демонстрации + теория |
+| `docs/BRANCH-DIFF.md` | Расхождения веток main vs redesign (фичи, GAPы) |
+| `docs/PRIVACY.md` | Политика приватности |
+| `docs/REACT-INTEGRATION-PLAN.md` | План переноса функционала на React |
 
 ## Возможности
 
@@ -44,7 +59,7 @@
 
 ### Оценки и посещаемость
 - Компактный 2-колоночный список на занятии (шапка/подвал ≤10% экрана)
-- **Двусторонний перебор тапом:** правая половина строки — вперёд (`— → 0 → 5 → 4 → 3 → 2`), левая — назад
+- **Двусторонний перебор тапом:** правая половина строки — вперёд (`. → 5 → 4 → 3 → 2`), левая — назад; `Н` — отметка отсутствия (ставится отдельно)
 - Маркировка присутствия, средний балл, должники
 
 ### Экспорт и шаринг (Android)

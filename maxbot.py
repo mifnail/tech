@@ -667,8 +667,16 @@ def _handle_teacher_vedomost(token: str, chat_id: int, db_factory, urlopen=None)
         db.close()
 
 
+def _poll_error_line(exc, consecutive):
+    """Одна строка лога ошибки поллинга: тип + текст + счётчик + подсказка TLS."""
+    text = str(exc) or type(exc).__name__
+    hint = ' | проверь сеть/прокси/дату, TLS не проходит' if 'CERTIFICATE_VERIFY_FAILED' in text else ''
+    return f"[maxbot-poll] error: {type(exc).__name__}: {text} (consecutive={consecutive}){hint}"
+
+
 def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
     """Цикл long-polling. db_factory() -> свежий Database (потокобезопасно)."""
+    consecutive = 0
     try:
         db0 = db_factory()
         try:
@@ -684,7 +692,10 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
         try:
             try:
                 updates, new_marker = get_updates(token, marker, urlopen=urlopen)
-            except MaxError:
+                consecutive = 0
+            except MaxError as e:
+                consecutive += 1
+                print(_poll_error_line(e, consecutive), flush=True)
                 time.sleep(ERROR_PAUSE)
                 continue
             for u in updates or []:
@@ -869,13 +880,17 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                         pass
                 if new_marker is not None:
                     marker = new_marker
-        except Exception:
+        except Exception as e:
+            consecutive += 1
+            print(_poll_error_line(e, consecutive), flush=True)
             try:
                 time.sleep(ERROR_PAUSE)
             except Exception:
                 pass
             continue
-        except Exception:
+        except Exception as e:
+            consecutive += 1
+            print(_poll_error_line(e, consecutive), flush=True)
             try:
                 time.sleep(ERROR_PAUSE)
             except Exception:
