@@ -141,6 +141,100 @@ function BotStatusLine({ checkUrl, checkKey }: {
   return <Chip tone="warn" className="text-[11px] normal-case">Нет связи с сервером</Chip>;
 }
 
+/* ── Webhook-подписки MAX: тихий GET /api/settings/maxbot/webhook ── */
+type WebhookStatus =
+  | { kind: "checking" }
+  | { kind: "no-token" }
+  | { kind: "ok"; count: number }
+  | { kind: "error"; text: string }
+  | { kind: "offline" };
+
+function WebhookStatusLine({ checkKey }: { checkKey: number }) {
+  const [st, setSt] = useState<WebhookStatus>({ kind: "checking" });
+  const toast = useToast();
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    setSt({ kind: "checking" });
+    (async () => {
+      try {
+        const r = await fetch("/api/settings/maxbot/webhook", { signal: ctrl.signal });
+        const j = await r.json().catch(() => null) as
+          { webhook?: boolean; urls?: string[]; error?: string } | null;
+        if (ctrl.signal.aborted) return;
+        if (r.ok && j) {
+          setSt({ kind: "ok", count: j.urls?.length ?? 0 });
+        } else if (r.status === 400 || (j && j.error === "no bot token")) {
+          setSt({ kind: "no-token" });
+        } else if (j && typeof j.error === "string") {
+          setSt({ kind: "error", text: j.error });
+        } else {
+          setSt({ kind: "error", text: `HTTP ${r.status}` });
+        }
+      } catch (_) {
+        if (ctrl.signal.aborted) return;
+        setSt({ kind: "offline" });
+      } finally {
+        clearTimeout(timer);
+      }
+    })();
+    return () => { clearTimeout(timer); ctrl.abort(); };
+  }, [checkKey]);
+
+  const resetWebhook = async () => {
+    try {
+      const r = await fetch("/api/settings/maxbot/webhook/reset", { method: "POST" });
+      const j = await r.json().catch(() => null) as { ok?: boolean; removed?: number; error?: string } | null;
+      if (!r.ok || !j || j.error) {
+        toast("Ошибка: " + (j?.error || `HTTP ${r.status}`));
+        return;
+      }
+      toast(`Webhook сброшен: ${j.removed ?? 0}`);
+      setSt({ kind: "ok", count: 0 });
+    } catch (e) {
+      toast("Ошибка: " + errText(e));
+    }
+  };
+
+  if (st.kind === "checking") {
+    return <div className="text-[11px] text-faint">Проверка webhook…</div>;
+  }
+  if (st.kind === "no-token") {
+    return null;
+  }
+  if (st.kind === "error") {
+    return (
+      <div className="flex items-center gap-1.5 mt-1">
+        <Chip tone="danger" className="text-[11px] normal-case whitespace-normal h-auto min-h-[22px] py-[3px] leading-tight">
+          Webhook: {st.text.slice(0, 50)}
+        </Chip>
+      </div>
+    );
+  }
+  if (st.kind === "offline") {
+    return <div className="text-[11px] text-faint mt-1">Webhook: нет связи</div>;
+  }
+  /* st.kind === "ok" */
+  if (st.count === 0) {
+    return (
+      <div className="flex items-center gap-1.5 mt-1">
+        <Chip tone="neutral" className="text-[11px] normal-case">Webhook: нет</Chip>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5 mt-1">
+      <Chip tone="warn" className="text-[11px] normal-case">
+        Webhook: {st.count} (polling мёртв)
+      </Chip>
+      <Btn size="sm" variant="muted" onClick={resetWebhook}>
+        Сбросить
+      </Btn>
+    </div>
+  );
+}
+
 export default function SettingsScreen() {
   const db = useDB();
   const toast = useToast();
@@ -155,6 +249,7 @@ export default function SettingsScreen() {
   /* Ключи ре-проверки статуса ботов (после сохранения/отвязки токена) */
   const [tgCheckKey, setTgCheckKey] = useState(0);
   const [maxCheckKey, setMaxCheckKey] = useState(0);
+  const [whCheckKey, setWhCheckKey] = useState(0);
 
   /* ── Обновления: ключ ремоунта баннера после ручной проверки ── */
   const [updateCheckKey, setUpdateCheckKey] = useState(0);
@@ -227,6 +322,7 @@ export default function SettingsScreen() {
       await store.dropBotToken("max");
       toast("Токен MAX отвязан");
       setMaxCheckKey((k) => k + 1);
+      setWhCheckKey((k) => k + 1);
     } catch (e) {
       toast("Ошибка: " + errText(e));
     }
@@ -423,6 +519,7 @@ export default function SettingsScreen() {
                 setMaxDraft(null);
                 toast("Токен MAX сохранён");
                 setMaxCheckKey((k) => k + 1);
+                setWhCheckKey((k) => k + 1);
               } catch (e) {
                 toast("Ошибка: " + errText(e));
               }
@@ -434,6 +531,7 @@ export default function SettingsScreen() {
         <div className="mt-2 flex items-center gap-1.5 min-h-[22px]">
           <BotStatusLine checkUrl="/api/settings/maxbot/check" checkKey={maxCheckKey} />
         </div>
+        {s.maxHasToken && <WebhookStatusLine checkKey={whCheckKey} />}
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-line">
           <div>
             <div className="text-[13.5px] font-semibold">Включить бота</div>

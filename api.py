@@ -1104,6 +1104,46 @@ def teacher_unbind():
     return jsonify({'ok': True})
 
 
+@maxbot_bp.route('/webhook', methods=['GET'])
+def maxbot_webhook_status():
+    """Проверить webhook-подписки: GET /subscriptions → {webhook: bool, urls: [...]}."""
+    import maxbot
+    token = get_db().get_setting('max_bot_token')
+    if not token:
+        return jsonify({'error': 'no bot token'}), 400
+    try:
+        urls = maxbot.get_subscriptions(token)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 502
+    return jsonify({'webhook': bool(urls), 'urls': urls})
+
+
+@maxbot_bp.route('/webhook/reset', methods=['POST'])
+def maxbot_webhook_reset():
+    """Сбросить все webhook-подписки: DELETE каждую, вернуть {ok, removed, urls}."""
+    import maxbot
+    token = get_db().get_setting('max_bot_token')
+    if not token:
+        return jsonify({'error': 'no bot token'}), 400
+    try:
+        urls = maxbot.get_subscriptions(token)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 502
+    removed = 0
+    errors = []
+    for url in urls:
+        try:
+            if maxbot.delete_subscription(token, url):
+                removed += 1
+            else:
+                errors.append(f'delete failed for {url}')
+        except Exception as e:
+            errors.append(str(e))
+    if errors:
+        return jsonify({'error': '; '.join(errors), 'removed': removed, 'urls': urls}), 502
+    return jsonify({'ok': True, 'removed': removed, 'urls': urls})
+
+
 app.register_blueprint(maxbot_bp)
 
 

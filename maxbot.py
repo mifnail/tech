@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, timedelta
 
@@ -74,6 +75,35 @@ def _post(path: str, token: str, data: dict, urlopen=None, timeout: int = 35):
     except urllib.error.URLError as e:
         raise MaxError(f'no connection: {e.reason}')
     return body
+
+
+def _delete(path: str, token: str, urlopen=None, timeout: int = 35):
+    """DELETE-запрос к MAX API. urlopen инжектится ради тестов."""
+    req = urllib.request.Request(f'{MAX_API}{path}', method='DELETE')
+    req.add_header('Authorization', token)
+    try:
+        body = open_url_with_fallback(req, urlopen=urlopen, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise MaxError('bad bot token (401)')
+        raise MaxError(f'max api HTTP {e.code}')
+    except urllib.error.URLError as e:
+        raise MaxError(f'no connection: {e.reason}')
+    return body
+
+
+def get_subscriptions(token: str, urlopen=None):
+    """GET /subscriptions → список URL подписок (пусто → [])."""
+    body = _get('/subscriptions', token, urlopen=urlopen) or {}
+    subs = body.get('subscriptions') or []
+    return [s['url'] for s in subs if 'url' in s]
+
+
+def delete_subscription(token: str, url: str, urlopen=None):
+    """DELETE /subscriptions?url=<url> → True при success."""
+    body = _delete(f'/subscriptions?url={urllib.parse.quote(url, safe="")}',
+                   token, urlopen=urlopen) or {}
+    return body.get('success') is True
 
 
 def check(token: str, urlopen=None):

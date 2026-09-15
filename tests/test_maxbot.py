@@ -363,6 +363,129 @@ class TestMaxBotAPI:
         assert client.get('/api/maxbot/links').json == []
 
 
+# ======================== WEBHOOK ========================
+
+class TestWebhookHelpers:
+    """Unit-тесты get_subscriptions / delete_subscription с фейковым urlopen."""
+
+    def test_get_subscriptions_empty(self, monkeypatch):
+        import urllib.request
+        body = json.dumps({'subscriptions': []}).encode()
+        monkeypatch.setattr(urllib.request, 'urlopen',
+                            lambda req, timeout=None, **kw: FakeResp(body))
+        assert maxbot.get_subscriptions('tok') == []
+
+    def test_get_subscriptions_list(self, monkeypatch):
+        import urllib.request
+        payload = {
+            'subscriptions': [
+                {'url': 'https://a.com/hook', 'update_types': ['message'], 'secret': 's1'},
+                {'url': 'https://b.com/hook', 'update_types': [], 'secret': 's2'},
+            ]
+        }
+        body = json.dumps(payload).encode()
+        monkeypatch.setattr(urllib.request, 'urlopen',
+                            lambda req, timeout=None, **kw: FakeResp(body))
+        urls = maxbot.get_subscriptions('tok')
+        assert urls == ['https://a.com/hook', 'https://b.com/hook']
+
+    def test_get_subscriptions_no_key(self, monkeypatch):
+        import urllib.request
+        body = json.dumps({}).encode()
+        monkeypatch.setattr(urllib.request, 'urlopen',
+                            lambda req, timeout=None, **kw: FakeResp(body))
+        assert maxbot.get_subscriptions('tok') == []
+
+    def test_delete_subscription_success(self, monkeypatch):
+        import urllib.request
+        body = json.dumps({'success': True}).encode()
+        monkeypatch.setattr(urllib.request, 'urlopen',
+                            lambda req, timeout=None, **kw: FakeResp(body))
+        assert maxbot.delete_subscription('tok', 'https://a.com/hook') is True
+
+    def test_delete_subscription_failure(self, monkeypatch):
+        import urllib.request
+        body = json.dumps({'success': False}).encode()
+        monkeypatch.setattr(urllib.request, 'urlopen',
+                            lambda req, timeout=None, **kw: FakeResp(body))
+        assert maxbot.delete_subscription('tok', 'https://a.com/hook') is False
+
+    def test_delete_subscription_401(self, monkeypatch):
+        import urllib.request
+        def fake(req, timeout=None, **kw):
+            raise urllib.error.HTTPError(req.full_url, 401, 'Unauthorized', {}, None)
+        monkeypatch.setattr(urllib.request, 'urlopen', fake)
+        with pytest.raises(maxbot.MaxError, match='401'):
+            maxbot.delete_subscription('tok', 'https://a.com/hook')
+
+
+class TestWebhookAPI:
+    """API-тесты /webhook и /webhook/reset."""
+
+    def test_webhook_no_token(self, client):
+        rv = client.get('/api/settings/maxbot/webhook')
+        assert rv.status_code == 400
+        assert rv.json == {'error': 'no bot token'}
+
+    def test_webhook_reset_no_token(self, client):
+        rv = client.post('/api/settings/maxbot/webhook/reset')
+        assert rv.status_code == 400
+        assert rv.json == {'error': 'no bot token'}
+
+    def test_webhook_empty(self, client, monkeypatch):
+        import urllib.request
+        client.post('/api/settings/maxbot', json={'token': 't'})
+        body = json.dumps({'subscriptions': []}).encode()
+        monkeypatch.setattr(urllib.request, 'urlopen',
+                            lambda req, timeout=None, **kw: FakeResp(body))
+        rv = client.get('/api/settings/maxbot/webhook')
+        assert rv.json == {'webhook': False, 'urls': []}
+
+    def test_webhook_has_subs(self, client, monkeypatch):
+        import urllib.request
+        client.post('/api/settings/maxbot', json={'token': 't'})
+        payload = {'subscriptions': [
+            {'url': 'https://a.com/hook', 'update_types': ['message']},
+        ]}
+        body = json.dumps(payload).encode()
+        monkeypatch.setattr(urllib.request, 'urlopen',
+                            lambda req, timeout=None, **kw: FakeResp(body))
+        rv = client.get('/api/settings/maxbot/webhook')
+        assert rv.json['webhook'] is True
+        assert rv.json['urls'] == ['https://a.com/hook']
+
+    def test_webhook_reset(self, client, monkeypatch):
+        import urllib.request
+        import urllib.parse
+        client.post('/api/settings/maxbot', json={'token': 't'})
+
+        def fake_delete(req, timeout=None, **kw):
+            url = req.full_url
+            # Check DELETE method and correct URL parameter
+            assert req.get_method() == 'DELETE'
+            return FakeResp(json.dumps({'success': True}).encode())
+
+        # First GET (list), then N× DELETE, then re-GET (list → empty after reset)
+        calls = []
+        def fake(req, timeout=None, **kw):
+            method = req.get_method()
+            calls.append(method)
+            if method == 'DELETE':
+                return FakeResp(json.dumps({'success': True}).encode())
+            # GET /subscriptions → return one sub on first call, empty on second
+            if len(calls) <= 2:  # first GET before deletes
+                return FakeResp(json.dumps({'subscriptions': [
+                    {'url': 'https://a.com/hook'}
+                ]}).encode())
+            return FakeResp(json.dumps({'subscriptions': []}).encode())
+
+        monkeypatch.setattr(urllib.request, 'urlopen', fake)
+        rv = client.post('/api/settings/maxbot/webhook/reset')
+        assert rv.json['ok'] is True
+        assert rv.json['removed'] == 1
+        assert rv.json['urls'] == ['https://a.com/hook']
+
+
 # ======================== MULTIPART ENCODE ========================
 
 class TestMultipartEncode:
