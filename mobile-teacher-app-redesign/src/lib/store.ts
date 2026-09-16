@@ -270,17 +270,13 @@ class Store {
   /** Обратная карта subjectId → groupId (для маппинга расписания/уроков). */
   private subjectGroup = new Map<ID, ID>();
 
-  /* ── PROD: дебаунс-пуши оценок ─────────────────────────── */
-  /** Занятия с изменёнными оценками, ожидающие флаша. */
+  /* ── PROD: локальные правки оценок (dirty) ───────────────── */
+  /** Занятия с изменёнными оценками, ожидающие явного «Провести». */
   private dirtyLessons = new Set<ID>();
   /** Снимки оценок ДО первого изменения (для отката при ошибке). */
   private gradeSnapshots = new Map<ID, GradeRec[]>();
-  private gradeFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Idle-окно флаша: длиннее серверных бот-окон (10с/60с) не нужно,
-      но коалесцирует шторм тапов в один settled-POST. */
-  private static GRADE_PUSH_DELAY = 1500;
 
-  /** Пометить занятие «грязным» и перезапустить таймер флаша. */
+  /** Пометить занятие «грязным» (только dirty + snapshot, без таймера). */
   private markGradeDirty(lessonId: ID) {
     if (import.meta.env.DEV) return;
     if (!this.gradeSnapshots.has(lessonId)) {
@@ -290,19 +286,68 @@ class Store {
       );
     }
     this.dirtyLessons.add(lessonId);
-    if (this.gradeFlushTimer) clearTimeout(this.gradeFlushTimer);
-    this.gradeFlushTimer = setTimeout(() => {
-      void this.flushAttendance().catch((e) => console.error("[store] automatic attendance flush failed:", e));
-    }, Store.GRADE_PUSH_DELAY);
+  }
+
+  /** Проверить есть ли несохранённые правки (по занятию или любые). */
+  isDirty(lessonId?: ID): boolean {
+    if (lessonId !== undefined) return this.dirtyLessons.has(lessonId);
+    return this.dirtyLessons.size > 0;
+  }
+
+  /** Откатить локальные правки занятия к серверному состоянию. */
+  async discardLesson(lessonId: ID): Promise<void> {
+    this.dirtyLessons.delete(lessonId);
+    this.gradeSnapshots.delete(lessonId);
+    await this.loadLesson(lessonId);
+  }
+
+  /** Провести занятие: bulk POST на /conduct, пуши немедленно.
+
+      Успех: снимает грязь, помечает held, возвращает notified.
+      Ошибка: откат к снимку? — нет, грязь остаётся (повтор возможен). */
+  async conductLesson(lessonId: ID): Promise<{ notified: number }> {
+    if (import.meta.env.DEV) {
+      // DEV: эмулируем проведение без сети
+      this.dirtyLessons.delete(lessonId);
+      this.gradeSnapshots.delete(lessonId);
+      const l = this.lesson(lessonId);
+      if (l) l.status = "held";
+      this.touch();
+      return { notified: 0 };
+    }
+    const payload = this.db.grades
+      .filter((g) => g.lessonId === lessonId)
+      .map((g) => ({ student_id: g.studentId, grade: gradeToText(g) }));
+    const snapshot = this.gradeSnapshots.get(lessonId)?.map((g) => ({ ...g })) ?? null;
+    try {
+      const res = await _post(`/api/lessons/${lessonId}/conduct`, payload) as { notified?: number };
+      this.dirtyLessons.delete(lessonId);
+      this.gradeSnapshots.delete(lessonId);
+      const l = this.lesson(lessonId);
+      if (l) l.status = "held";
+      this.touch();
+      return { notified: typeof res.notified === "number" ? res.notified : 0 };
+    } catch (e) {
+      // Ошибка: откат к снимку, грязь остаётся для повтора
+      if (snapshot) {
+        this.db.grades = this.db.grades.filter((g) => g.lessonId !== lessonId);
+        this.db.grades.push(...snapshot.map((g) => ({ ...g })));
+        this.touch();
+        // оставляем dirty + snapshot для повторной попытки
+        this.dirtyLessons.add(lessonId);
+        if (!this.gradeSnapshots.has(lessonId)) {
+          this.gradeSnapshots.set(lessonId, snapshot);
+        }
+      }
+      throw e;
+    }
   }
 
   /** Флаш: bulk POST attendance по всем «грязным» занятиям; откат при ошибке.
-      Публичный: вызывается перед навигацией и на pagehide/visibilitychange. */
+      Используется только для RestoreDatabase и legacy (не для обычных тапов). */
   private attendanceFlush: Promise<void> | null = null;
 
   flushAttendance(): Promise<void> {
-    if (this.gradeFlushTimer) clearTimeout(this.gradeFlushTimer);
-    this.gradeFlushTimer = null;
     if (this.attendanceFlush) return this.attendanceFlush;
     if (!this.dirtyLessons.size) return Promise.resolve();
     const pending = this.flushGradeBatches();
@@ -314,8 +359,6 @@ class Store {
 
   private async flushGradeBatches() {
     while (this.dirtyLessons.size) {
-      if (this.gradeFlushTimer) clearTimeout(this.gradeFlushTimer);
-      this.gradeFlushTimer = null;
       // Freeze all payloads before awaiting; later edits belong to the next batch.
       const batch = [...this.dirtyLessons].map((lessonId) => ({
         lessonId,
@@ -333,7 +376,6 @@ class Store {
           failure = e;
           console.error(`[store] grade flush for lesson ${lessonId}:`, e);
           if (this.dirtyLessons.has(lessonId)) {
-            // Keep newer edits queued, but retain the last confirmed rollback state.
             this.gradeSnapshots.set(lessonId, snapshot);
           } else {
             this.db.grades = this.db.grades.filter((g) => g.lessonId !== lessonId);
@@ -346,11 +388,25 @@ class Store {
     }
   }
 
-  /** Best-effort флаш при уходе со страницы (закрытие/сворачивание WebView). */
+  /** Best-effort тихая запись при уходе со страницы (без notify-тоста).
+
+      Данные терять нельзя: прямой bulk POST с keepalive, без флага conduct. */
   private bindLifecycleFlush() {
     if (import.meta.env.DEV) return;
     const flush = () => {
-      void this.flushAttendance().catch((e) => console.error("[store] lifecycle attendance flush failed:", e));
+      for (const lessonId of [...this.dirtyLessons]) {
+        const payload = this.db.grades
+          .filter((g) => g.lessonId === lessonId)
+          .map((g) => ({ student_id: g.studentId, grade: gradeToText(g) }));
+        try {
+          fetch(`/api/lessons/${lessonId}/attendance`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            keepalive: true,
+          }).catch(() => {});
+        } catch {}
+      }
     };
     window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", () => {

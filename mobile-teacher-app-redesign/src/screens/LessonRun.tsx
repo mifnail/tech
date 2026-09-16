@@ -1,14 +1,15 @@
 /* Экран проведения занятия — основной рабочий сценарий преподавателя.
    2-колоночный компактный список: правая половина строки — оценка вперёд
    (— → 0 → 5 → 4 → 3 → 2), левая — назад. Точка слева — отсутствие.
-   Шапка и подвал компактные (≤10% высоты экрана каждая). */
+   Шапка и подвал компактные (≤10% высоты экрана каждая).
+   Тапы — только локально (бейдж «не проведено»); кнопка «Провести» пишет и пушит. */
 
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeftRight, Ban, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  CircleCheck, MoreVertical, RotateCcw, Trash2,
+  CircleCheck, MoreVertical, RotateCcw, Trash2, Loader2,
 } from "lucide-react";
-import { useDB, store, lessonAvg } from "../lib/store";
+import { useDB, useVersion, store, lessonAvg } from "../lib/store";
 import { formatDot, formatLong } from "../lib/date";
 import { buzz, formatAvg } from "../lib/grades";
 import { navigate, goBack } from "../lib/router";
@@ -107,6 +108,7 @@ function StudentCell({
 /* ── Экран ────────────────────────────────────────────────── */
 export default function LessonRunScreen({ id }: { id: number }) {
   useDB();
+  useVersion();
   const toast = useToast();
   const lesson = store.lesson(id);
 
@@ -116,6 +118,13 @@ export default function LessonRunScreen({ id }: { id: number }) {
   const [substituteOpen, setSubstituteOpen] = useState(false);
   const [substituteConfirm, setSubstituteConfirm] = useState(false);
   const [selectedSubjectId, setSelectedSubjectId] = useState<number | null>(null);
+
+  // Провести flow
+  const [conductBusy, setConductBusy] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [pendingNav, setPendingNav] = useState<string | null>(null);
+  const [pendingIsBack, setPendingIsBack] = useState(false);
+  const [pendingFallback, setPendingFallback] = useState<string | null>(null);
 
   const siblings = useMemo(
     () => (lesson ? store.lessonsOfPair(lesson.groupId, lesson.subjectId) : []),
@@ -134,7 +143,13 @@ export default function LessonRunScreen({ id }: { id: number }) {
     return (
       <div className="pt-safe px-4">
         <header className="flex items-center gap-1 py-2.5">
-          <IconBtn icon={ChevronLeft} label="Назад" onClick={() => goBack("/today")} />
+          <IconBtn icon={ChevronLeft} label="Назад" onClick={() => {
+            const r = goBack("/today");
+            if (r?.unsaved) {
+              // ignore dirty when lesson missing
+              window.location.hash = "/today";
+            }
+          }} />
           <h1 className="text-[16px] font-bold">Занятие не найдено</h1>
         </header>
       </div>
@@ -149,6 +164,7 @@ export default function LessonRunScreen({ id }: { id: number }) {
   const presentCount = recs.filter((r) => r.present).length;
   const avg = lessonAvg(recs);
   const cancelled = lesson.status === "cancelled";
+  const dirty = !cancelled && store.isDirty(lesson.id);
 
   const allPairs = store.db.groups.flatMap((g) =>
     g.subjectIds.map((sid) => ({ groupId: g.id, subjectId: sid })),
@@ -158,9 +174,89 @@ export default function LessonRunScreen({ id }: { id: number }) {
   const prev = idx > 0 ? siblings[idx - 1] : null;
   const next = idx >= 0 && idx < siblings.length - 1 ? siblings[idx + 1] : null;
 
-  const finish = () => {
-    store.setLessonStatus(lesson.id, "held");
-    toast("Занятие сохранено · ср. " + formatAvg(lessonAvg(store.gradesOfLesson(lesson.id))));
+  const errText = (e: unknown): string => {
+    const msg = e instanceof Error ? e.message : String(e);
+    const i = msg.indexOf(": ");
+    const detail = i >= 0 ? msg.slice(i + 2).trim() : msg.trim();
+    return detail || "Ошибка";
+  };
+
+  const doConduct = async () => {
+    if (conductBusy || !dirty || cancelled) return;
+    setConductBusy(true);
+    try {
+      const res = await store.conductLesson(lesson.id);
+      toast(`Проведено, отправлено ${res.notified}`);
+    } catch (e) {
+      toast(`Ошибка: ${errText(e)}`);
+    } finally {
+      setConductBusy(false);
+    }
+  };
+
+  const requestNav = (to: string) => {
+    if (dirty) {
+      setPendingNav(to);
+      setPendingIsBack(false);
+      setPendingFallback(null);
+      setLeaveOpen(true);
+      return;
+    }
+    navigate(to);
+  };
+
+  const requestBack = (fallback: string) => {
+    if (dirty) {
+      setPendingNav(null);
+      setPendingIsBack(true);
+      setPendingFallback(fallback);
+      setLeaveOpen(true);
+      return;
+    }
+    goBack(fallback);
+  };
+
+  const doLeaveConduct = async () => {
+    setLeaveOpen(false);
+    try {
+      const res = await store.conductLesson(lesson.id);
+      toast(`Проведено, отправлено ${res.notified}`);
+    } catch (e) {
+      toast(`Ошибка: ${errText(e)}`);
+      return;
+    }
+    if (pendingIsBack && pendingFallback) {
+      goBack(pendingFallback);
+      // goBack may be isDirty-checked; but now clean, re-call
+      // if history case, directly navigate fallback
+      if (store.isDirty(lesson.id)) {
+        window.location.hash = pendingFallback;
+      }
+    } else if (pendingNav) {
+      window.location.hash = pendingNav;
+    }
+    setPendingNav(null);
+    setPendingIsBack(false);
+    setPendingFallback(null);
+  };
+
+  const doLeaveDiscard = async () => {
+    setLeaveOpen(false);
+    try {
+      await store.discardLesson(lesson.id);
+    } catch {}
+    if (pendingIsBack && pendingFallback) {
+      // discard already cleared dirty, goBack will succeed
+      const r = goBack(pendingFallback);
+      if (r?.unsaved) {
+        window.location.hash = pendingFallback;
+      }
+    } else if (pendingNav) {
+      window.location.hash = pendingNav;
+    }
+    setPendingNav(null);
+    setPendingIsBack(false);
+    setPendingFallback(null);
   };
 
   const doSubstitute = async () => {
@@ -188,7 +284,7 @@ export default function LessonRunScreen({ id }: { id: number }) {
       {/* Шапка: компактная, фиксированная */}
       <header className="sticky top-0 z-30 bg-surface border-b border-line pt-safe">
         <div className="flex items-center gap-1 px-2 py-1.5 h-[54px]">
-          <IconBtn icon={ChevronLeft} label="Назад" onClick={() => goBack("/today")} />
+          <IconBtn icon={ChevronLeft} label="Назад" onClick={() => requestBack("/today")} />
           <div className="flex-1 min-w-0">
             <div className="text-[14px] font-bold leading-tight truncate">
               {subject?.name}
@@ -198,6 +294,12 @@ export default function LessonRunScreen({ id }: { id: number }) {
               {lesson.lessonNumber > 0 && <> · пара №{lesson.lessonNumber}</>}
             </div>
           </div>
+          {dirty && (
+            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 animate-pulse" title="не проведено" />
+          )}
+          {dirty && (
+            <Chip tone="warn" className="h-6 text-[11px]">не проведено</Chip>
+          )}
           <Chip tone={lesson.status === "held" ? "success" : lesson.status === "scheduled" ? "warn" : "danger"}>
             {graded}/{students.length}
           </Chip>
@@ -237,14 +339,20 @@ export default function LessonRunScreen({ id }: { id: number }) {
             <span className="font-bold text-ink tabular-nums">{presentCount}</span> присут. ·{" "}
             ср. <span className="font-bold text-ink tabular-nums">{formatAvg(avg)}</span>
           </div>
-          {lesson.status === "scheduled" ? (
-            <Btn size="md" icon={CircleCheck} onClick={finish} className="shrink-0">
-              Завершить
-            </Btn>
-          ) : (
-            <Chip tone={lesson.status === "held" ? "success" : "danger"} className="h-7">
-              {lesson.status === "held" ? "Проведено" : "Отменено"}
+          {cancelled ? (
+            <Chip tone="danger" className="h-7">
+              Отменено
             </Chip>
+          ) : (
+            <Btn
+              size="md"
+              icon={dirty && conductBusy ? Loader2 : CircleCheck}
+              disabled={!dirty || conductBusy}
+              onClick={doConduct}
+              className={cn("shrink-0", conductBusy && "opacity-80")}
+            >
+              {conductBusy ? "Проводим..." : "Провести"}
+            </Btn>
           )}
         </div>
       </footer>
@@ -257,14 +365,14 @@ export default function LessonRunScreen({ id }: { id: number }) {
           <Btn
             variant="muted" className="justify-start" icon={ChevronLeft}
             disabled={!prev}
-            onClick={() => { setMenuOpen(false); if (prev) navigate("/lesson/" + prev.id); }}
+            onClick={() => { setMenuOpen(false); if (prev) requestNav("/lesson/" + prev.id); }}
           >
             Предыдущее занятие{prev ? ` · ${formatDot(prev.date)}` : ""}
           </Btn>
           <Btn
             variant="muted" className="justify-start" icon={ChevronRight}
             disabled={!next}
-            onClick={() => { setMenuOpen(false); if (next) navigate("/lesson/" + next.id); }}
+            onClick={() => { setMenuOpen(false); if (next) requestNav("/lesson/" + next.id); }}
           >
             Следующее занятие{next ? ` · ${formatDot(next.date)}` : ""}
           </Btn>
@@ -327,9 +435,22 @@ export default function LessonRunScreen({ id }: { id: number }) {
         danger
         onConfirm={() => {
           store.removeLesson(lesson.id);
-          navigate("/today");
+          // delete does not need dirty check
+          window.location.hash = "/today";
           toast("Занятие удалено");
         }}
+      />
+
+      {/* Подтверждение ухода с несохранёнными оценками */}
+      <ConfirmSheet
+        open={leaveOpen}
+        onClose={() => setLeaveOpen(false)}
+        title="Есть непроведённые оценки"
+        body="Сохранить изменения и разослать уведомления?"
+        confirmLabel="Провести"
+        cancelLabel="Уйти без сохранения"
+        onConfirm={doLeaveConduct}
+        onCancel={doLeaveDiscard}
       />
 
       {/* Выбор предмета для замены */}

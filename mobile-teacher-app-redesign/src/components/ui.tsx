@@ -364,21 +364,23 @@ export function Sparkline({
 
 /* ── Подтверждение действия ───────────────────────────────── */
 export function ConfirmSheet({
-  open, onClose, title, body, confirmLabel = "Подтвердить", onConfirm, danger,
+  open, onClose, title, body, confirmLabel = "Подтвердить", cancelLabel = "Отмена", onConfirm, onCancel, danger,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   body?: string;
   confirmLabel?: string;
+  cancelLabel?: string;
   onConfirm: () => void;
+  onCancel?: () => void;
   danger?: boolean;
 }) {
   return (
     <Sheet open={open} onClose={onClose} title={title}>
       {body && <p className="text-[14px] text-muted leading-relaxed mb-5">{body}</p>}
       <div className="flex gap-2.5">
-        <Btn variant="muted" className="flex-1" onClick={onClose}>Отмена</Btn>
+        <Btn variant="muted" className="flex-1" onClick={() => { if (onCancel) onCancel(); onClose(); }}>{cancelLabel}</Btn>
         <Btn
           variant={danger ? "danger" : "primary"}
           className="flex-1"

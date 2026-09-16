@@ -766,6 +766,170 @@ def mark_attendance(lesson_id: int):
     return jsonify({'ok': True})
 
 
+@lessons_bp.route('/<int:lesson_id>/conduct', methods=['POST'])
+def conduct_lesson(lesson_id: int):
+    """Провести занятие: записать оценки и разослать пуши немедленно.
+
+    Body — тот же формат что /attendance: list [{student_id, grade}] или
+    одиночный объект {student_id, grade} или {records: [...] }.
+    Сначала читает старые оценки, затем пишет пачку, затем в daemon-потоке
+    шлёт уведомления только где оценка ИЗМЕНИЛАСЬ (дедуп).
+    Ответ {"ok": True, "notified": N} где N — число изменённых оценок.
+    Старые таймеры /attendance не трогает.
+    """
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({'error': 'Expected JSON body'}), 400
+    # Унифицируем формат к списку records как в /attendance + поддержка {records:[...]}
+    if isinstance(data, list):
+        records = data
+    elif isinstance(data, dict):
+        if 'records' in data:
+            recs = data['records']
+            if not isinstance(recs, list):
+                return jsonify({'error': 'records must be a list'}), 400
+            records = recs
+        elif 'student_id' in data and 'grade' in data:
+            records = [data]
+        elif not data:
+            records = []
+        else:
+            return jsonify({'error': 'Expected student_id and grade for each record'}), 400
+    else:
+        return jsonify({'error': 'Expected student_id and grade for each record'}), 400
+
+    if not records:
+        return jsonify({'ok': True, 'notified': 0})
+
+    if any(not isinstance(r, dict) or 'student_id' not in r or 'grade' not in r for r in records):
+        return jsonify({'error': 'Expected student_id and grade for each record'}), 400
+
+    db = get_db()
+    # Прочитать старые оценки до записи (для дедупа)
+    try:
+        old_rows = db.get_attendance(lesson_id)
+        old_map: dict[int, str] = {}
+        for r in old_rows:
+            try:
+                old_map[int(r['student_id'])] = str(r['grade'] or '')
+            except Exception:
+                continue
+    except Exception:
+        old_map = {}
+
+    # Запись — reuse валидации mark_attendance_bulk
+    try:
+        db.mark_attendance_bulk(lesson_id, records)
+    except (ValueError, TypeError) as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    # Вычислить изменённые (grade != old и новая не пустая)
+    changed: list[tuple[int, str]] = []
+    for r in records:
+        sid = r['student_id']
+        new_grade = r['grade']
+        if new_grade is None:
+            new_grade = ''
+        else:
+            new_grade = str(new_grade)
+        old_grade = old_map.get(sid, '')
+        if old_grade is None:
+            old_grade = ''
+        else:
+            old_grade = str(old_grade)
+        if new_grade == old_grade:
+            continue
+        if not new_grade:
+            continue
+        try:
+            sid_int = int(sid)
+        except Exception:
+            continue
+        changed.append((sid_int, new_grade))
+
+    notified = len(changed)
+    if notified == 0:
+        return jsonify({'ok': True, 'notified': 0})
+
+    # Проверить активность бота — если не активен, не считаем уведомления
+    try:
+        token = db.get_setting('max_bot_token')
+        enabled = db.get_setting('max_bot_enabled')
+        if not token or enabled != '1':
+            return jsonify({'ok': True, 'notified': 0})
+    except Exception:
+        return jsonify({'ok': True, 'notified': 0})
+
+    # Контекст для пушей
+    try:
+        lesson = db.get_lesson(lesson_id)
+        if not lesson:
+            return jsonify({'ok': True, 'notified': notified})
+        raw_date = lesson['date'] or ''
+        date_str = f'{raw_date[8:10]}.{raw_date[5:7]}' if len(raw_date) >= 10 else ''
+        subject = row_get(lesson, 'actual_subject_name', '') or row_get(lesson, 'planned_subject', '') or ''
+        group_id = None
+        try:
+            if 'group_id' in lesson.keys():
+                group_id = lesson['group_id']
+        except Exception:
+            pass
+        if group_id is None:
+            try:
+                sid_sub = row_get(lesson, 'subject_id', None)
+                if sid_sub is not None and str(sid_sub) != '':
+                    prow = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (sid_sub,)).fetchone()
+                    if prow:
+                        group_id = prow['group_id']
+            except Exception:
+                pass
+    except Exception:
+        return jsonify({'ok': True, 'notified': notified})
+
+    # Подготовить данные для фоновой отправки (чтобы не зависеть от нового DB в тесте)
+    cur_chat = None
+    fio_map: dict[int, str] = {}
+    try:
+        if group_id is not None:
+            cur_chat = db.get_curator_chat(group_id)
+    except Exception:
+        cur_chat = None
+    for sid, _grade in changed:
+        try:
+            st = db.get_student(sid)
+            if st:
+                fio_map[sid] = f"{st['last_name']} {st['first_name'][0]}." if st['first_name'] else f"{st['last_name']}"
+            else:
+                fio_map[sid] = str(sid)
+        except Exception:
+            fio_map[sid] = str(sid)
+
+    # Отправить пуши в фоне, не блокируя HTTP
+    def _run_conduct():
+        try:
+            import maxbot as _maxbot
+            for sid, grade in changed:
+                try:
+                    _maxbot.notify_grade(token, sid, grade, date_str, subject)
+                except Exception:
+                    pass
+                # Куратору — тот же текст что в _fire_curator_push
+                try:
+                    if cur_chat is not None:
+                        fio = fio_map.get(sid, str(sid))
+                        text = f"{fio}: {subject} — {grade} ({date_str})"
+                        _maxbot.send_message(token, int(cur_chat), text)
+                except Exception:
+                    pass
+                import time as _time
+                _time.sleep(0.6)
+        except Exception:
+            pass
+
+    threading.Thread(target=_run_conduct, daemon=True).start()
+    return jsonify({'ok': True, 'notified': notified})
+
+
 def _read_settled_grade(db, lesson_id: int, student_id: int) -> str:
     try:
         rows = db.get_attendance(lesson_id)

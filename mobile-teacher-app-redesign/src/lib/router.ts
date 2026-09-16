@@ -24,23 +24,28 @@ export function useRoute(): string[] {
 /* Была ли навигация внутри приложения (иначе history.back может выйти из WebView) */
 let inAppNav = false;
 
-/** Навигация: сначала флашим «грязные» оценки (чтобы быстрый уход не ронял запись),
-    затем меняем hash. Быстрые тапы по-прежнему коалесцируются дебаунсом. */
-export async function navigate(to: string): Promise<void> {
-  if (current() === to) return;
-  inAppNav = true;
-  try {
-    await store.flushAttendance();
-    window.location.hash = to;
-  } catch (e) {
-    console.error("[router] attendance could not be saved before navigation:", e);
+/** Навигация: если есть несохранённые оценки — вернуть флаг unsaved
+    вызывающему (LessonRun покажет ConfirmSheet). Иначе меняем hash. */
+export function navigate(to: string): { unsaved?: boolean } {
+  if (current() === to) return {};
+  if (store.isDirty()) {
+    return { unsaved: true };
   }
+  inAppNav = true;
+  window.location.hash = to;
+  return {};
 }
 
-export function goBack(fallback: string): void {
+export function goBack(fallback: string): { unsaved?: boolean } {
+  if (store.isDirty()) {
+    return { unsaved: true };
+  }
   if (inAppNav && window.history.length > 1) {
     window.history.back();
   } else {
-    void navigate(fallback);
+    // navigate already checks isDirty internally
+    const r = navigate(fallback);
+    return r;
   }
+  return {};
 }
