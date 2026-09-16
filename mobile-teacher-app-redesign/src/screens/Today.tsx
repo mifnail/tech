@@ -1,4 +1,4 @@
-/* Экран «Сегодня»: приветствие, занятия дня, быстрые метрики. */
+/* Экран «Сегодня»: занятия дня, быстрые метрики. */
 
 import { useMemo, useState } from "react";
 import { CalendarOff, ChevronRight, Play, CircleAlert, CircleCheck, Ban } from "lucide-react";
@@ -118,13 +118,11 @@ export default function TodayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, ver]);
 
-  const name = db.settings.teacherName.trim() || "Преподаватель";
-
   return (
     <Screen className="pb-28">
       <BigHeader
         kicker={`${formatLong(today)} · ${parity === 1 ? "чётная" : "нечётная"} неделя`}
-        title={`Здравствуйте,\n${name}`}
+        title="Сегодня"
       />
 
       <Btn

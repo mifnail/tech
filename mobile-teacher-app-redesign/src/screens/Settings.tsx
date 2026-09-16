@@ -1,4 +1,4 @@
-/* «Ещё»: профиль, тема, боты (Telegram / MAX), код преподавателя,
+/* «Ещё»: тема, боты (Telegram / MAX), код преподавателя,
    бэкап/восстановление. */
 
 import { useEffect, useState } from "react";
@@ -11,7 +11,7 @@ import {
 import { useDB, store } from "../lib/store";
 import { BigHeader, Screen } from "../components/shell";
 import {
-  Btn, Card, Chip, ConfirmSheet, Field, IconBtn, Input,
+  Btn, Card, Chip, ConfirmSheet, IconBtn, Input,
   SectionTitle, Segmented, useToast,
 } from "../components/ui";
 import { cn } from "../utils/cn";
@@ -240,7 +240,6 @@ export default function SettingsScreen() {
   const toast = useToast();
   const s = db.settings;
 
-  const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [tgDraft, setTgDraft] = useState<string | null>(null);
   const [maxDraft, setMaxDraft] = useState<string | null>(null);
   const [dropTgOpen, setDropTgOpen] = useState(false);
@@ -381,30 +380,6 @@ export default function SettingsScreen() {
           Тема переключается вручную и запоминается — без запросов к системе,
           чтобы стабильно работать на Android 7+.
         </p>
-      </Card>
-
-      <SectionTitle>Профиль</SectionTitle>
-      <Card className="p-4">
-        <Field label="Подпись преподавателя">
-          <div className="flex gap-2">
-            <Input
-              value={nameDraft ?? s.teacherName}
-              onChange={(e) => setNameDraft(e.target.value)}
-              placeholder="Иванова А. П."
-            />
-            <Btn
-              icon={Check}
-              disabled={nameDraft === null || !nameDraft.trim()}
-              onClick={() => {
-                if (nameDraft) store.updateSettings({ teacherName: nameDraft.trim() });
-                setNameDraft(null);
-                toast("Сохранено");
-              }}
-            >
-              ОК
-            </Btn>
-          </div>
-        </Field>
       </Card>
 
       <SectionTitle>Код преподавателя</SectionTitle>
