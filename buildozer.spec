@@ -33,7 +33,7 @@ icon.filename = icon-512.png
 # per-permission maxSdkVersion cannot be expressed here. READ_EXTERNAL_STORAGE
 # is therefore requested plain (needed on Android <=12 for Download/ scanning;
 # on 13+ it is ignored and MANAGE_EXTERNAL_STORAGE is the effective grant).
-android.permissions = INTERNET,REQUEST_INSTALL_PACKAGES,MANAGE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
+android.permissions = INTERNET,MANAGE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
 android.api = 34
 android.minapi = 24
 android.archs = arm64-v8a

@@ -1,13 +1,13 @@
 /* Аналитика (read-only): агрегация на клиенте из журнала.
    Порт ванильного App.Pages.analytics: посещаемость/среднее/динамика,
    тепловая полоса 14 дней, по предметам, лидеры top-3 и зона риска.
-   Математика та же, что в ванилле; менялась только подача. */
+   Зона риска = правило должников: нет оценок либо средний < 3. */
 
 import { useMemo, useState } from "react";
 import { AlertTriangle, BarChart3, Check, Download } from "lucide-react";
 import { useDB, useVersion } from "../lib/store";
 import { addDaysISO, todayISO } from "../lib/date";
-import { avgOf, formatAvg } from "../lib/grades";
+import { avgOf, formatAvg, isDebtor } from "../lib/grades";
 import { BigHeader, Screen } from "../components/shell";
 import { Btn, Card, Chip, EmptyState, SectionTitle, Select, useToast } from "../components/ui";
 import { cn } from "../utils/cn";
@@ -152,25 +152,29 @@ export default function AnalyticsScreen() {
       return { iso, v: (byDay.get(iso) ?? 0) / maxDay };
     });
 
-    // Доски: лидеры top-3 и зона риска (avg < 3.4 или abs ≥ 3) — та же математика, что в ванилле.
-    const stMap = new Map<number, { id: number; name: string; avgSum: number; avgCnt: number; abs: number }>();
+    // Доски: лидеры top-3 и зона риска — по правилу isDebtor: нет оценок либо средний < 3.
+    const stMap = new Map<number, { id: number; name: string; avgSum: number; avgCnt: number; vals: number[] }>();
     for (const st of db.students) {
-      stMap.set(st.id, { id: st.id, name: st.name, avgSum: 0, avgCnt: 0, abs: 0 });
+      stMap.set(st.id, { id: st.id, name: st.name, avgSum: 0, avgCnt: 0, vals: [] });
     }
     for (const g of allGrades) {
       const e = stMap.get(g.studentId);
       if (!e) continue;
-      if (!g.present) e.abs++;
-      else if (g.value !== null && g.value >= 2) {
+      if (g.present && g.value !== null && g.value >= 2) {
         e.avgSum += g.value;
         e.avgCnt++;
+        e.vals.push(g.value);
       }
     }
     const board = [...stMap.values()]
       .filter((b) => b.avgCnt > 0)
-      .map((b) => ({ id: b.id, name: b.name, avg: b.avgSum / b.avgCnt, abs: b.abs }));
+      .map((b) => ({ id: b.id, name: b.name, avg: b.avgSum / b.avgCnt }));
     const top = board.slice().sort((a, b) => b.avg - a.avg).slice(0, 3);
-    const risk = board.filter((b) => b.avg < 3.4 || b.abs >= 3).sort((a, b) => a.avg - b.avg).slice(0, 3);
+    const risk = [...stMap.values()]
+      .filter((b) => isDebtor(b.vals))
+      .map((b) => ({ id: b.id, name: b.name, avg: b.avgCnt > 0 ? b.avgSum / b.avgCnt : null }))
+      .sort((a, b) => (a.avg ?? -1) - (b.avg ?? -1))
+      .slice(0, 3);
 
     // По предметам: средний балл, занятий, студентов
     const perSubject = db.subjects.map((s) => {
@@ -191,8 +195,8 @@ export default function AnalyticsScreen() {
 
   const { avg, att, marked, series, delta, days, top, risk, perSubject } = model;
   const up = delta >= 0;
-  // Красный — только ниже порога ~3.4; иначе нейтральный акцент.
-  const avgColor = avg == null ? "text-faint" : avg < 3.4 ? "text-g2" : "text-accent";
+  // Красный — только ниже порога 3; иначе нейтральный акцент.
+  const avgColor = avg == null ? "text-faint" : avg < 3 ? "text-g2" : "text-accent";
 
   // Кольцо посещаемости
   const ringSize = 92, ringStroke = 8;
@@ -290,14 +294,14 @@ export default function AnalyticsScreen() {
               <div className="flex items-center justify-between gap-3">
                 <div className="text-[14px] font-bold truncate">{subj.name}</div>
                 {sAvg != null ? (
-                  <Chip tone={sAvg < 3.4 ? "danger" : "accent"}>{formatAvg(sAvg)}</Chip>
+                  <Chip tone={sAvg < 3 ? "danger" : "accent"}>{formatAvg(sAvg)}</Chip>
                 ) : (
                   <Chip tone="neutral">—</Chip>
                 )}
               </div>
               <div className="mt-2 h-[10px] rounded-full bg-surface2 overflow-hidden">
                 <div
-                  className={cn("h-full rounded-full", sAvg != null && sAvg < 3.4 ? "bg-g2" : "bg-accent")}
+                  className={cn("h-full rounded-full", sAvg != null && sAvg < 3 ? "bg-g2" : "bg-accent")}
                   style={{ width: (sAvg != null ? (sAvg / 5) * 100 : 0) + "%" }}
                 />
               </div>
@@ -334,7 +338,7 @@ export default function AnalyticsScreen() {
               {risk.map((r) => (
                 <div key={r.id} className="flex items-center gap-2 py-1.5">
                   <span className="flex-1 min-w-0 text-[12px] font-semibold truncate">{r.name}</span>
-                  <span className="text-[10px] font-bold tabular-nums text-faint">{r.abs}пр</span>
+                  <span className="text-[10px] font-bold tabular-nums text-faint">{r.avg === null ? "нет оценок" : "ниже 3"}</span>
                   <span className="text-[12px] font-extrabold tabular-nums text-g2">{formatAvg(r.avg)}</span>
                 </div>
               ))}
