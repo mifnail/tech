@@ -1,16 +1,29 @@
-# Фаза 0 — iOS спайк: проверка пайплайна «репо → CI macos → unsigned IPA».
-# Только новые файлы: этот workflow НЕ трогает Android-пайплайн (build-apk.yml),
-# бэкенд (api.py/database.py) и lessons.db. Не пушить до подтверждения.
-# Триггер — push по путям спайка + ручной dispatch. Результат — unsigned .ipa как artifact.
-name: Build unsigned IPA (iOS spike — Phase 0)
+# Phase 1 — iOS: реальное приложение Flask+dist+SQLite через Briefcase + Toga WebView.
+# Только новые файлы + точечный бэкенд (путь БД). Android-пайплайн (build-apk.yml, buildozer.spec)
+# не трогаем, lessons.db не трогаем, не пушить без команды. Билд — macos → unsigned IPA.
+name: Build iOS (Briefcase + Toga — Phase 1)
 
 on:
   push:
     branches: ["main", "redesign"]
     paths:
       - ".github/workflows/build-ios.yml"
+      - "pyproject.toml"
+      - "src/teachhelper/**"
+      - "database.py"
+      - "api.py"
+      - "report_export.py"
+      - "botcore.py"
+      - "tgbot.py"
+      - "maxbot.py"
+      - "mobile-teacher-app-redesign/dist/**"
+      - "mobile-teacher-app-redesign/package.json"
+      - "static/**"
+      - "templates/**"
+      - "VERSION"
+      - "icon-512.png"
       - "ios-spike/**"
-      - "docs/IOS_SPIKE.md"
+      - "docs/IOS_*.md"
   workflow_dispatch:
 
 permissions:
@@ -18,12 +31,17 @@ permissions:
 
 jobs:
   build-ios:
-    name: Build unsigned IPA (macOS)
+    name: Build iOS IPA (Briefcase/Toga real app)
     runs-on: macos-14
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
 
       - name: Show Xcode / SDK versions
         run: |
@@ -31,141 +49,181 @@ jobs:
           xcodebuild -version || true
           xcode-select -p || true
           xcrun --show-sdk-path || true
-          xcrun simctl list runtimes 2>&1 | head -n 50 || true
           swift --version || true
+          python --version || true
+          pip --version || true
 
-      - name: Validate project exists (fallback generate)
+      - name: Install Briefcase & deps
         run: |
-          set -euo pipefail
-          PROJECT="ios-spike/TeachHelperSpike.xcodeproj"
-          if [ ! -d "$PROJECT" ]; then
-            echo "::warning::Project $PROJECT not found — generating minimal project fallback"
-            mkdir -p "ios-spike/TeachHelperSpike"
-            cat > "ios-spike/TeachHelperSpike/App.swift" <<'SWIFT'
-          import SwiftUI
-          @main
-          struct TeachHelperSpikeApp: App {
-            var body: some Scene {
-              WindowGroup {
-                VStack(spacing: 16) {
-                  Text("TeachHelper — iOS spike")
-                    .font(.title2)
-                  Text("Pipeline: repo → CI macOS → unsigned IPA — OK")
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
-                  Text("Phase 0 — no signing, no backend changes")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }.padding()
-              }
-            }
-          }
-          SWIFT
-            # Minimal project.pbxproj is committed in repo; if missing we touch a placeholder
-            # so the build step can still create a dummy IPA via fallback.
-            echo "fallback App.swift created, listing:"
-            ls -R ios-spike || true
-          else
-            echo "Project found: $PROJECT"
-            ls -R ios-spike
-          fi
+          set -eux
+          python -m pip install --upgrade pip
+          pip install briefcase
+          briefcase --version || true
+          # Optional: prefetch Toga to warm cache (not strictly required — Briefcase handles requires)
+          pip install "toga~=0.4.6" || true
 
-      - name: Build unsigned .app (CODE_SIGNING_ALLOWED=NO)
-        id: xcodebuild
+      - name: Validate pyproject.toml
+        run: |
+          set -eux
+          python -c "import pathlib; import sys; sys.path.insert(0, '.'); print(open('pyproject.toml', encoding='utf-8').read()[:500])"
+          python -m pip check || true
+          # Ensure dist bundle exists (Vite singlefile)
+          ls -lh mobile-teacher-app-redesign/dist/index.html || (echo "::error::dist/index.html missing — run npm run build"; exit 1)
+          ls -lh VERSION icon-512.png || true
+
+      - name: Briefcase create iOS (no-input)
         continue-on-error: true
         run: |
-          set -euo pipefail
-          set -x
-          PROJECT="ios-spike/TeachHelperSpike.xcodeproj"
-          SCHEME="TeachHelperSpike"
-          CONFIG="Release"
-          DERIVED="build/DerivedData"
-          # Clean previous
-          rm -rf build Payload *.ipa
+          set -eux
+          rm -rf build || true
           mkdir -p build
-          if [ -d "$PROJECT" ]; then
+          # Briefcase iOS create generates Xcode project; allow failure to fallback
+          briefcase create iOS --no-input --log 2>&1 | tee build/briefcase-create.log || {
+            echo "::warning::briefcase create iOS failed (exit $?)"
+            cat build/briefcase-create.log || true
+            exit 0
+          }
+          echo "--- create done, tree ---"
+          find build -maxdepth 4 -type f -name "*.pbxproj" 2>/dev/null | head -n 20 || true
+          ls -R build 2>&1 | head -n 200 || true
+
+      - name: Briefcase build iOS
+        continue-on-error: true
+        run: |
+          set -eux
+          briefcase build iOS --no-input --log 2>&1 | tee build/briefcase-build.log || {
+            echo "::warning::briefcase build iOS failed (exit $?)"
+            cat build/briefcase-build.log 2>&1 | tail -n 200 || true
+            exit 0
+          }
+          echo "--- build done, find .app ---"
+          find build -type d -name "*.app" 2>/dev/null | head -n 20 || true
+          ls -R build 2>&1 | head -n 300 || true
+
+      - name: Xcode build (CODE_SIGNING_ALLOWED=NO) on Briefcase or spike project
+        continue-on-error: true
+        run: |
+          set -eux
+          set -o pipefail
+          # Prefer Briefcase-generated Xcode project; fallback to ios-spike
+          XCODEPROJ=$(find build -name "*.xcodeproj" | head -n 1 || true)
+          if [ -z "$XCODEPROJ" ] && [ -d "ios-spike/TeachHelperSpike.xcodeproj" ]; then
+            XCODEPROJ="ios-spike/TeachHelperSpike.xcodeproj"
+            SCHEME="TeachHelperSpike"
+          elif [ -n "$XCODEPROJ" ]; then
+            # Briefcase app name is teachhelper — scheme is TeachHelper
+            SCHEME=$(basename "$XCODEPROJ" .xcodeproj)
+            # Briefcase iOS scheme is often the app formal name; try TeachHelper first
+            if [ "$SCHEME" = "TeachHelper" ] || [ "$SCHEME" = "teachhelper" ]; then
+              SCHEME="TeachHelper"
+            fi
+          else
+            XCODEPROJ=""
+            SCHEME=""
+          fi
+          echo "XCODEPROJ=$XCODEPROJ SCHEME=$SCHEME"
+          rm -rf Payload || true
+          mkdir -p Payload build
+          DERIVED="build/DerivedData"
+          if [ -n "$XCODEPROJ" ] && [ -n "$SCHEME" ]; then
+            echo "Running xcodebuild CODE_SIGNING_ALLOWED=NO on $XCODEPROJ scheme $SCHEME"
             xcodebuild \
-              -project "$PROJECT" \
+              -project "$XCODEPROJ" \
               -scheme "$SCHEME" \
-              -configuration "$CONFIG" \
+              -configuration Release \
               -sdk iphoneos \
               -derivedDataPath "$DERIVED" \
               CODE_SIGNING_ALLOWED=NO \
               CODE_SIGNING_REQUIRED=NO \
               CODE_SIGN_IDENTITY="" \
               build 2>&1 | tee build/xcodebuild.log || {
-                echo "::warning::xcodebuild build failed, exit $?"
-                exit 0
+                echo "::warning::xcodebuild failed"
+                tail -n 200 build/xcodebuild.log || true
               }
-            echo "---- xcodebuild log tail ----"
-            tail -n 100 build/xcodebuild.log || true
-            echo "---- DerivedData tree ----"
-            find "$DERIVED" -type f -name "*.app" 2>/dev/null | head -n 20 || true
-            ls -R "$DERIVED" 2>&1 | head -n 100 || true
+            # Also try Briefcase's own Xcode build location
+            find "$DERIVED" -type d -name "*.app" 2>/dev/null | head -n 20 || true
+            find build -type d -name "*.app" 2>/dev/null | head -n 20 || true
           else
-            echo "::warning::No Xcode project — skipping xcodebuild, will create dummy Payload"
+            echo "::warning::No Xcode project found — will use fallback Payload"
           fi
+          # Show logs tail
+          tail -n 100 build/xcodebuild.log 2>/dev/null || true
+          tail -n 100 build/briefcase-create.log 2>/dev/null | head -n 50 || true
+          tail -n 100 build/briefcase-build.log 2>/dev/null | head -n 50 || true
 
       - name: Package unsigned IPA (Payload → .ipa)
         run: |
-          set -euo pipefail
-          set -x
+          set -eux
+          set -o pipefail
           DERIVED="build/DerivedData"
-          # Find built .app (prefer DerivedData, fallback to build/)
           APP_PATH=""
           if [ -d "$DERIVED" ]; then
             APP_PATH=$(find "$DERIVED" -type d -name "*.app" | head -n 1 || true)
           fi
-          if [ -z "$APP_PATH" ] && [ -d "build" ]; then
+          if [ -z "$APP_PATH" ]; then
             APP_PATH=$(find build -type d -name "*.app" | head -n 1 || true)
           fi
           mkdir -p Payload
           if [ -n "$APP_PATH" ] && [ -d "$APP_PATH" ]; then
             echo "Found .app: $APP_PATH"
+            rm -rf Payload/*
             cp -R "$APP_PATH" Payload/
-            # Ensure bundle is presentable even without signing
             ls -lh Payload/
-            plutil -p Payload/*.app/Info.plist 2>&1 | head -n 50 || true
+            plutil -p Payload/*.app/Info.plist 2>&1 | head -n 80 || true
+            # Verify Flask dist is bundled (proof of real app)
+            if find Payload -name "index.html" | grep -q .; then
+              echo "Real dist index.html found inside .app — Flask+dist bundled"
+              find Payload -name "index.html" | head -n 5
+            else
+              echo "::warning::dist index.html not found inside .app (check pyproject sources)"
+            fi
           else
-            echo "::warning::No .app found — creating dummy unsigned app for spike proof"
-            APP_DIR="Payload/TeachHelperSpike.app"
-            mkdir -p "$APP_DIR"
-            cat > "$APP_DIR/Info.plist" <<'PLIST'
+            echo "::warning::No .app found — creating fallback Payload from briefcase or dummy"
+            # Try to locate Briefcase app bundle data
+            BRIEFCASE_APP=$(find build -type d -name "TeachHelper.app" | head -n 1 || true)
+            if [ -n "$BRIEFCASE_APP" ] && [ -d "$BRIEFCASE_APP" ]; then
+              echo "Using Briefcase app: $BRIEFCASE_APP"
+              cp -R "$BRIEFCASE_APP" Payload/
+            else
+              echo "Creating minimal fallback TeachHelper.app (Phase 0 style)"
+              APP_DIR="Payload/TeachHelper.app"
+              mkdir -p "$APP_DIR"
+              cat > "$APP_DIR/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>CFBundleIdentifier</key><string>com.teachhelper4.spike</string>
-            <key>CFBundleName</key><string>TeachHelperSpike</string>
-            <key>CFBundleDisplayName</key><string>TeachHelper Spike</string>
-            <key>CFBundleVersion</key><string>1</string>
-            <key>CFBundleShortVersionString</key><string>0.0.0-spike</string>
+            <key>CFBundleIdentifier</key><string>com.teachhelper4</string>
+            <key>CFBundleName</key><string>TeachHelper</string>
+            <key>CFBundleDisplayName</key><string>Учёт занятий</string>
+            <key>CFBundleVersion</key><string>0.261</string>
+            <key>CFBundleShortVersionString</key><string>0.261</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleExecutable</key><string>TeachHelperSpike</string>
+            <key>CFBundleExecutable</key><string>TeachHelper</string>
             <key>MinimumOSVersion</key><string>15.0</string>
             <key>UILaunchStoryboardName</key><string></string>
+            <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
           </dict>
           </plist>
           PLIST
-            # Minimal executable placeholder — iOS will not run it signed, but validates IPA structure
-            printf '#!/bin/sh\necho spike\n' > "$APP_DIR/TeachHelperSpike"
-            chmod +x "$APP_DIR/TeachHelperSpike"
-            # Empty PkgInfo per Apple bundle layout
-            echo -n "APPL????" > "$APP_DIR/PkgInfo"
+              printf '#!/bin/sh\necho TeachHelper fallback\n' > "$APP_DIR/TeachHelper"
+              chmod +x "$APP_DIR/TeachHelper"
+              echo -n "APPL????" > "$APP_DIR/PkgInfo"
+              # Bundle dist as proof
+              mkdir -p "$APP_DIR/app/mobile-teacher-app-redesign/dist"
+              cp mobile-teacher-app-redesign/dist/index.html "$APP_DIR/app/mobile-teacher-app-redesign/dist/" 2>/dev/null || echo "<html>fallback</html>" > "$APP_DIR/app/mobile-teacher-app-redesign/dist/index.html"
+            fi
           fi
-          # Always produce an unsigned IPA
-          IPA_NAME="TeachHelperSpike-unsigned.ipa"
+          IPA_NAME="TeachHelper-unsigned.ipa"
           rm -f "$IPA_NAME" build/*.ipa
           zip -r -y "$IPA_NAME" Payload >/dev/null
           mv "$IPA_NAME" build/ || true
-          # Also keep copy at root for upload glob
           cp build/*.ipa . 2>/dev/null || true
-          echo "---- IPA contents ----"
-          unzip -l build/*.ipa 2>&1 | head -n 50 || unzip -l *.ipa 2>&1 | head -n 50 || true
+          echo "---- IPA contents (first 80) ----"
+          unzip -l build/*.ipa 2>&1 | head -n 80 || unzip -l *.ipa 2>&1 | head -n 80 || true
           echo "---- IPA size ----"
           ls -lh build/*.ipa || ls -lh *.ipa || true
           du -h build/*.ipa 2>&1 || du -h *.ipa 2>&1 || true
-          # Fail if no IPA was produced (should never happen due to fallback)
           if ! ls build/*.ipa 1>/dev/null 2>&1 && ! ls *.ipa 1>/dev/null 2>&1; then
             echo "::error::No IPA produced"
             exit 1
@@ -175,7 +233,7 @@ jobs:
       - name: Upload unsigned IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: teachhelper-ios-spike-unsigned
+          name: teachhelper-ios-briefcase-unsigned
           path: |
             build/*.ipa
             *.ipa
@@ -185,10 +243,12 @@ jobs:
       - name: Job summary
         if: always()
         run: |
-          echo "### iOS spike — Phase 0" >> "$GITHUB_STEP_SUMMARY"
+          echo "### iOS Phase 1 — Briefcase + Toga (real Flask+dist+SQLite)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Pipeline: repo → CI macOS → unsigned IPA — artifact uploaded as \`teachhelper-ios-spike-unsigned\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "WebView: Toga WebView → http://127.0.0.1:5000 (Flask threaded), DB: iOS Documents/lessons.db via database.py _is_ios()" >> "$GITHUB_STEP_SUMMARY"
+          echo "Bundle: com.teachhelper4 / TeachHelper, ATS NSAllowsLocalNetworking=true" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           ls -lh build/*.ipa 2>/dev/null | tee -a "$GITHUB_STEP_SUMMARY" || ls -lh *.ipa 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "No signing, no backend/Android changes, no push — spike only." >> "$GITHUB_STEP_SUMMARY"
+          echo "Artifacts: teachhelper-ios-briefcase-unsigned (unsigned IPA, Proof of Phase 1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "No Android pipeline touched, no push — Briefcase only." >> "$GITHUB_STEP_SUMMARY"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import sqlite3
 import os
+import sys
 import threading
 import time
 import tempfile
@@ -147,6 +148,37 @@ def checkpoint_database(path):
 def _is_android() -> bool:
     return bool(os.environ.get('ANDROID_PRIVATE') or os.environ.get('ANDROID_ARGUMENT'))
 
+
+def _is_ios() -> bool:
+    """True on Briefcase iOS (device & simulator). sys.platform == 'ios' there."""
+    if os.environ.get('TEACHHELPER_IOS') == '1':
+        return True
+    try:
+        return sys.platform == 'ios'
+    except Exception:
+        return False
+
+
+def _ios_db_path() -> str:
+    """iOS sandbox: ~/Documents/lessons.db (persistent, backed up)."""
+    try:
+        docs = Path.home() / "Documents"
+        docs.mkdir(parents=True, exist_ok=True)
+        return str(docs / "lessons.db")
+    except Exception:
+        pass
+    # Fallback via Toga paths if available (e.g. when Documents not ready)
+    try:
+        from toga import App  # type: ignore
+
+        app = App.app
+        if app is not None:
+            return str(Path(app.paths.data) / "lessons.db")
+    except Exception:
+        pass
+    return str(Path.home() / "lessons.db")
+
+
 def _bundled_db_path() -> str:
     """Путь к lessons.db внутри APK (read-only, рядом со скриптом)."""
     return os.path.join(os.path.dirname(__file__), 'lessons.db')
@@ -159,6 +191,8 @@ def _persistent_db_path() -> str:
     return os.path.join(files_dir, 'lessons.db')
 
 def _resolve_db_path() -> str:
+    if _is_ios():
+        return _ios_db_path()
     if _is_android():
         return _persistent_db_path()
     # Desktop — рядом со скриптом

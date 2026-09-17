@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teachhelper"
+version = "0.261"
+description = "Учёт занятий — журнал преподавателя (Flask + WebView, iOS via Briefcase/Toga)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "mifnail", email = "mifnail@github" }]
+dependencies = [
+    "flask>=3.0",
+    "openpyxl",
+    "et_xmlfile",
+    "certifi",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "briefcase", "toga"]
+ios = ["toga[iOS]~=0.4.6", "std-nslog~=1.0.0"]
+
+[tool.setuptools]
+py-modules = ["api", "database", "botcore", "tgbot", "maxbot", "crash_reporter", "seed_db", "schedule_file", "calendar_export", "report_export"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.briefcase]
+project_name = "TeachHelper"
+bundle = "com.teachhelper4"
+version = "0.261"
+description = "Учёт занятий — журнал преподавателя"
+author = "mifnail"
+author_email = "mifnail@github"
+url = "https://github.com/mifnail/tech"
+license = "MIT"
+
+[tool.briefcase.app.teachhelper]
+formal_name = "Учёт занятий"
+description = "Мобильный журнал преподавателя — Flask + WebView, iOS-обвязка Briefcase/Toga"
+sources = ["src/teachhelper", "api.py", "database.py", "report_export.py", "botcore.py", "tgbot.py", "maxbot.py", "crash_reporter.py", "seed_db.py", "schedule_file.py", "calendar_export.py", "VERSION", "mobile-teacher-app-redesign", "static", "templates", "icon-512.png"]
+requires = ["flask>=3.0", "openpyxl", "et_xmlfile", "certifi", "toga~=0.4.6"]
+test_sources = ["tests"]
+# iOS ATS: разрешить http к localhost (Flask на 127.0.0.1:5000)
+# Briefcase пробрасывает info.* в Info.plist
+[tool.briefcase.app.teachhelper.iOS]
+requires = ["toga-iOS~=0.4.6", "std-nslog~=1.0.0"]
+
+[tool.briefcase.app.teachhelper.iOS.info.NSAppTransportSecurity]
+NSAllowsLocalNetworking = true
+NSAllowsArbitraryLoads = false
+
+[tool.briefcase.app.teachhelper.macOS]
+requires = ["toga-cocoa~=0.4.6", "std-nslog~=1.0.0"]
+
+[tool.briefcase.app.teachhelper.linux]
+requires = ["toga-gtk~=0.4.6"]
+
+[tool.briefcase.app.teachhelper.windows]
+requires = ["toga-winforms~=0.4.6"]
