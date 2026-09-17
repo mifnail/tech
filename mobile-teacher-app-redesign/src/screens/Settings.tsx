@@ -16,6 +16,7 @@ import {
 } from "../components/ui";
 import { cn } from "../utils/cn";
 import { checkUpdate, clearUpdateDismiss, fetchVersion } from "../lib/update";
+import { isIOS, isApkUpdaterAvailable } from "../lib/platform";
 
 function copyText(text: string): boolean {
   try {
@@ -254,6 +255,11 @@ export default function SettingsScreen() {
   const [updateCheckKey, setUpdateCheckKey] = useState(0);
 
   const checkForUpdates = async () => {
+    // Phase 2 iOS gate: APK updater не работает на iOS
+    if (isIOS() || !isApkUpdaterAvailable()) {
+      toast("На iOS обновления через TestFlight / App Store");
+      return;
+    }
     try {
       const v = await fetchVersion();
       const ver = v.app_version || v.ver;
@@ -546,10 +552,20 @@ export default function SettingsScreen() {
       </Card>
 
       <SectionTitle>Обновления</SectionTitle>
-      <UpdateBanner key={updateCheckKey} />
-      <Btn variant="muted" icon={RefreshCw} className="w-full" onClick={checkForUpdates}>
-        Проверить обновления
-      </Btn>
+      {isIOS() || !isApkUpdaterAvailable() ? (
+        <Card className="p-4 opacity-80">
+          <p className="text-[13px] text-muted leading-snug">
+            На iOS обновления устанавливаются через TestFlight / App Store. Кнопка «Скачать APK» скрыта.
+          </p>
+        </Card>
+      ) : (
+        <>
+          <UpdateBanner key={updateCheckKey} />
+          <Btn variant="muted" icon={RefreshCw} className="w-full" onClick={checkForUpdates}>
+            Проверить обновления
+          </Btn>
+        </>
+      )}
 
       <SectionTitle>Поддержать проект</SectionTitle>
       <Card className="p-4 opacity-90">

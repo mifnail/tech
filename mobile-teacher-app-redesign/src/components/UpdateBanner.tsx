@@ -9,6 +9,7 @@ import {
   checkUpdate, dismissUpdate, downloadUpdate, fetchVersion,
   installUpdate, isAlreadyInstalled, isUpdateDismissed, markInstalled,
 } from "../lib/update";
+import { isApkUpdaterAvailable, isIOS } from "../lib/platform";
 
 export default function UpdateBanner() {
   const [info, setInfo] = useState<{ version: string; notes: string } | null>(null);
@@ -17,6 +18,7 @@ export default function UpdateBanner() {
   const [sheetOpen, setSheetOpen] = useState(false);
 
   useEffect(() => {
+    if (isIOS() || !isApkUpdaterAvailable()) return () => {};
     let cancelled = false;
     (async () => {
       try {
@@ -35,6 +37,8 @@ export default function UpdateBanner() {
     return () => { cancelled = true; };
   }, []);
 
+  // Phase 2 iOS gate: APK updater не показываем на iOS (TestFlight/App Store)
+  if (isIOS() || !isApkUpdaterAvailable()) return null;
   if (!info) return null;
 
   const onDownload = async () => {

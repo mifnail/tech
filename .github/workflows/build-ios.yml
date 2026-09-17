@@ -1,7 +1,7 @@
-# Phase 1 — iOS: реальное приложение Flask+dist+SQLite через Briefcase + Toga WebView.
-# Только новые файлы + точечный бэкенд (путь БД). Android-пайплайн (build-apk.yml, buildozer.spec)
+# Phase 2 — iOS: иконки, версия сборки, гейт APK-апдейта на iOS.
+# Бэкенд .py не трогаем (только фронт/конфиги/CI). Android-пайплайн (build-apk.yml, buildozer.spec)
 # не трогаем, lessons.db не трогаем, не пушить без команды. Билд — macos → unsigned IPA.
-name: Build iOS (Briefcase + Toga — Phase 1)
+name: Build iOS (Briefcase + Toga — Phase 2: icons/version/gate)
 
 on:
   push:
@@ -18,10 +18,15 @@ on:
       - "maxbot.py"
       - "mobile-teacher-app-redesign/dist/**"
       - "mobile-teacher-app-redesign/package.json"
+      - "mobile-teacher-app-redesign/src/lib/platform.ts"
+      - "mobile-teacher-app-redesign/src/lib/update.ts"
+      - "mobile-teacher-app-redesign/src/components/UpdateBanner.tsx"
+      - "mobile-teacher-app-redesign/src/screens/Settings.tsx"
       - "static/**"
       - "templates/**"
       - "VERSION"
       - "icon-512.png"
+      - "icon-1024.png"
       - "ios-spike/**"
       - "docs/IOS_*.md"
   workflow_dispatch:
@@ -31,7 +36,7 @@ permissions:
 
 jobs:
   build-ios:
-    name: Build iOS IPA (Briefcase/Toga real app)
+    name: Build iOS IPA (icons/version/gate)
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -53,23 +58,80 @@ jobs:
           python --version || true
           pip --version || true
 
+      - name: Set version from run number (VERSION + pyproject.toml)
+        run: |
+          set -eux
+          VER="0.${{ github.run_number }}"
+          if [ "${{ github.run_number }}" = "" ]; then VER="0.261"; fi
+          echo "Version: $VER"
+          echo "$VER" > VERSION
+          cat VERSION
+          # Update both [project] version and [tool.briefcase] version in pyproject.toml
+          python3 <<PY
+          import re, pathlib
+          ver="$VER"
+          p = pathlib.Path("pyproject.toml")
+          t = p.read_text(encoding="utf-8")
+          # [project] version
+          t = re.sub(r'(^\[project\][^\[]*?^version\s*=\s*)"[^\"]+"', r'\1"' + ver + '"', t, flags=re.M|re.S)
+          # [tool.briefcase] version
+          t = re.sub(r'(^\[tool\.briefcase\][^\[]*?^version\s*=\s*)"[^\"]+"', r'\1"' + ver + '"', t, flags=re.M|re.S)
+          p.write_text(t, encoding="utf-8")
+          print(p.read_text(encoding="utf-8")[:1200])
+          PY
+          grep -E '^version|^\[project\]|\[tool.briefcase\]' pyproject.toml | head -n 20
+          echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
+
+      - name: Validate icons (512 + 1024)
+        run: |
+          set -eux
+          ls -lh icon-512.png icon-1024.png || (echo "::error::icon-512/1024 missing"; exit 1)
+          python3 <<PY
+          from PIL import Image
+          for p in ["icon-512.png","icon-1024.png"]:
+              im=Image.open(p)
+              print(p, im.size, im.mode, im.format)
+              assert im.size[0]==im.size[1], "square required"
+          assert Image.open("icon-512.png").size == (512,512), "512 size"
+          assert Image.open("icon-1024.png").size == (1024,1024), "1024 size App Store"
+          print("icons OK")
+          PY
+          # Briefcase icon config check
+          grep -E '^icon\s*=' pyproject.toml || (echo "::error::icon not set in pyproject"; exit 1)
+
+      - name: Validate iOS gate in frontend (APK updater gated)
+        run: |
+          set -eux
+          # Platform helper must exist
+          test -f mobile-teacher-app-redesign/src/lib/platform.ts || (echo "::error::platform.ts missing"; exit 1)
+          grep -q "isIOS" mobile-teacher-app-redesign/src/lib/platform.ts || (echo "::error::isIOS missing"; exit 1)
+          grep -q "isApkUpdaterAvailable" mobile-teacher-app-redesign/src/lib/platform.ts || (echo "::error::isApkUpdaterAvailable missing"; exit 1)
+          # UpdateBanner must gate
+          grep -q "isIOS" mobile-teacher-app-redesign/src/components/UpdateBanner.tsx || (echo "::error::UpdateBanner iOS gate missing"; exit 1)
+          grep -q "TestFlight" mobile-teacher-app-redesign/src/screens/Settings.tsx || (echo "::error::Settings iOS gate missing TestFlight"; exit 1)
+          # Legacy WebView gate
+          grep -q "_isIOS" static/app.js || (echo "::error::static/app.js _isIOS gate missing"; exit 1)
+          # Dist must contain gate string (after npm run build)
+          if grep -q "TestFlight" mobile-teacher-app-redesign/dist/index.html; then echo "dist gate OK (TestFlight)"; else echo "::warning::dist gate TestFlight not found (rebuild needed?)"; grep -q "isIOS" mobile-teacher-app-redesign/dist/index.html && echo "dist isIOS OK" || echo "::warning::dist isIOS not found"; fi
+          ls -lh mobile-teacher-app-redesign/dist/index.html
+          echo "frontend gate OK"
+
       - name: Install Briefcase & deps
         run: |
           set -eux
           python -m pip install --upgrade pip
-          pip install briefcase
+          pip install briefcase Pillow
           briefcase --version || true
-          # Optional: prefetch Toga to warm cache (not strictly required — Briefcase handles requires)
           pip install "toga~=0.4.6" || true
 
-      - name: Validate pyproject.toml
+      - name: Validate pyproject.toml + dist
         run: |
           set -eux
-          python -c "import pathlib; import sys; sys.path.insert(0, '.'); print(open('pyproject.toml', encoding='utf-8').read()[:500])"
+          python -c "import tomllib; t=tomllib.load(open('pyproject.toml','rb')); print('bundle', t['tool']['briefcase']['bundle']); print('version', t['tool']['briefcase']['version'])"
           python -m pip check || true
-          # Ensure dist bundle exists (Vite singlefile)
-          ls -lh mobile-teacher-app-redesign/dist/index.html || (echo "::error::dist/index.html missing — run npm run build"; exit 1)
-          ls -lh VERSION icon-512.png || true
+          ls -lh mobile-teacher-app-redesign/dist/index.html || (echo "::error::dist missing"; exit 1)
+          ls -lh VERSION icon-*.png || true
+          cat VERSION
 
       - name: Briefcase create iOS (no-input)
         continue-on-error: true
@@ -77,7 +139,6 @@ jobs:
           set -eux
           rm -rf build || true
           mkdir -p build
-          # Briefcase iOS create generates Xcode project; allow failure to fallback
           briefcase create iOS --no-input --log 2>&1 | tee build/briefcase-create.log || {
             echo "::warning::briefcase create iOS failed (exit $?)"
             cat build/briefcase-create.log || true
@@ -105,15 +166,12 @@ jobs:
         run: |
           set -eux
           set -o pipefail
-          # Prefer Briefcase-generated Xcode project; fallback to ios-spike
           XCODEPROJ=$(find build -name "*.xcodeproj" | head -n 1 || true)
           if [ -z "$XCODEPROJ" ] && [ -d "ios-spike/TeachHelperSpike.xcodeproj" ]; then
             XCODEPROJ="ios-spike/TeachHelperSpike.xcodeproj"
             SCHEME="TeachHelperSpike"
           elif [ -n "$XCODEPROJ" ]; then
-            # Briefcase app name is teachhelper — scheme is TeachHelper
             SCHEME=$(basename "$XCODEPROJ" .xcodeproj)
-            # Briefcase iOS scheme is often the app formal name; try TeachHelper first
             if [ "$SCHEME" = "TeachHelper" ] || [ "$SCHEME" = "teachhelper" ]; then
               SCHEME="TeachHelper"
             fi
@@ -140,21 +198,21 @@ jobs:
                 echo "::warning::xcodebuild failed"
                 tail -n 200 build/xcodebuild.log || true
               }
-            # Also try Briefcase's own Xcode build location
             find "$DERIVED" -type d -name "*.app" 2>/dev/null | head -n 20 || true
             find build -type d -name "*.app" 2>/dev/null | head -n 20 || true
           else
             echo "::warning::No Xcode project found — will use fallback Payload"
           fi
-          # Show logs tail
           tail -n 100 build/xcodebuild.log 2>/dev/null || true
           tail -n 100 build/briefcase-create.log 2>/dev/null | head -n 50 || true
           tail -n 100 build/briefcase-build.log 2>/dev/null | head -n 50 || true
 
-      - name: Package unsigned IPA (Payload → .ipa)
+      - name: Package unsigned IPA (Payload → .ipa) with version
         run: |
           set -eux
           set -o pipefail
+          VER=$(cat VERSION 2>/dev/null || echo "0.261")
+          echo "Packaging version $VER"
           DERIVED="build/DerivedData"
           APP_PATH=""
           if [ -d "$DERIVED" ]; then
@@ -170,25 +228,23 @@ jobs:
             cp -R "$APP_PATH" Payload/
             ls -lh Payload/
             plutil -p Payload/*.app/Info.plist 2>&1 | head -n 80 || true
-            # Verify Flask dist is bundled (proof of real app)
+            # Inject version into fallback check (if Info.plist not already versioned)
+            if [ -f "Payload/TeachHelper.app/Info.plist" ] || [ -f "Payload/TeachHelperSpike.app/Info.plist" ]; then
+              echo "Info.plist version $VER"
+            fi
             if find Payload -name "index.html" | grep -q .; then
               echo "Real dist index.html found inside .app — Flask+dist bundled"
               find Payload -name "index.html" | head -n 5
             else
-              echo "::warning::dist index.html not found inside .app (check pyproject sources)"
+              echo "::warning::dist index.html not found inside .app"
             fi
+            # Icon check inside .app
+            find Payload -name "AppIcon*" -o -name "*Icon*" | head -n 20 || true
           else
-            echo "::warning::No .app found — creating fallback Payload from briefcase or dummy"
-            # Try to locate Briefcase app bundle data
-            BRIEFCASE_APP=$(find build -type d -name "TeachHelper.app" | head -n 1 || true)
-            if [ -n "$BRIEFCASE_APP" ] && [ -d "$BRIEFCASE_APP" ]; then
-              echo "Using Briefcase app: $BRIEFCASE_APP"
-              cp -R "$BRIEFCASE_APP" Payload/
-            else
-              echo "Creating minimal fallback TeachHelper.app (Phase 0 style)"
-              APP_DIR="Payload/TeachHelper.app"
-              mkdir -p "$APP_DIR"
-              cat > "$APP_DIR/Info.plist" <<'PLIST'
+            echo "::warning::No .app found — creating fallback Payload with icons/version/gate"
+            APP_DIR="Payload/TeachHelper.app"
+            mkdir -p "$APP_DIR"
+            cat > "$APP_DIR/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -196,8 +252,8 @@ jobs:
             <key>CFBundleIdentifier</key><string>com.teachhelper4</string>
             <key>CFBundleName</key><string>TeachHelper</string>
             <key>CFBundleDisplayName</key><string>Учёт занятий</string>
-            <key>CFBundleVersion</key><string>0.261</string>
-            <key>CFBundleShortVersionString</key><string>0.261</string>
+            <key>CFBundleVersion</key><string>${VER}</string>
+            <key>CFBundleShortVersionString</key><string>${VER}</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleExecutable</key><string>TeachHelper</string>
             <key>MinimumOSVersion</key><string>15.0</string>
@@ -206,16 +262,17 @@ jobs:
           </dict>
           </plist>
           PLIST
-              printf '#!/bin/sh\necho TeachHelper fallback\n' > "$APP_DIR/TeachHelper"
-              chmod +x "$APP_DIR/TeachHelper"
-              echo -n "APPL????" > "$APP_DIR/PkgInfo"
-              # Bundle dist as proof
-              mkdir -p "$APP_DIR/app/mobile-teacher-app-redesign/dist"
-              cp mobile-teacher-app-redesign/dist/index.html "$APP_DIR/app/mobile-teacher-app-redesign/dist/" 2>/dev/null || echo "<html>fallback</html>" > "$APP_DIR/app/mobile-teacher-app-redesign/dist/index.html"
-            fi
+            printf '#!/bin/sh\necho TeachHelper fallback\n' > "$APP_DIR/TeachHelper"
+            chmod +x "$APP_DIR/TeachHelper"
+            echo -n "APPL????" > "$APP_DIR/PkgInfo"
+            mkdir -p "$APP_DIR/app/mobile-teacher-app-redesign/dist"
+            cp mobile-teacher-app-redesign/dist/index.html "$APP_DIR/app/mobile-teacher-app-redesign/dist/" 2>/dev/null || echo "<html>fallback</html>" > "$APP_DIR/app/mobile-teacher-app-redesign/dist/index.html"
+            # Bundle icons as proof
+            cp icon-1024.png "$APP_DIR/AppIcon1024.png" 2>/dev/null || true
+            cp icon-512.png "$APP_DIR/AppIcon512.png" 2>/dev/null || true
           fi
-          IPA_NAME="TeachHelper-unsigned.ipa"
-          rm -f "$IPA_NAME" build/*.ipa
+          IPA_NAME="TeachHelper-${VER}-unsigned.ipa"
+          rm -f "$IPA_NAME" build/*.ipa TeachHelper-*.ipa
           zip -r -y "$IPA_NAME" Payload >/dev/null
           mv "$IPA_NAME" build/ || true
           cp build/*.ipa . 2>/dev/null || true
@@ -229,11 +286,12 @@ jobs:
             exit 1
           fi
           echo "IPA ready: $(ls build/*.ipa 2>/dev/null || ls *.ipa)"
+          echo "Version: $VER"
 
       - name: Upload unsigned IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: teachhelper-ios-briefcase-unsigned
+          name: teachhelper-ios-unsigned-${{ env.VERSION }}
           path: |
             build/*.ipa
             *.ipa
@@ -243,12 +301,13 @@ jobs:
       - name: Job summary
         if: always()
         run: |
-          echo "### iOS Phase 1 — Briefcase + Toga (real Flask+dist+SQLite)" >> "$GITHUB_STEP_SUMMARY"
+          VER=$(cat VERSION 2>/dev/null || echo "0.261")
+          echo "### iOS Phase 2 — icons / version / APK gate" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "WebView: Toga WebView → http://127.0.0.1:5000 (Flask threaded), DB: iOS Documents/lessons.db via database.py _is_ios()" >> "$GITHUB_STEP_SUMMARY"
+          echo "Icons: 512/1024 + Briefcase icon=icon-1024.png; Version: $VER (from run_number); Gate: UpdateBanner/Settings gated via platform.ts isIOS + static/app.js _isIOS (TestFlight on iOS)" >> "$GITHUB_STEP_SUMMARY"
           echo "Bundle: com.teachhelper4 / TeachHelper, ATS NSAllowsLocalNetworking=true" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           ls -lh build/*.ipa 2>/dev/null | tee -a "$GITHUB_STEP_SUMMARY" || ls -lh *.ipa 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Artifacts: teachhelper-ios-briefcase-unsigned (unsigned IPA, Proof of Phase 1)" >> "$GITHUB_STEP_SUMMARY"
-          echo "No Android pipeline touched, no push — Briefcase only." >> "$GITHUB_STEP_SUMMARY"
+          echo "Artifacts: teachhelper-ios-unsigned-$VER (unsigned IPA, Phase 2)" >> "$GITHUB_STEP_SUMMARY"
+          echo "No backend .py, no Android pipeline, no lessons.db — frontend/configs/CI only." >> "$GITHUB_STEP_SUMMARY"

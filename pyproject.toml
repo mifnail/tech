@@ -40,7 +40,8 @@ license = "MIT"
 [tool.briefcase.app.teachhelper]
 formal_name = "Учёт занятий"
 description = "Мобильный журнал преподавателя — Flask + WebView, iOS-обвязка Briefcase/Toga"
-sources = ["src/teachhelper", "api.py", "database.py", "report_export.py", "botcore.py", "tgbot.py", "maxbot.py", "crash_reporter.py", "seed_db.py", "schedule_file.py", "calendar_export.py", "VERSION", "mobile-teacher-app-redesign", "static", "templates", "icon-512.png"]
+icon = "icon-1024.png"
+sources = ["src/teachhelper", "api.py", "database.py", "report_export.py", "botcore.py", "tgbot.py", "maxbot.py", "crash_reporter.py", "seed_db.py", "schedule_file.py", "calendar_export.py", "VERSION", "mobile-teacher-app-redesign", "static", "templates", "icon-512.png", "icon-1024.png"]
 requires = ["flask>=3.0", "openpyxl", "et_xmlfile", "certifi", "toga~=0.4.6"]
 test_sources = ["tests"]
 # iOS ATS: разрешить http к localhost (Flask на 127.0.0.1:5000)

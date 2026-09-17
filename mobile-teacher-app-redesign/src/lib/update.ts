@@ -1,6 +1,8 @@
 /* In-app updater: зеркало ванильного App.Update (static/app.js:174-237).
    GET /api/version → GET /api/update/check?current=ver → баннер/тосты.
-   Ошибки сети — молча (как в ванили). Бэкенд update_bp не трогаем. */
+   Ошибки сети — молча (как в ванили). Бэкенд update_bp не трогаем.
+   Phase 2 iOS gate: APK updater выключен на iOS (TestFlight/App Store). */
+import { isIOS } from "./platform";
 
 export interface UpdateInfo {
   version: string;
@@ -41,6 +43,7 @@ export async function fetchVersion(): Promise<VersionInfo> {
 
 /** Проверка обновления: update_available = latest > current (считает сервер). */
 export async function checkUpdate(current: string): Promise<UpdateCheckResult | null> {
+  if (isIOS()) return null;
   try {
     const r = await fetch("/api/update/check?current=" + encodeURIComponent(current));
     if (!r.ok) return null;
@@ -89,8 +92,12 @@ export function isAlreadyInstalled(version: string): boolean {
   }
 }
 
+/** Phase 2 iOS gate — re-export for tests/convenience */
+export { isIOS, isApkUpdaterAvailable } from "./platform";
+
 /** POST /api/update/download → uri APK (Android-only; вне Android — 400). */
 export async function downloadUpdate(): Promise<string> {
+  if (isIOS()) throw new Error("APK not available on iOS");
   const r = await fetch("/api/update/download", { method: "POST" });
   if (!r.ok) throw new Error("download failed");
   const j = (await r.json()) as { uri?: string };
@@ -99,6 +106,7 @@ export async function downloadUpdate(): Promise<string> {
 
 /** POST /api/update/install {uri} — системный интент установки APK. */
 export async function installUpdate(uri: string): Promise<void> {
+  if (isIOS()) throw new Error("APK not available on iOS");
   const r = await fetch("/api/update/install", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

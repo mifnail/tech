@@ -347,11 +347,13 @@ App.Download = {
   }
 };
 
-/* ===== 4. Баннер обновления APK ===== */
+/* ===== 4. Баннер обновления APK — Phase 2 iOS gate (APK только для Android) ===== */
+function _isIOS() { try { var ua=navigator.userAgent||""; if(/iPad|iPhone|iPod/.test(ua)) return true; var p=navigator.platform||""; var mt=navigator.maxTouchPoints||0; if(p==="MacIntel"&&mt>1) return true; return false; } catch(e){ return false; } }
 App.Update = {
   _updateData: null,
 
   async checkBanner() {
+    if (_isIOS()) return;
     try {
       const vr = await App.API.get('/api/version');
       const ver = vr && vr.ver ? vr.ver : '';
@@ -381,6 +383,7 @@ App.Update = {
   },
 
   async download() {
+    if (_isIOS()) { App.UI.notify('На iOS обновления через TestFlight / App Store'); return; }
     var btn = document.getElementById('btn-upd-action');
     if (btn) { btn.textContent = 'Загрузка…'; btn.disabled = true; }
     try {
@@ -398,6 +401,7 @@ App.Update = {
   },
 
   async install() {
+    if (_isIOS()) { App.UI.notify('На iOS обновления через TestFlight / App Store'); return; }
     var btn = document.getElementById('btn-upd-action');
     if (btn) { btn.textContent = 'Установка…'; btn.disabled = true; }
     var uri = (App.Update._updateData && App.Update._updateData.uri) || '';
