@@ -2,6 +2,8 @@
 from pathlib import Path
 import re
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -10,6 +12,7 @@ def test_icons_exist_and_sizes():
     p1024 = ROOT / "icon-1024.png"
     assert p512.exists(), "icon-512.png missing"
     assert p1024.exists(), "icon-1024.png missing (Phase 2)"
+    pytest.importorskip("PIL", reason="Pillow required for icon size checks")
     from PIL import Image
 
     im512 = Image.open(p512)
