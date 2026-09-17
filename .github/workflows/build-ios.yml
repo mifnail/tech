@@ -1,7 +1,7 @@
 # Phase 2 — iOS: иконки, версия сборки, гейт APK-апдейта на iOS.
 # Бэкенд .py не трогаем (только фронт/конфиги/CI). Android-пайплайн (build-apk.yml, buildozer.spec)
 # не трогаем, lessons.db не трогаем, не пушить без команды. Билд — macos → unsigned IPA.
-name: Build iOS (Briefcase + Toga — Phase 2: icons/version/gate)
+name: "Build iOS Briefcase-Toga Phase 2 (icons, version, gate)"
 
 on:
   push:
