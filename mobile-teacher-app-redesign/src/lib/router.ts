@@ -1,7 +1,6 @@
 /* Мини hash-роутер: надёжен в WebView, не требует history API. */
 
 import { useEffect, useState } from "react";
-import { store } from "./store";
 
 function current(): string {
   const h = window.location.hash.replace(/^#/, "");
@@ -24,22 +23,17 @@ export function useRoute(): string[] {
 /* Была ли навигация внутри приложения (иначе history.back может выйти из WebView) */
 let inAppNav = false;
 
-/** Навигация: если есть несохранённые оценки — вернуть флаг unsaved
-    вызывающему (LessonRun покажет ConfirmSheet). Иначе меняем hash. */
+/** Навигация: всегда переходит (LessonRun сам сторожит несохранённое
+    диалогом через requestNav/requestBack; pagehide сохраняет тихо).
+    Возвращает {} для совместимости вызывающих. */
 export function navigate(to: string): { unsaved?: boolean } {
   if (current() === to) return {};
-  if (store.isDirty()) {
-    return { unsaved: true };
-  }
   inAppNav = true;
   window.location.hash = to;
   return {};
 }
 
 export function goBack(fallback: string): { unsaved?: boolean } {
-  if (store.isDirty()) {
-    return { unsaved: true };
-  }
   if (inAppNav && window.history.length > 1) {
     window.history.back();
   } else {

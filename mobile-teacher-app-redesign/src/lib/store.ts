@@ -390,10 +390,13 @@ class Store {
 
   /** Best-effort тихая запись при уходе со страницы (без notify-тоста).
 
-      Данные терять нельзя: прямой bulk POST с keepalive, без флага conduct. */
+      Данные терять нельзя: прямой bulk POST с keepalive, без флага conduct.
+      Грязь снимаем сразу: данные ушли best-effort, а висячий dirty-флаг
+      молча блокировал бы навигацию (router больше не сторожит). */
   private bindLifecycleFlush() {
     if (import.meta.env.DEV) return;
     const flush = () => {
+      let cleared = false;
       for (const lessonId of [...this.dirtyLessons]) {
         const payload = this.db.grades
           .filter((g) => g.lessonId === lessonId)
@@ -406,7 +409,11 @@ class Store {
             keepalive: true,
           }).catch(() => {});
         } catch {}
+        this.dirtyLessons.delete(lessonId);
+        this.gradeSnapshots.delete(lessonId);
+        cleared = true;
       }
+      if (cleared) this.touch();
     };
     window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", () => {
