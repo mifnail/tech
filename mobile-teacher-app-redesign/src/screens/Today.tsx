@@ -188,7 +188,7 @@ export default function TodayScreen() {
             <div
               key={r.subject.id}
               className="px-3.5 py-3 cursor-pointer active:bg-surface2"
-              onClick={() => navigate("/group/" + r.groupId)}
+              onClick={() => navigate(`/statement/${r.groupId}/${r.subject.id}`)}
             >
               <div className="flex items-center gap-2.5">
                 <div className="min-w-0 flex-1">
