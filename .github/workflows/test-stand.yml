@@ -1,0 +1,67 @@
+# Автотест-стенд TeachHelper4: static → backend → api → e2e, одной командой stand.py.
+# Windows-runner: локально валидированная среда (stand.py проверен на Windows).
+# lessons.db не участвует (все фазы работают на временных БД). APK не собираем.
+name: Test stand
+
+on:
+  push:
+    branches: ["main", "redesign"]
+    paths:
+      - ".github/workflows/test-stand.yml"
+      - "api.py"
+      - "database.py"
+      - "main.py"
+      - "seed_db.py"
+      - "stand.py"
+      - "stand_seed.py"
+      - "tests/**"
+      - "static/**"
+      - "templates/**"
+      - "mobile-teacher-app-redesign/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stand:
+    name: stand (static/backend/api/e2e)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Python deps (pytest, flask, esprima)
+        run: pip install pytest flask openpyxl esprima
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile-teacher-app-redesign/package-lock.json
+
+      - name: npm ci
+        working-directory: mobile-teacher-app-redesign
+        run: npm ci
+
+      - name: Playwright chromium
+        working-directory: mobile-teacher-app-redesign
+        run: npx playwright install chromium
+
+      - name: Run stand
+        run: python stand.py --phase all
+
+      - name: Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            mobile-teacher-app-redesign/playwright-report/
+            mobile-teacher-app-redesign/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
