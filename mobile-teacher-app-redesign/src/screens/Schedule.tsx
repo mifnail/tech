@@ -201,7 +201,8 @@ export default function ScheduleScreen() {
           </Btn>
         </EmptyState>
       ) : (
-        dayGroups.map(({ group, items }) => (
+        <>
+          {dayGroups.map(({ group, items }) => (
           <div key={group.id}>
             <SectionTitle>{group.name}</SectionTitle>
             {items.map((l) => {
@@ -262,7 +263,11 @@ export default function ScheduleScreen() {
               );
             })}
           </div>
-        ))
+          ))}
+          <Btn variant="muted" icon={Play} onClick={() => setNewLessonOpen(true)} className="w-full mt-2">
+            Начать занятие
+          </Btn>
+        </>
       )}
 
       {/* Добавление/редактирование пары */}
