@@ -3,32 +3,9 @@
 # не трогаем, lessons.db не трогаем, не пушить без команды. Билд — macos → unsigned IPA.
 name: "Build iOS Briefcase-Toga Phase 2 (icons, version, gate)"
 
+# iPhone-сборки ОТКЛЮЧЕНЫ — только Android (build-apk.yml).
+# Файл оставлен для истории; автозапуски убраны, job заглушен (if: false).
 on:
-  push:
-    branches: ["main", "redesign"]
-    paths:
-      - ".github/workflows/build-ios.yml"
-      - "pyproject.toml"
-      - "src/teachhelper/**"
-      - "database.py"
-      - "api.py"
-      - "report_export.py"
-      - "botcore.py"
-      - "tgbot.py"
-      - "maxbot.py"
-      - "mobile-teacher-app-redesign/dist/**"
-      - "mobile-teacher-app-redesign/package.json"
-      - "mobile-teacher-app-redesign/src/lib/platform.ts"
-      - "mobile-teacher-app-redesign/src/lib/update.ts"
-      - "mobile-teacher-app-redesign/src/components/UpdateBanner.tsx"
-      - "mobile-teacher-app-redesign/src/screens/Settings.tsx"
-      - "static/**"
-      - "templates/**"
-      - "VERSION"
-      - "icon-512.png"
-      - "icon-1024.png"
-      - "ios-spike/**"
-      - "docs/IOS_*.md"
   workflow_dispatch:
 
 permissions:
@@ -37,6 +14,7 @@ permissions:
 jobs:
   build-ios:
     name: Build iOS IPA (icons/version/gate)
+    if: false  # отключено: собираем только Android
     runs-on: macos-14
     timeout-minutes: 45
     steps:
