@@ -1,0 +1,278 @@
+@import "tailwindcss";
+
+/* ============================================================
+   TeachHelper — дизайн-токены. Плоские цвета, без blur/градиентов.
+   Тема переключается атрибутом [data-theme] — без media queries,
+   безопасно для старых WebView (Android 7+).
+   ============================================================ */
+
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --bg: #eceef1;
+  --surface: #ffffff;
+  --surface2: #f4f5f7;
+  --ink: #13171e;
+  --muted: #65707e;
+  --faint: #9aa4b0;
+  --line: #e3e5ea;
+  --line-strong: #d3d7de;
+
+  --accent: #0b5cdb;
+  --accent-deep: #0a4cb2;
+  --accent-ink: #ffffff;
+  --accent-bg: #e9f0fe;
+
+  --danger: #c92e25;
+  --danger-bg: #f9e2e0;
+
+  /* Оценки: 5/4/3/2 + «Н» + «—» */
+  --g5: #0d8a4c;
+  --g5-bg: #def2e6;
+  --g4: #5c9013;
+  --g4-bg: #eaf3da;
+  --g3: #b26e03;
+  --g3-bg: #faeeda;
+  --g2: #c92e25;
+  --g2-bg: #f9e2e0;
+  --na: #5b6572;
+  --na-bg: #e8eaee;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0b0f14;
+  --surface: #141a22;
+  --surface2: #1b232d;
+  --ink: #e8ecf2;
+  --muted: #96a2b3;
+  --faint: #5f6c7d;
+  --line: #232d3a;
+  --line-strong: #303c4c;
+
+  --accent: #4e93ff;
+  --accent-deep: #6ca6ff;
+  --accent-ink: #0b1424;
+  --accent-bg: #17293f;
+
+  --danger: #ef6a60;
+  --danger-bg: #331614;
+
+  --g5: #3fc07d;
+  --g5-bg: #12291e;
+  --g4: #a4c65a;
+  --g4-bg: #212a11;
+  --g3: #e3a63d;
+  --g3-bg: #2e2210;
+  --g2: #ef6a60;
+  --g2-bg: #331614;
+  --na: #8a96a6;
+  --na-bg: #20262e;
+}
+
+/* Связываем токены с утилитами Tailwind: bg-surface, text-muted и т.д. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-linestrong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accentdeep: var(--accent-deep);
+  --color-accentink: var(--accent-ink);
+  --color-accentbg: var(--accent-bg);
+  --color-danger: var(--danger);
+  --color-dangerbg: var(--danger-bg);
+  --color-g5: var(--g5);
+  --color-g5bg: var(--g5-bg);
+  --color-g4: var(--g4);
+  --color-g4bg: var(--g4-bg);
+  --color-g3: var(--g3);
+  --color-g3bg: var(--g3-bg);
+  --color-g2: var(--g2);
+  --color-g2bg: var(--g2-bg);
+  --color-na: var(--na);
+  --color-nabg: var(--na-bg);
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  html {
+    height: 100%;
+  }
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior-y: none;
+  }
+  button,
+  a,
+  input,
+  select {
+    touch-action: manipulation;
+  }
+  input,
+  select,
+  textarea {
+    font-family: inherit;
+    font-size: 15px;
+    color: var(--ink);
+  }
+  input:focus-visible,
+  select:focus-visible,
+  button:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  ::selection {
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+}
+
+/* ── Утилиты ─────────────────────────────────────────────── */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.clamp2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── Дешёвые анимации: только transform/opacity (GPU) ────── */
+@keyframes kf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes kf-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes kf-sheet {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes kf-pop {
+  0% {
+    transform: scale(0.72);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes kf-toast {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes kf-pulse-dot {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.35);
+  }
+}
+
+.an-rise {
+  animation: kf-rise 0.2s cubic-bezier(0.22, 0.9, 0.32, 1) both;
+}
+.an-fade {
+  animation: kf-fade 0.16s ease-out both;
+}
+.an-sheet {
+  animation: kf-sheet 0.26s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.an-pop {
+  animation: kf-pop 0.16s ease-out both;
+}
+.an-toast {
+  animation: kf-toast 0.2s cubic-bezier(0.22, 0.9, 0.32, 1) both;
+}
+.an-pulse-dot {
+  animation: kf-pulse-dot 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .an-rise,
+  .an-fade,
+  .an-sheet,
+  .an-pop,
+  .an-toast,
+  .an-pulse-dot {
+    animation: none;
+  }
+}
+
+/* Активные состояния для тача — вместо hover */
+.pressable {
+  transition:
+    transform 0.12s ease-out,
+    background-color 0.15s ease-out,
+    border-color 0.15s ease-out,
+    opacity 0.15s ease-out;
+}
+.pressable:active {
+  transform: scale(0.98);
+}
+.row-press:active {
+  background: var(--surface2);
+}

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#ECEEF1" />
+    <meta name="description" content="Мобильный журнал преподавателя: группы, занятия, оценки и посещаемость. Оптимизирован для смартфонов Android 7+." />
+    <title>Журнал преподавателя — TeachHelper</title>
+    <script>
+      try {
+        var t = localStorage.getItem("th-theme") || "light";
+        if (t !== "dark") t = "light";
+        document.documentElement.setAttribute("data-theme", t);
+        if (t === "dark") {
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute("content", "#0B0F14");
+        }
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
