@@ -10,7 +10,7 @@ test("production HTML is self-contained, syntactically valid and includes the re
   const html = fs.readFileSync(path.join(root, "dist/index.html"), "utf8");
   assert.doesNotMatch(html, /<script\b[^>]*\bsrc=|<link\b[^>]*\bhref=|@import\b/i);
   assert.match(html, /id="root"/);
-  assert.match(html, /<style>/);
+  assert.match(html, /<style\b[^>]*>/);
   assert.match(html, /data-theme/);
   for (const route of ["/api/restore/pick/diag", "/api/restore/pick", "/api/restore/named", "/api/backup/list"]) {
     assert.ok(html.includes(route), `Missing ${route}`);
@@ -72,7 +72,7 @@ test("recovered date helpers retain local dates, formatting and ISO week parity"
 });
 
 test("recovered cn keeps class flattening and Tailwind conflict resolution", () => {
-  const { cn } = sourceLoader()("src/utils/cn.js");
+  const { cn } = sourceLoader()("src/utils/cn");
   assert.equal(cn("h-11 px-4", "h-9"), "px-4 h-9");
   assert.equal(cn("p-4", "px-2"), "p-4 px-2");
   assert.equal(cn("px-2", "p-4"), "p-4");

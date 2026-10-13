@@ -9,3 +9,11 @@ lessons.db-wal
 lessons.db-shm
 lessons.db
 *.db
+
+# логи ручных прогонов e2e стенда
+.e2e-out.log
+.e2e-err.log
+mobile-teacher-app-redesign/.e2e-out.log
+mobile-teacher-app-redesign/.e2e-err.log
+mobile-teacher-app-redesign/playwright-report/
+mobile-teacher-app-redesign/test-results/

@@ -8,7 +8,11 @@ const root = path.resolve(__dirname, "..");
 function sourceLoader(mocks = {}, globals = {}) {
   const cache = new Map();
   const context = vm.createContext({
-    console, setTimeout, clearTimeout, FormData, File, ...globals,
+    console, setTimeout, clearTimeout, FormData, File,
+    // Share the host Error so host-realm rejections from mocks (fetch/flush)
+    // satisfy `e instanceof Error` inside the vm, exactly as they do in the
+    // browser's single realm. Without it src falls back to generic messages.
+    Error, ...globals,
   });
   function load(filename) {
     filename = path.resolve(root, filename);
