@@ -81,6 +81,8 @@ jobs:
         run: |
           sed -i -E "s/^version = .*/version = 0.${{ github.run_number }}/" buildozer.spec
           grep "^version = " buildozer.spec
+          echo "0.${{ github.run_number }}" > VERSION
+          cat VERSION
 
       - name: Prepare JKS keystore for signing
         run: |
