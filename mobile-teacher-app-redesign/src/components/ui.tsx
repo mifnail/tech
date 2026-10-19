@@ -104,7 +104,7 @@ export function Chip({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 h-[22px] px-2 rounded-full",
+        "inline-flex items-center gap-1 h-[22px] px-2 rounded-full shrink-0",
         "text-[10.5px] font-bold uppercase tracking-[0.06em] whitespace-nowrap",
         chipStyles[tone], className,
       )}
@@ -288,17 +288,17 @@ export function Sheet({
 }
 
 /* ── Тост ─────────────────────────────────────────────────── */
-const ToastCtx = createContext<(msg: string) => void>(() => {});
+const ToastCtx = createContext<(msg: string, ms?: number) => void>(() => {});
 export const useToast = () => useContext(ToastCtx);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [msg, setMsg] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const show = useCallback((m: string) => {
+  const show = useCallback((m: string, ms = 2400) => {
     setMsg(m);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setMsg(null), 2400);
+    timer.current = setTimeout(() => setMsg(null), ms);
   }, []);
 
   useEffect(() => {

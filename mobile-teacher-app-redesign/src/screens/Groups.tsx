@@ -52,11 +52,16 @@ export default function GroupsScreen() {
     navigate("/group/" + g.id);
   };
 
-  const addSubject = () => {
+  const addSubject = async () => {
     if (!subjectName.trim() || !subjectGroup) return;
     const gid = Number(subjectGroup);
-    const sid = store.addSubject(subjectName, gid, Number(subjectHours) || 0).id;
-    store.assignSubject(gid, sid);
+    try {
+      const subj = await store.addSubject(subjectName, gid, Number(subjectHours) || 0);
+      store.assignSubject(gid, subj.id);
+    } catch {
+      toast("Не удалось добавить предмет");
+      return;
+    }
     setSubjectName("");
     setSubjectHours("");
     setSubjectGroup("");
@@ -118,7 +123,7 @@ export default function GroupsScreen() {
           className="p-3.5 mb-2 flex items-center gap-3"
           onClick={() => navigate("/group/" + g.id)}
         >
-          <AvatarTile text={g.name.slice(0, 2)} />
+          <AvatarTile text={g.name.slice(0, 2)} group={g.name} />
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-bold">{g.name}</div>
             <div className="text-[12px] text-muted">
@@ -167,14 +172,14 @@ export default function GroupsScreen() {
               onKeyDown={(e) => e.key === "Enter" && addSubject()}
             />
           </Field>
-          <Field label="Часов (всего)">
+          <Field label="Пар (всего)">
             <Input
               type="number"
               inputMode="numeric"
               min={1}
               value={subjectHours}
               onChange={(e) => setSubjectHours(e.target.value)}
-              placeholder="Например, 72"
+              placeholder="Например, 36"
             />
           </Field>
           <Field label="Группа">

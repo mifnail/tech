@@ -59,8 +59,17 @@ function isoWeek(date: Date): number {
   return 1 + Math.round((thursday.getTime() - first.getTime()) / 604800000);
 }
 
+/** Паритет недели в шкале UI: 1 — чётная, 2 — нечётная. */
 export function weekParity(value: string): 1 | 2 {
   return isoWeek(fromISO(value)) % 2 === 0 ? 1 : 2;
+}
+
+/**
+ * Паритет недели в шкале БД (schedule.week_type): 1 — нечётная, 2 — чётная.
+ * Единая точка перевода — чтобы UI и API не расходились полярностью.
+ */
+export function weekTypeOf(value: string): 1 | 2 {
+  return weekParity(value) === 1 ? 2 : 1;
 }
 
 export function mondayOfWeek(value: string): string {

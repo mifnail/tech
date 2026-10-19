@@ -590,9 +590,13 @@ def substitute_lesson(lesson_id: int):
     return jsonify({'ok': True, 'new_lesson_id': new_id})
 
 
-@lessons_bp.route('/<int:lesson_id>/cancel', methods=['PATCH'])
-def cancel_lesson(lesson_id: int):
-    db = get_db()
+def _cancel_lesson_with_notify(db, lesson_id: int) -> None:
+    """Отмена занятия + пуш в чаты группы. Единая точка для /cancel и /status.
+
+    Оба пути должны вести себя одинаково: удаление оценок (в set_lesson_status)
+    и уведомление группы — иначе PATCH /status {cancelled} молча расходился
+    бы с PATCH /cancel.
+    """
     ddmm, subject_name, group_id = _lesson_notify_context(db, lesson_id)
     msg_text = f"Отменено занятие: {subject_name} {ddmm}".strip() if subject_name else f"Отменено занятие: {ddmm}".strip()
     if not ddmm:
@@ -605,6 +609,11 @@ def cancel_lesson(lesson_id: int):
             _notify_group_chats(db, group_id, token, enabled, msg_text)
     except Exception:
         pass
+
+
+@lessons_bp.route('/<int:lesson_id>/cancel', methods=['PATCH'])
+def cancel_lesson(lesson_id: int):
+    _cancel_lesson_with_notify(get_db(), lesson_id)
     return jsonify({'ok': True})
 
 
@@ -617,7 +626,15 @@ def delete_lesson(lesson_id: int):
 @lessons_bp.route('/<int:lesson_id>/status', methods=['PATCH'])
 @require_fields('status')
 def update_lesson_status(lesson_id: int):
-    get_db().set_lesson_status(lesson_id, request.json['status'])
+    status = request.json['status']
+    # Та же валидация, что в Database.set_lesson_status — битый статус ≠ 500.
+    if status not in ('held', 'scheduled', 'cancelled'):
+        return jsonify({'error': 'Invalid lesson status'}), 400
+    if status == 'cancelled':
+        # Согласовано с /cancel: удаление оценок + пуш группе.
+        _cancel_lesson_with_notify(get_db(), lesson_id)
+        return jsonify({'ok': True})
+    get_db().set_lesson_status(lesson_id, status)
     return jsonify({'ok': True})
 
 
@@ -766,6 +783,57 @@ def mark_attendance(lesson_id: int):
     return jsonify({'ok': True})
 
 
+def _mark_lesson_held(db, lesson_id: int) -> bool:
+    """Проведение = lessons.status='held' на сервере.
+
+    Без этого фронт ставил held только локально, а GET /lessons/<id>/attendance
+    возвращал scheduled и «слетал признак проведено». Отменённые/не найденные
+    уроки не трогаем.
+    """
+    try:
+        lesson = db.get_lesson(lesson_id)
+        if not lesson:
+            return False
+        if row_get(lesson, 'status', 'scheduled') == 'cancelled':
+            return False
+        if row_get(lesson, 'status', 'scheduled') != 'held':
+            db.set_lesson_status(lesson_id, 'held')
+        return True
+    except Exception:
+        return False
+
+
+def _hours_exhausted_notice(db, lesson_id: int) -> dict:
+    """Пары по предмету вычитаны (held >= total_hours) → данные для тоста фронта.
+
+    Пустой dict, если пары ещё остались — чтобы форма ответа не менялась.
+    Текст используем «пары», а не «часы» (поле total_hours в БД не трогаем).
+    """
+    try:
+        lesson = db.get_lesson(lesson_id)
+        if not lesson:
+            return {}
+        subject_id = row_get(lesson, 'actual_subject_id', None) or row_get(lesson, 'subject_id', None)
+        if subject_id is None:
+            return {}
+        summary = db.subject_summary(int(subject_id))
+        if not summary:
+            return {}
+        total = int(row_get(summary, 'total_hours', 0) or 0)
+        held = int(row_get(summary, 'held_lessons', 0) or 0)
+        if total <= 0 or held < total:
+            return {}
+        name = row_get(summary, 'name', '') or row_get(summary, 'actual_subject_name', '')
+        return {
+            'hours_exhausted': True,
+            'hours_message': f'Пары по предмету «{name}» вычитаны: {held} из {total}.',
+            'held_lessons': held,
+            'total_hours': total,
+        }
+    except Exception:
+        return {}
+
+
 @lessons_bp.route('/<int:lesson_id>/conduct', methods=['POST'])
 def conduct_lesson(lesson_id: int):
     """Провести занятие: записать оценки и разослать пуши немедленно.
@@ -774,7 +842,11 @@ def conduct_lesson(lesson_id: int):
     одиночный объект {student_id, grade} или {records: [...] }.
     Сначала читает старые оценки, затем пишет пачку, затем в daemon-потоке
     шлёт уведомления только где оценка ИЗМЕНИЛАСЬ (дедуп).
-    Ответ {"ok": True, "notified": N} где N — число изменённых оценок.
+    Успех = урок помечен проведённым (lessons.status='held') — локальный held
+    фронта больше не «слетает» при повторной загрузке с сервера.
+    Ответ {"ok": True, "notified": N} где N — число изменённых оценок; если по
+    предмету вычитаны все пары, добавляются hours_exhausted/hours_message
+    (фронт показывает тост) и куратору уходит отдельный пуш.
     Старые таймеры /attendance не трогает.
     """
     data = request.get_json(silent=True)
@@ -799,7 +871,12 @@ def conduct_lesson(lesson_id: int):
         return jsonify({'error': 'Expected student_id and grade for each record'}), 400
 
     if not records:
-        return jsonify({'ok': True, 'notified': 0})
+        # Проведение без изменения оценок тоже помечаем проведённым,
+        # иначе урок останется scheduled и фронт «скатится» из held.
+        db = get_db()
+        _mark_lesson_held(db, lesson_id)
+        notice = _hours_exhausted_notice(db, lesson_id)
+        return jsonify({'ok': True, 'notified': 0, **notice})
 
     if any(not isinstance(r, dict) or 'student_id' not in r or 'grade' not in r for r in records):
         return jsonify({'error': 'Expected student_id and grade for each record'}), 400
@@ -822,6 +899,10 @@ def conduct_lesson(lesson_id: int):
         db.mark_attendance_bulk(lesson_id, records)
     except (ValueError, TypeError) as exc:
         return jsonify({'error': str(exc)}), 400
+
+    # Оценки записаны → урок проведён (status='held' на сервере).
+    _mark_lesson_held(db, lesson_id)
+    notice = _hours_exhausted_notice(db, lesson_id)
 
     # Вычислить изменённые (grade != old и новая не пустая)
     changed: list[tuple[int, str]] = []
@@ -849,22 +930,22 @@ def conduct_lesson(lesson_id: int):
 
     notified = len(changed)
     if notified == 0:
-        return jsonify({'ok': True, 'notified': 0})
+        return jsonify({'ok': True, 'notified': 0, **notice})
 
     # Проверить активность бота — если не активен, не считаем уведомления
     try:
         token = db.get_setting('max_bot_token')
         enabled = db.get_setting('max_bot_enabled')
         if not token or enabled != '1':
-            return jsonify({'ok': True, 'notified': 0})
+            return jsonify({'ok': True, 'notified': 0, **notice})
     except Exception:
-        return jsonify({'ok': True, 'notified': 0})
+        return jsonify({'ok': True, 'notified': 0, **notice})
 
     # Контекст для пушей
     try:
         lesson = db.get_lesson(lesson_id)
         if not lesson:
-            return jsonify({'ok': True, 'notified': notified})
+            return jsonify({'ok': True, 'notified': notified, **notice})
         raw_date = lesson['date'] or ''
         date_str = f'{raw_date[8:10]}.{raw_date[5:7]}' if len(raw_date) >= 10 else ''
         subject = row_get(lesson, 'actual_subject_name', '') or row_get(lesson, 'planned_subject', '') or ''
@@ -884,7 +965,7 @@ def conduct_lesson(lesson_id: int):
             except Exception:
                 pass
     except Exception:
-        return jsonify({'ok': True, 'notified': notified})
+        return jsonify({'ok': True, 'notified': notified, **notice})
 
     # Подготовить данные для фоновой отправки (чтобы не зависеть от нового DB в тесте)
     cur_chat = None
@@ -945,11 +1026,17 @@ def conduct_lesson(lesson_id: int):
                     _maxbot.send_message(token, int(cur_chat), text_cur)
             except Exception:
                 pass
+            # «Пары вычитаны» — отдельным сообщением куратору (если порог достигнут)
+            try:
+                if cur_chat is not None and notice.get('hours_exhausted'):
+                    _maxbot.send_message(token, int(cur_chat), notice['hours_message'])
+            except Exception:
+                pass
         except Exception:
             pass
 
     threading.Thread(target=_run_conduct, daemon=True).start()
-    return jsonify({'ok': True, 'notified': notified})
+    return jsonify({'ok': True, 'notified': notified, **notice})
 
 
 def _read_settled_grade(db, lesson_id: int, student_id: int) -> str:

@@ -559,8 +559,10 @@ class Database:
             FROM subjects s
             JOIN groups g ON s.group_id = g.id
             LEFT JOIN (
+                -- «Пары» (часы по плану) считаются ТОЛЬКО по проведённым занятиям:
+                -- scheduled — это ещё не проведённая пара, cancelled/replaced не считаются.
                 SELECT actual_subject_id, COUNT(*) AS held
-                FROM lessons WHERE status NOT IN ('cancelled', 'replaced') AND actual_subject_id IS NOT NULL
+                FROM lessons WHERE status = 'held' AND actual_subject_id IS NOT NULL
                 GROUP BY actual_subject_id
             ) h ON h.actual_subject_id = s.id"""
         where = ""
@@ -579,7 +581,7 @@ class Database:
             SELECT id, last_name, first_name, middle_name FROM students WHERE group_id = ? ORDER BY last_name, first_name
         """, (group_id,)).fetchall()]
         lessons = [dict(r) for r in self.conn.execute("""
-            SELECT l.id, l.date, l.lesson_number FROM lessons l
+            SELECT l.id, l.date, l.lesson_number, l.status FROM lessons l
             WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced')
             ORDER BY l.date, COALESCE(l.lesson_number, 999), l.id
         """, (subject_id,)).fetchall()]
@@ -602,8 +604,9 @@ class Database:
             FROM subjects s
             JOIN groups g ON s.group_id = g.id
             LEFT JOIN (
+                -- Как и в list_subjects: только проведённые (status='held') пары.
                 SELECT actual_subject_id, COUNT(*) AS held
-                FROM lessons WHERE actual_subject_id = ? AND status NOT IN ('cancelled', 'replaced')
+                FROM lessons WHERE actual_subject_id = ? AND status = 'held'
                 GROUP BY actual_subject_id
             ) h ON 1=1
             LEFT JOIN (

@@ -186,7 +186,11 @@ export default function LessonRunScreen({ id }: { id: number }) {
     setConductBusy(true);
     try {
       const res = await store.conductLesson(lesson.id);
-      toast(`Проведено, отправлено ${res.notified}`);
+      if (res.hoursExhausted) {
+        toast(res.hoursMessage || "Пары по предмету вычитаны", 4200);
+      } else {
+        toast(`Проведено · уведомлений: ${res.notified}`);
+      }
     } catch (e) {
       toast(`Ошибка: ${errText(e)}`);
     } finally {
@@ -220,7 +224,11 @@ export default function LessonRunScreen({ id }: { id: number }) {
     setLeaveOpen(false);
     try {
       const res = await store.conductLesson(lesson.id);
-      toast(`Проведено, отправлено ${res.notified}`);
+      if (res.hoursExhausted) {
+        toast(res.hoursMessage || "Пары по предмету вычитаны", 4200);
+      } else {
+        toast(`Проведено · уведомлений: ${res.notified}`);
+      }
     } catch (e) {
       toast(`Ошибка: ${errText(e)}`);
       return;
@@ -291,7 +299,7 @@ export default function LessonRunScreen({ id }: { id: number }) {
             </div>
             <div className="text-[11px] text-muted leading-tight truncate">
               {group?.name} · {formatDot(lesson.date)}
-              {lesson.lessonNumber > 0 && <> · пара №{lesson.lessonNumber}</>}
+              {lesson.lessonNumber > 0 && <> · пара {lesson.lessonNumber}</>}
             </div>
           </div>
           {dirty && (

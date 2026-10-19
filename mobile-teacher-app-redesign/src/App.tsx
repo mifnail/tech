@@ -2,6 +2,8 @@
    (приложение проектируется под смартфон; на десктопе — колонка 480px). */
 
 import { useRoute } from "./lib/router";
+import { useDB } from "./lib/store";
+import { registerGroupNames } from "./lib/groupColors";
 import { ToastProvider } from "./components/ui";
 import { BottomNav } from "./components/shell";
 import TodayScreen from "./screens/Today";
@@ -58,6 +60,12 @@ export default function App() {
   const root = seg[0] ?? "today";
   // На экране занятия таб-бар скрыт: там свои компактные шапка и подвал.
   const showNav = root !== "lesson";
+
+  // Реестр специальностей для автоцвета групп: обновляем до рендера экранов,
+  // чтобы АДТ-31 и АДТ-41 получили оттенки одной семьи, а разные
+  // специальности — максимально далёкие друг от друга.
+  const db = useDB();
+  registerGroupNames(db.groups.map((g) => g.name));
 
   return (
     <ToastProvider>

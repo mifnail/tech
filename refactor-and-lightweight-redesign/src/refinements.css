@@ -1,0 +1,324 @@
+/* Keep the overview scannable on a laptop without reducing touch targets. */
+.subject-filter-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  background: #edf4e9;
+  border: 1px solid #dfe9d7;
+  border-radius: 7px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  font-size: 12px;
+  color: #668455;
+}
+.subject-filter-note > svg {
+  margin-right: 9px;
+}
+.subject-filter-note > .text-button {
+  margin-left: auto;
+  padding-left: 12px;
+}
+@media (min-width: 761px) {
+  .topbar {
+    height: 68px;
+  }
+  main {
+    padding-top: 26px;
+  }
+  .page-heading {
+    margin-bottom: 22px;
+  }
+  .eyebrow {
+    margin-bottom: 8px;
+  }
+  .page-heading p {
+    margin-top: 8px;
+  }
+  .welcome-banner {
+    min-height: 137px;
+    padding: 19px 25px;
+    margin-bottom: 18px;
+  }
+  .banner-kicker {
+    margin-bottom: 9px;
+    line-height: 1.2;
+    font-size: 9px;
+  }
+  .welcome-banner h2 {
+    font-size: 24px;
+    line-height: 1.2;
+  }
+  .welcome-banner p {
+    margin-top: 8px;
+    line-height: 1.4;
+    font-size: 12px;
+  }
+  .banner-link {
+    margin-top: 13px;
+    line-height: 1.4;
+    font-size: 12px;
+  }
+  .book-art {
+    height: 142px;
+    width: 236px;
+    bottom: 0;
+  }
+  .banner-note {
+    bottom: 29px;
+  }
+  .stats-grid {
+    margin-bottom: 21px;
+  }
+  .stat-card {
+    min-height: 104px;
+    padding: 15px 18px 13px;
+    position: relative;
+  }
+  .stat-label {
+    font-size: 11px;
+    line-height: 15px;
+    padding-right: 29px;
+  }
+  .stat-icon {
+    position: absolute;
+    right: 17px;
+    top: 15px;
+    width: 30px;
+    height: 30px;
+  }
+  .stat-value {
+    font-size: 31px;
+    line-height: 1.2;
+    margin-top: 5px;
+  }
+  .stat-detail {
+    font-size: 10px;
+    line-height: 14px;
+    margin-top: 7px;
+  }
+  .panel-heading {
+    padding: 16px 21px 15px;
+  }
+  .panel-heading h2 {
+    font-size: 15px;
+    line-height: 20px;
+  }
+  .panel-heading p {
+    font-size: 10px;
+    line-height: 14px;
+    margin-top: 5px;
+  }
+  .lesson-row {
+    min-height: 68px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .lesson-name {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .lesson-meta {
+    font-size: 10px;
+    margin-top: 6px;
+    line-height: 1.3;
+  }
+  .lesson-time strong {
+    font-size: 12px;
+  }
+  .lesson-time span {
+    margin-top: 5px;
+  }
+  .lesson-line {
+    height: 33px;
+  }
+  .lesson-actions .button {
+    font-size: 10px;
+  }
+  .lesson-number {
+    margin-top: 5px;
+    font-size: 9px;
+  }
+  .schedule-footer {
+    height: 34px;
+    min-height: 34px;
+  }
+  .schedule-footer-right {
+    font-size: 9px;
+  }
+  .week-panel {
+    padding: 14px 17px 0;
+    margin-bottom: 15px;
+  }
+  .week-heading h2 {
+    font-size: 13px;
+  }
+  .week-days {
+    margin-top: 9px;
+  }
+  .week-days > button {
+    min-height: 58px;
+    padding: 6px 0 5px;
+  }
+  .week-days > button > span {
+    margin-bottom: 7px;
+  }
+  .week-days > button > i {
+    margin-top: 6px;
+  }
+  .week-footer {
+    padding: 11px 0 12px;
+    margin-top: 10px;
+    font-size: 8px;
+  }
+  .quick-panel {
+    padding: 15px 18px 6px;
+  }
+  .quick-panel > h2 {
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+  .quick-panel > button {
+    padding: 8px 0;
+  }
+  .quick-panel > button > span:nth-child(2) {
+    font-size: 11px;
+  }
+  .quick-panel small {
+    margin-top: 3px;
+    font-size: 9px;
+  }
+  .groups-section {
+    margin-top: 23px;
+  }
+  .section-heading {
+    margin-bottom: 13px;
+  }
+  .section-heading h2 {
+    font-size: 16px;
+  }
+  .group-card {
+    padding: 15px 17px 12px;
+  }
+  .group-name {
+    font-size: 15px;
+  }
+  .group-name small {
+    font-size: 10px;
+    margin-top: 5px;
+  }
+  .group-meta {
+    margin-top: 12px;
+    padding-top: 10px;
+    font-size: 10px;
+  }
+  .main-footer {
+    padding: 20px 0 18px;
+  }
+  .text-button {
+    font-size: 11px;
+  }
+}
+/* Muted text still needs to be readable on low-end displays. */
+.page-heading p,
+.stat-label {
+  color: #818b80;
+}
+.stat-detail {
+  color: #8b9584;
+}
+.lesson-name {
+  color: #495b42;
+}
+.lesson-meta {
+  color: #8c997e;
+}
+.group-name {
+  color: #516549;
+}
+.group-name small {
+  color: #87947e;
+}
+.group-meta {
+  color: #8a987b;
+}
+.quick-panel > button > span:nth-child(2) {
+  color: #627359;
+}
+.quick-panel small {
+  color: #97a18c;
+}
+@media (min-width: 761px) and (max-width: 1000px) {
+  .stat-card {
+    padding: 13px 11px;
+  }
+  .stat-label {
+    font-size: 9px;
+  }
+  .stat-detail {
+    font-size: 8px;
+  }
+  .stat-icon {
+    right: 10px;
+    top: 13px;
+    width: 25px;
+    height: 25px;
+  }
+  .panel-heading {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .panel-heading h2 {
+    font-size: 12px;
+  }
+  .lesson-name {
+    font-size: 10px;
+  }
+  .lesson-meta {
+    font-size: 8px;
+  }
+  .group-name small {
+    font-size: 8px;
+  }
+  .group-meta {
+    font-size: 8px;
+  }
+  .week-panel {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .week-heading h2 {
+    font-size: 11px;
+  }
+  .week-footer {
+    font-size: 7px;
+  }
+  .quick-panel > button > span:nth-child(2) {
+    font-size: 10px;
+  }
+  .quick-panel small {
+    font-size: 8px;
+  }
+}
+@media (max-width: 760px) {
+  .page-heading p {
+    font-size: 11px;
+  }
+  .lesson-name {
+    font-size: 12px;
+  }
+  .lesson-actions .button {
+    min-height: 40px;
+  }
+  .journal-student .grade {
+    min-width: 40px;
+    height: 42px;
+  }
+  .student-cycle {
+    min-height: 44px;
+  }
+  .settings-card input,
+  .modal-form input,
+  .modal-form select {
+    min-height: 44px;
+  }
+}

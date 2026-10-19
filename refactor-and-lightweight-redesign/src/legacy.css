@@ -1,0 +1,74 @@
+/* Android 7 / Chromium 51: do not depend on CSS Grid, flex-gap, inset or CSS layers. */
+.modal-overlay,
+.sidebar-scrim {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+@supports not (display: grid) {
+  .stats-grid,
+  .group-grid,
+  .subject-grid,
+  .report-stats,
+  .journal-students,
+  .student-directory {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+  .stats-grid > .stat-card {
+    width: 24%;
+    margin-bottom: 14px;
+  }
+  .group-grid > .group-card,
+  .subject-grid > .subject-card,
+  .report-stats > .report-stat {
+    width: 32%;
+    margin-bottom: 16px;
+  }
+  .dashboard-grid,
+  .right-column,
+  .settings-grid {
+    display: block;
+  }
+  .dashboard-grid > .schedule-panel {
+    margin-bottom: 18px;
+  }
+  .right-column > .panel,
+  .settings-grid > .panel {
+    margin-bottom: 18px;
+  }
+  .journal-students > .journal-student,
+  .student-directory > div {
+    width: 48%;
+  }
+  .student-directory {
+    padding-bottom: 15px;
+  }
+  .modal {
+    border: 1px solid #e2e8d8;
+  }
+  button:focus {
+    outline: 2px solid #91b495;
+    outline-offset: 2px;
+  }
+  @media (max-width: 760px) {
+    .stats-grid > .stat-card {
+      width: 48%;
+    }
+    .subject-grid > .subject-card,
+    .group-grid > .group-card {
+      width: 100%;
+    }
+    .sidebar {
+      overflow-y: auto;
+    }
+    .sidebar-bottom {
+      padding-top: 20px;
+    }
+    .group-card:last-child {
+      display: block;
+    }
+  }
+}

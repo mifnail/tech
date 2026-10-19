@@ -7,7 +7,7 @@ import type {
   DB, GradeRec, Group, Lesson, LessonStatus,
   ScheduleItem, Settings, Student, Subject, ID,
 } from "./types";
-import { addDaysISO, todayISO, weekParity, weekdayOf } from "./date";
+import { addDaysISO, todayISO, weekTypeOf, weekdayOf } from "./date";
 import { nextGrade, prevGrade } from "./grades";
 
 const LS_KEY = "th4-db-v2";
@@ -113,7 +113,7 @@ function seed(): DB {
   for (let back = 34; back >= 1; back--) {
     const date = addDaysISO(today, -back);
     const wd = weekdayOf(date);
-    const par = weekParity(date);
+    const par = weekTypeOf(date);
     for (const it of schedule) {
       if (it.weekday !== wd) continue;
       if (it.parity !== 0 && it.parity !== par) continue;
@@ -136,7 +136,7 @@ function seed(): DB {
   // Сегодня: занятия по расписанию (или пара запасных, если выходной).
   let todayItems = schedule.filter(
     (it) => it.weekday === weekdayOf(today) &&
-      (it.parity === 0 || it.parity === weekParity(today)),
+      (it.parity === 0 || it.parity === weekTypeOf(today)),
   );
   if (!todayItems.length) todayItems = [schedule[0], schedule[3]];
   for (const it of todayItems.slice(0, 3)) {
@@ -275,6 +275,9 @@ class Store {
   private dirtyLessons = new Set<ID>();
   /** Снимки оценок ДО первого изменения (для отката при ошибке). */
   private gradeSnapshots = new Map<ID, GradeRec[]>();
+  /** Занятия, проведённые в этой сессии: статус не понижается до scheduled,
+      даже если серверный ответ был снят до «Провести» (гонка загрузок). */
+  private heldOnce = new Set<ID>();
 
   /** Пометить занятие «грязным» (только dirty + snapshot, без таймера). */
   private markGradeDirty(lessonId: ID) {
@@ -303,15 +306,19 @@ class Store {
 
   /** Провести занятие: bulk POST на /conduct, пуши немедленно.
 
-      Успех: снимает грязь, помечает held, возвращает notified.
-      Ошибка: откат к снимку? — нет, грязь остаётся (повтор возможен). */
-  async conductLesson(lessonId: ID): Promise<{ notified: number }> {
+      Успех: снимает грязь, помечает held (сервер тоже ставит status='held'),
+      возвращает notified + уведомление «пары вычитаны» (hoursExhausted/HoursMessage)
+      для тоста. Ошибка: откат к снимку? — нет, грязь остаётся (повтор возможен). */
+  async conductLesson(lessonId: ID): Promise<{
+    notified: number; hoursExhausted?: boolean; hoursMessage?: string;
+  }> {
     if (import.meta.env.DEV) {
       // DEV: эмулируем проведение без сети
       this.dirtyLessons.delete(lessonId);
       this.gradeSnapshots.delete(lessonId);
       const l = this.lesson(lessonId);
       if (l) l.status = "held";
+      this.heldOnce.add(lessonId);
       this.touch();
       return { notified: 0 };
     }
@@ -320,13 +327,20 @@ class Store {
       .map((g) => ({ student_id: g.studentId, grade: gradeToText(g) }));
     const snapshot = this.gradeSnapshots.get(lessonId)?.map((g) => ({ ...g })) ?? null;
     try {
-      const res = await _post(`/api/lessons/${lessonId}/conduct`, payload) as { notified?: number };
+      const res = await _post(`/api/lessons/${lessonId}/conduct`, payload) as {
+        notified?: number; hours_exhausted?: boolean; hours_message?: string;
+      };
       this.dirtyLessons.delete(lessonId);
       this.gradeSnapshots.delete(lessonId);
       const l = this.lesson(lessonId);
       if (l) l.status = "held";
+      this.heldOnce.add(lessonId);
       this.touch();
-      return { notified: typeof res.notified === "number" ? res.notified : 0 };
+      return {
+        notified: typeof res.notified === "number" ? res.notified : 0,
+        hoursExhausted: !!res.hours_exhausted,
+        hoursMessage: res.hours_message || "",
+      };
     } catch (e) {
       // Ошибка: откат к снимку, грязь остаётся для повтора
       if (snapshot) {
@@ -466,7 +480,27 @@ class Store {
   }
 
   /* ── PROD: загрузка данных с сервера ─────────────────── */
+
+  /** Статус урока с сервера, защищённый от «слета проведено»:
+      локально уже проведённое (held) не понижаем до scheduled, если сервер
+      отстаёт (гонка загрузок, флеш оценок без conduct, старый бэкенд).
+      Отмена/замена с сервера всегда побеждает локальный held.
+      @param priorHeld id уроков, held ДО полной перезагрузки db (loadFromApi). */
+  private statusFromServer(id: ID, srv: string | null | undefined, priorHeld?: ReadonlySet<ID>): LessonStatus {
+    const mapped = (srv === "replaced" ? "cancelled" : srv ?? "scheduled") as LessonStatus;
+    if (mapped !== "scheduled") return mapped;
+    // Проверяем и снимок «до перезагрузки», и текущее состояние: ответ сервера
+    // мог быть снят до нажатия «Провести» (гонка стартовой загрузки) — тогда
+    // локальный held нельзя понижать до scheduled.
+    const locallyHeld = this.heldOnce.has(id) ||
+      (priorHeld?.has(id) ?? false) ||
+      this.db.lessons.some((l) => l.id === id && l.status === "held");
+    return locallyHeld ? "held" : mapped;
+  }
+
   private async loadFromApi(strict = false) {
+    // Проведённые локально уроки — до замены db целиком (защита held→scheduled)
+    const priorHeld = new Set<ID>(this.db.lessons.filter((l) => l.status === "held").map((l) => l.id));
     try {
       // Batch 1: основные данные (параллельно)
       const [groupsRaw, subjectsRaw, studentsRaw, scheduleRaw, todayRaw, tgLinks, maxLinks] =
@@ -516,7 +550,7 @@ class Store {
       );
       const gbP = subjectsRaw.map((s) =>
         (fetchJson(`/api/subjects/${s.id}/gradebook`) as Promise<{
-          lessons: Array<{ id: number; date: string; lesson_number: number | null }>;
+          lessons: Array<{ id: number; date: string; lesson_number: number | null; status?: string }>;
           grades: Record<string, Record<string, string>>;
           students: Array<{ id: number }>;
         }>).catch((e) => {
@@ -570,6 +604,10 @@ class Store {
       }));
 
       // Маппинг уроков и оценок из gradebook'ов
+      // Пересобираем «проведённые» прямо перед маппингом: пока шли запросы,
+      // преподаватель мог провести занятие — его нельзя понизить до scheduled.
+      const heldNow = new Set<ID>(priorHeld);
+      for (const l of this.db.lessons) if (l.status === "held") heldNow.add(l.id);
       const lessons: Lesson[] = [];
       const grades: GradeRec[] = [];
       const lessonIds = new Set<ID>();
@@ -587,7 +625,9 @@ class Store {
               groupId: grpId,
               subjectId: subjId,
               date: l.date,
-              status: "held" as LessonStatus,
+              // Сервер отдаёт реальный status; фолбэк 'held' — для старого бэкенда.
+              // Локально проведённое не понижается до scheduled (priorHeld).
+              status: this.statusFromServer(l.id, l.status ?? "held", heldNow),
               time: "",
               room: "",
               lessonNumber: l.lesson_number ?? 0,
@@ -615,7 +655,7 @@ class Store {
             groupId: l.group_id,
             subjectId: l.actual_subject_id ?? l.subject_id,
             date: l.date,
-            status: (l.status === "replaced" ? "cancelled" : l.status) as LessonStatus,
+            status: this.statusFromServer(l.id, l.status, heldNow),
             time: "",
             room: "",
             lessonNumber: l.lesson_number ?? 0,
@@ -699,7 +739,9 @@ class Store {
         groupId: grpId,
         subjectId: subjId,
         date: srv.date,
-        status: (srv.status === "replaced" ? "cancelled" : srv.status) as LessonStatus,
+        // Сервер теперь ставит held при /conduct, но на время гонки/старого
+        // бэкенда локально проведённое занятие не скатывается в scheduled.
+        status: this.statusFromServer(id, srv.status),
         time: "",
         room: "",
         lessonNumber: srv.lesson_number ?? 0,
@@ -795,7 +837,7 @@ class Store {
   }
   scheduleItemFor(lesson: Pick<Lesson, "groupId" | "subjectId">, date: string): ScheduleItem | undefined {
     const wd = weekdayOf(date);
-    const par = weekParity(date);
+    const par = weekTypeOf(date);
     return this.db.schedule.find(
       (it) =>
         it.groupId === lesson.groupId && it.subjectId === lesson.subjectId &&
@@ -963,7 +1005,9 @@ class Store {
       });
     }
   }
-  addSubject(name: string, groupId?: ID, totalHours = 0): Subject {
+  /** Создать предмет. PROD: ждём ответ сервера, чтобы вызывающий код
+      (например, добавление пары в расписание) не отправлял временный id. */
+  async addSubject(name: string, groupId?: ID, totalHours = 0): Promise<Subject> {
     const existing = this.db.subjects.find(
       (s) => s.name.toLowerCase() === name.trim().toLowerCase(),
     );
@@ -972,20 +1016,21 @@ class Store {
     this.db.subjects.push(s);
     this.touch();
     if (!import.meta.env.DEV && groupId != null) {
-      _post("/api/subjects", { name: name.trim(), total_hours: totalHours, group_id: groupId })
-        .then((r) => {
-          const { id } = r as { id: number };
-          if (id !== s.id) {
-            s.id = id;
-            this.db.seq = Math.max(this.db.seq, id + 1);
-            this.touch();
-          }
-        })
-        .catch((e) => {
-          console.error("[store] addSubject failed:", e);
-          this.db.subjects = this.db.subjects.filter((x) => x !== s);
+      try {
+        const r = await _post("/api/subjects", {
+          name: name.trim(), total_hours: totalHours, group_id: groupId,
+        }) as { id: number };
+        if (r.id !== s.id) {
+          s.id = r.id;
+          this.db.seq = Math.max(this.db.seq, r.id + 1);
           this.touch();
-        });
+        }
+      } catch (e) {
+        console.error("[store] addSubject failed:", e);
+        this.db.subjects = this.db.subjects.filter((x) => x !== s);
+        this.touch();
+        throw e;
+      }
     }
     return s;
   }
@@ -1051,30 +1096,33 @@ class Store {
     g.subjectIds = g.subjectIds.filter((x) => x !== subjectId);
     this.touch();
   }
-  addScheduleItem(item: Omit<ScheduleItem, "id">): ScheduleItem {
+  /** Добавить пару в шаблон. PROD: ждём ответ сервера — при ошибке откат и
+      reject, чтобы экран показал правдивый тост, а не «добавлено» в пустоту. */
+  async addScheduleItem(item: Omit<ScheduleItem, "id">): Promise<ScheduleItem> {
     const it: ScheduleItem = { ...item, id: this.nextId() };
     this.db.schedule.push(it);
     const g = this.group(item.groupId);
     if (g && !g.subjectIds.includes(item.subjectId)) g.subjectIds.push(item.subjectId);
     this.touch();
     if (!import.meta.env.DEV) {
-      _post("/api/schedule", {
-        day_of_week: item.weekday,
-        lesson_number: it.lessonNumber,
-        subject_id: item.subjectId,
-        week_type: item.parity,
-      }).then((r) => {
-        const { id } = r as { id: number };
-        if (id !== it.id) {
-          it.id = id;
-          this.db.seq = Math.max(this.db.seq, id + 1);
+      try {
+        const r = await _post("/api/schedule", {
+          day_of_week: item.weekday,
+          lesson_number: it.lessonNumber,
+          subject_id: item.subjectId,
+          week_type: item.parity,
+        }) as { id: number };
+        if (r.id !== it.id) {
+          it.id = r.id;
+          this.db.seq = Math.max(this.db.seq, r.id + 1);
           this.touch();
         }
-      }).catch((e) => {
+      } catch (e) {
         console.error("[store] addScheduleItem failed:", e);
         this.db.schedule = this.db.schedule.filter((x) => x !== it);
         this.touch();
-      });
+        throw e;
+      }
     }
     return it;
   }
@@ -1090,7 +1138,11 @@ class Store {
       });
     }
   }
-  updateScheduleItem(id: ID, patch: { weekday?: number; lessonNumber?: number; subjectId?: ID; parity?: 0 | 1 | 2 }) {
+  /** Изменить пару. PROD: ждём ответ, при ошибке откат и reject (тост). */
+  async updateScheduleItem(
+    id: ID,
+    patch: { weekday?: number; lessonNumber?: number; subjectId?: ID; parity?: 0 | 1 | 2 },
+  ): Promise<void> {
     const it = this.db.schedule.find((s) => s.id === id);
     if (!it) return;
     const snap = { weekday: it.weekday, lessonNumber: it.lessonNumber, subjectId: it.subjectId, parity: it.parity };
@@ -1100,19 +1152,22 @@ class Store {
     if (patch.parity !== undefined) it.parity = patch.parity;
     this.touch();
     if (!import.meta.env.DEV) {
-      _patch(`/api/schedule/${id}`, {
-        day_of_week: it.weekday,
-        lesson_number: it.lessonNumber,
-        subject_id: it.subjectId,
-        week_type: it.parity,
-      }).catch((e) => {
+      try {
+        await _patch(`/api/schedule/${id}`, {
+          day_of_week: it.weekday,
+          lesson_number: it.lessonNumber,
+          subject_id: it.subjectId,
+          week_type: it.parity,
+        });
+      } catch (e) {
         console.error("[store] updateScheduleItem failed:", e);
         it.weekday = snap.weekday;
         it.lessonNumber = snap.lessonNumber;
         it.subjectId = snap.subjectId;
         it.parity = snap.parity;
         this.touch();
-      });
+        throw e;
+      }
     }
   }
   /** Создание занятия с датой (прошлое + сегодня). Дубли разрешены.
@@ -1162,6 +1217,10 @@ class Store {
     if (!l) return;
     const prev = l.status;
     l.status = status;
+    // Синхронизируем heldOnce: проведённое — навсегда в этой сессии,
+    // отмена/сброс в scheduled — удаляем из heldOnce.
+    if (status === "held") this.heldOnce.add(id);
+    else this.heldOnce.delete(id);
     this.touch();
     if (!import.meta.env.DEV) {
       if (status === "cancelled") {

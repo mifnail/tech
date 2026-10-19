@@ -7,7 +7,7 @@ import {
 import { useDB, useVersion, store } from "../lib/store";
 import { avgOf, formatAvg, isDebtor } from "../lib/grades";
 import { navigate } from "../lib/router";
-import { BackHeader, Screen } from "../components/shell";
+import { AvatarTile, BackHeader, Screen } from "../components/shell";
 import {
   Btn, Card, Chip, ConfirmSheet, Field, IconBtn, Input, SectionTitle,
   Select, Segmented, Sheet, useToast,
@@ -193,10 +193,15 @@ export default function GroupDetailScreen({ id }: { id: number }) {
     }
   };
 
-  const assignSubject = () => {
+  const assignSubject = async () => {
     let sid = subjectPick ? Number(subjectPick) : null;
     if (!sid && subjectNew.trim()) {
-      sid = store.addSubject(subjectNew, group.id, Number(subjectHours) || 0).id;
+      try {
+        sid = (await store.addSubject(subjectNew, group.id, Number(subjectHours) || 0)).id;
+      } catch {
+        toast("Не удалось добавить предмет");
+        return;
+      }
     }
     if (!sid) return;
     store.assignSubject(group.id, sid);
@@ -216,12 +221,19 @@ export default function GroupDetailScreen({ id }: { id: number }) {
         sub="Группа"
         fallback="/groups"
         actions={
-          <IconBtn
-            icon={Pencil}
-            label="Переименовать группу"
-            className="text-faint"
-            onClick={() => { setRenameName(group.name); setRenameOpen(true); }}
-          />
+          <>
+            <AvatarTile
+              text={group.name.slice(0, 2)}
+              group={group.name}
+              className="w-8 h-8 text-[11px] mr-1.5"
+            />
+            <IconBtn
+              icon={Pencil}
+              label="Переименовать группу"
+              className="text-faint"
+              onClick={() => { setRenameName(group.name); setRenameOpen(true); }}
+            />
+          </>
         }
       />
 
@@ -499,14 +511,14 @@ export default function GroupDetailScreen({ id }: { id: number }) {
               placeholder="Например, Компьютерные сети"
             />
           </Field>
-          <Field label="Часов (всего)">
+          <Field label="Пар (всего)">
             <Input
               type="number"
               inputMode="numeric"
               min={1}
               value={subjectHours}
               onChange={(e) => { setSubjectHours(e.target.value); setSubjectPick(""); }}
-              placeholder="Например, 72"
+              placeholder="Например, 36"
             />
           </Field>
           <Btn size="lg" onClick={assignSubject} disabled={!subjectPick && !subjectNew.trim()}>
@@ -603,14 +615,14 @@ export default function GroupDetailScreen({ id }: { id: number }) {
               onKeyDown={(e) => e.key === "Enter" && doEditSubject()}
             />
           </Field>
-          <Field label="Часов (всего)">
+          <Field label="Пар (всего)">
             <Input
               type="number"
               inputMode="numeric"
               min={1}
               value={editSubjectHours}
               onChange={(e) => setEditSubjectHours(e.target.value)}
-              placeholder="Например, 72"
+              placeholder="Например, 36"
             />
           </Field>
           <Btn size="lg" className="w-full" onClick={doEditSubject} disabled={!editSubjectName.trim()}>

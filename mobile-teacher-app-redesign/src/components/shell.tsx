@@ -1,10 +1,18 @@
-/* Каркас экранов: шапки и нижняя таб-навигация (под большой палец). */
+/* Каркас экранов: шапки, плитки/кружки строк дня и нижняя таб-навигация. */
 
 import type { ReactNode } from "react";
-import { ChevronLeft, CalendarDays, House, Layers, BarChart3, SlidersHorizontal } from "lucide-react";
+import {
+  Check, ChevronLeft, CalendarDays, House, Layers, BarChart3, SlidersHorizontal,
+} from "lucide-react";
 import { cn } from "../utils/cn";
 import { navigate, goBack } from "../lib/router";
+import { weekTypeOf, weekdayOf } from "../lib/date";
+import type { DB, Lesson, LessonStatus, ScheduleItem } from "../lib/types";
+import { colorForGroup } from "../lib/groupColors";
 import { IconBtn } from "./ui";
+
+// Цвет группы живёт в lib/groupColors (реестр специальностей обновляет App).
+export { colorForGroup } from "../lib/groupColors";
 
 /* ── Контейнер экрана ─────────────────────────────────────── */
 export function Screen({ children, className }: { children: ReactNode; className?: string }) {
@@ -71,20 +79,145 @@ const TILE_TONES = [
   "bg-g4bg text-g4",
 ];
 
-export function AvatarTile({ text, className }: { text: string; className?: string }) {
+/** Детерминированный хеш строки (тот же, что был у плиток). */
+function hashOf(text: string): number {
   let h = 0;
   for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
-  const tone = TILE_TONES[Math.abs(h) % TILE_TONES.length];
+  return Math.abs(h);
+}
+
+/* Цвет группы — в lib/groupColors: специальность = семейство hue,
+   курс = контрастный тон внутри семейства, текст по контрасту WCAG. */
+
+export function AvatarTile({
+  text, group, className,
+}: { text: string; group?: string; className?: string }) {
+  // Передано имя группы — красим по специальности/курсу; иначе прежние тона.
+  const color = group ? colorForGroup(group) : null;
+  const tone = color ? null : TILE_TONES[hashOf(text) % TILE_TONES.length];
   return (
     <div
       className={cn(
         "w-10 h-10 rounded-[13px] grid place-items-center font-extrabold text-[13px] tracking-[0.02em] shrink-0",
         tone, className,
       )}
+      style={color ? { backgroundColor: color.bg, color: color.fg } : undefined}
     >
       {text}
     </div>
   );
+}
+
+/* ── Номер пары: крупная цифра + код группы, фиксированная ширина ── */
+/** Крупная цифра без слова «номер», под ней — код группы (АДТ-31).
+    Ширина колонки задаётся снаружи (w-[48px]) и не меняется. */
+export function PairNumber({
+  n, code, codeColor, className,
+}: { n: number; code: string; codeColor?: string; className?: string }) {
+  return (
+    <div className={cn("shrink-0 select-none text-center", className)}>
+      <div className="text-[21px] font-extrabold tabular-nums leading-none text-ink">
+        {n > 0 ? n : "—"}
+      </div>
+      <div
+        className="mt-1 text-[9.5px] font-bold uppercase tracking-[0.02em] text-faint truncate"
+        style={codeColor ? { color: codeColor } : undefined}
+        title={code}
+      >
+        {code}
+      </div>
+    </div>
+  );
+}
+
+/* ── Статус пары кружком (вместо чипа с текстом) ──────────── */
+/** Компактный индикатор: зелёный кружок с галочкой — проведено,
+    серый залитый — запланировано, красный с чертой — отменено.
+    Подпись остаётся только для скринридеров и title. */
+export function StatusDot({ status }: { status: LessonStatus }) {
+  const label =
+    status === "held" ? "Проведено" : status === "cancelled" ? "Отменено" : "Запланировано";
+  return (
+    <>
+      <span className="sr-only">{label}</span>
+      {status === "held" && (
+        <span
+          title={label}
+          aria-label={label}
+          className="w-[19px] h-[19px] shrink-0 rounded-full bg-g5 grid place-items-center"
+        >
+          <Check size={12} strokeWidth={3.2} className="text-white" />
+        </span>
+      )}
+      {status === "cancelled" && (
+        <span
+          title={label}
+          aria-label={label}
+          className="w-[19px] h-[19px] shrink-0 rounded-full bg-g2 grid place-items-center"
+        >
+          <span className="block w-[9px] h-[2px] rounded-full bg-white -rotate-45" />
+        </span>
+      )}
+      {status === "scheduled" && (
+        <span
+          title={label}
+          aria-label={label}
+          className="block w-[19px] h-[19px] shrink-0 rounded-full bg-na"
+        />
+      )}
+    </>
+  );
+}
+
+/* ── План дня: занятия даты + слоты шаблона расписания ────── */
+/** Строка дня: реальное занятие (lessons) или незакрытый слот шаблона (schedule). */
+export type DayRow =
+  | { kind: "lesson"; key: string; lesson: Lesson }
+  | { kind: "plan"; key: string; item: ScheduleItem };
+
+/**
+ * Занятия даты + слоты шаблона расписания (day_of_week + чёт/нечёт).
+ * Реальный lesson приоритетнее шаблона: слот не показывается, если на эту дату
+ * уже есть занятие той же группы+предмета или того же номера пары — дублей не
+ * бывает. Данные — только локальные db.schedule / db.lessons.
+ * Паритет берём в шкале БД через date.ts#weekTypeOf — одна точка перевода.
+ */
+export function dayRows(db: DB, date: string): DayRow[] {
+  const weekday = weekdayOf(date);
+  const weekType = weekTypeOf(date);
+  const lessons = db.lessons.filter((l) => l.date === date);
+  const rows: DayRow[] = lessons.map((l) => ({
+    kind: "lesson", key: "l" + l.id, lesson: l,
+  }));
+
+  const usedPairs = new Set<string>();
+  const usedSlots = new Set<string>();
+  for (const l of lessons) {
+    usedPairs.add(l.groupId + "/" + l.subjectId);
+    if (l.lessonNumber > 0) usedSlots.add(l.groupId + "#" + l.lessonNumber);
+  }
+
+  const plannedPairs = new Set<string>();
+  for (const it of db.schedule) {
+    if (it.weekday !== weekday) continue;
+    if (it.parity !== 0 && it.parity !== weekType) continue;
+    const pair = it.groupId + "/" + it.subjectId;
+    if (usedPairs.has(pair)) continue;
+    if (it.lessonNumber > 0 && usedSlots.has(it.groupId + "#" + it.lessonNumber)) continue;
+    if (plannedPairs.has(pair)) continue; // двойной шаблон одной пары — не дублируем
+    plannedPairs.add(pair);
+    rows.push({ kind: "plan", key: "p" + it.id, item: it });
+  }
+
+  rows.sort((a, b) => {
+    const na = a.kind === "lesson" ? a.lesson.lessonNumber : a.item.lessonNumber;
+    const nb = b.kind === "lesson" ? b.lesson.lessonNumber : b.item.lessonNumber;
+    if (na !== nb) return na - nb;
+    const ta = a.kind === "lesson" ? a.lesson.time : a.item.time;
+    const tb = b.kind === "lesson" ? b.lesson.time : b.item.time;
+    return ta.localeCompare(tb);
+  });
+  return rows;
 }
 
 /* ── Нижняя навигация ─────────────────────────────────────── */

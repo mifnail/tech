@@ -1,15 +1,16 @@
 /* Экран «Сегодня»: занятия дня, быстрые метрики. */
 
 import { useMemo, useState } from "react";
-import { CalendarOff, ChevronRight, Play, CircleAlert, CircleCheck, Ban } from "lucide-react";
+import { CalendarOff, ChevronRight, Play } from "lucide-react";
 import { useDB, useVersion, store, lessonAvg } from "../lib/store";
 import { formatLong, todayISO, weekParity, addDaysISO } from "../lib/date";
 import { isDebtor, avgOf, formatAvg } from "../lib/grades";
 import { navigate } from "../lib/router";
-import { BigHeader, Screen } from "../components/shell";
+import { BigHeader, PairNumber, Screen, StatusDot, colorForGroup, dayRows } from "../components/shell";
+import type { DayRow } from "../components/shell";
 import { Btn, Card, Chip, EmptyState, SectionTitle, Sheet } from "../components/ui";
 import { NewLessonSheet } from "../components/NewLessonSheet";
-import type { Lesson, Student } from "../lib/types";
+import type { LessonStatus, Student } from "../lib/types";
 
 /** Запись списка должников: студент + его средний балл (2–5). */
 interface DebtorRow {
@@ -17,43 +18,61 @@ interface DebtorRow {
   avg: number | null;
 }
 
-function LessonCard({ lesson }: { lesson: Lesson }) {
-  const subject = store.subject(lesson.subjectId);
-  const group = store.group(lesson.groupId);
-  const recs = store.gradesOfLesson(lesson.id);
+/** Русская форма числа: «пара / пары / пар» по правилам склонения. */
+function pairWord(n: number): string {
+  const a = n % 10;
+  const b = n % 100;
+  if (a === 1 && b !== 11) return "пара";
+  if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return "пары";
+  return "пар";
+}
+
+function LessonCard({
+  row, onStartPlan,
+}: {
+  row: DayRow;
+  /** Тап по строке шаблона: открыть «Начать занятие» с уже выбранной парой. */
+  onStartPlan: (pair: { groupId: number; subjectId: number }) => void;
+}) {
+  const src = row.kind === "lesson" ? row.lesson : row.item;
+  const lesson = row.kind === "lesson" ? row.lesson : null;
+  const plan = row.kind === "plan";
+  const group = store.group(src.groupId);
+  const subject = store.subject(src.subjectId);
+  const recs = lesson ? store.gradesOfLesson(lesson.id) : [];
   const avg = lessonAvg(recs);
   const graded = recs.filter((r) => r.present && r.value !== null).length;
+  const status: LessonStatus = lesson ? lesson.status : "scheduled";
 
   return (
     <Card
-      className="p-3.5 mb-2 flex items-center gap-3"
-      onClick={() => navigate("/lesson/" + lesson.id)}
+      className="relative p-3.5 mb-2 flex items-center gap-3"
+      onClick={() =>
+        lesson
+          ? navigate("/lesson/" + lesson.id)
+          : onStartPlan({ groupId: src.groupId, subjectId: src.subjectId })
+      }
     >
-      {lesson.lessonNumber > 0 && (
-        <>
-          <div className="w-[52px] shrink-0 text-center">
-            <div className="text-[15px] font-extrabold tabular-nums leading-none">
-              №{lesson.lessonNumber}
-            </div>
-            <div className="mt-1 text-[10px] font-bold uppercase tracking-wide text-faint">
-              пара
-            </div>
-          </div>
-          <div className="w-px self-stretch bg-line" />
-        </>
-      )}
+      <PairNumber
+        n={src.lessonNumber}
+        code={group ? group.name : "—"}
+        codeColor={group ? colorForGroup(group.name).fg : undefined}
+        className="w-[48px]"
+      />
+      <div className="w-px self-stretch bg-line" />
       <div className="min-w-0 flex-1">
-        <div className="text-[14.5px] font-bold truncate">{subject?.name}</div>
-        <div className="text-[12px] text-muted truncate">
-          {group?.name}
-          {lesson.status === "held" && graded > 0 && (
-            <> · ср. {formatAvg(avg)} из {graded}</>
-          )}
+        <div className="text-[14.5px] font-bold leading-snug line-clamp-2 min-h-[2.6em]">{subject?.name}</div>
+        <div className="mt-1 flex items-center gap-1.5 min-w-0">
+          <span className="min-w-0 truncate text-[12px] text-muted">
+            {plan && src.time ? `${src.time}${src.room ? " · " + src.room : ""}` : group?.name}
+            {lesson && lesson.status === "held" && graded > 0 && (
+              <> · ср. {formatAvg(avg)} из {graded}</>
+            )}
+          </span>
+          {plan && <Chip tone="neutral">по расписанию</Chip>}
         </div>
       </div>
-      {lesson.status === "held" && <Chip tone="success"><CircleCheck size={11} />Проведено</Chip>}
-      {lesson.status === "scheduled" && <Chip tone="warn"><CircleAlert size={11} />Назначено</Chip>}
-      {lesson.status === "cancelled" && <Chip tone="danger"><Ban size={11} />Отменено</Chip>}
+      <StatusDot status={status} />
       <ChevronRight size={16} className="text-faint shrink-0" />
     </Card>
   );
@@ -65,8 +84,11 @@ export default function TodayScreen() {
   const today = todayISO();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [debtorsOpen, setDebtorsOpen] = useState(false);
+  /** Пара, выбранная тапом по строке шаблона (для листа «Начать занятие»). */
+  const [planPair, setPlanPair] = useState<{ groupId: number; subjectId: number } | null>(null);
 
-  const lessons = store.lessonsOn(today);
+  // Занятия дня + слоты шаблона расписания, которых ещё нет в журнале.
+  const rows = dayRows(db, today);
   const parity = weekParity(today);
 
   const stats = useMemo(() => {
@@ -92,7 +114,7 @@ export default function TodayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, ver]);
 
-  /** Сводка по предметам: проведённые/выделенные часы + прогресс-бар. */
+  /** Сводка по предметам: проведённые/выделенные пары + прогресс-бар. */
   const subjectRows = useMemo(() => {
     const held = new Map<number, number>();
     for (const l of db.lessons) {
@@ -129,16 +151,19 @@ export default function TodayScreen() {
         size="lg"
         icon={Play}
         className="w-full mb-1 tracking-[0.01em]"
-        onClick={() => setSheetOpen(true)}
+        onClick={() => {
+          setPlanPair(null);
+          setSheetOpen(true);
+        }}
       >
         Начать занятие
       </Btn>
 
       <SectionTitle className="mt-5">
-        Занятия сегодня · {lessons.length}
+        Занятия сегодня · {rows.length}
       </SectionTitle>
 
-      {lessons.length === 0 && (
+      {rows.length === 0 && (
         <Card>
           <EmptyState
             icon={CalendarOff}
@@ -147,8 +172,15 @@ export default function TodayScreen() {
           />
         </Card>
       )}
-      {lessons.map((l) => (
-        <LessonCard key={l.id} lesson={l} />
+      {rows.map((row) => (
+        <LessonCard
+          key={row.key}
+          row={row}
+          onStartPlan={(pair) => {
+            setPlanPair(pair);
+            setSheetOpen(true);
+          }}
+        />
       ))}
 
       <SectionTitle>Сводка</SectionTitle>
@@ -196,7 +228,7 @@ export default function TodayScreen() {
                 </div>
                 <Chip tone="neutral">{r.groupName}</Chip>
                 <span className="text-[13px] font-bold tabular-nums shrink-0">
-                  {r.total > 0 ? `${r.held} / ${r.total} ч` : "—"}
+                  {r.total > 0 ? `${r.held} / ${r.total} ${pairWord(r.total)}` : "—"}
                 </span>
                 <ChevronRight size={14} className="text-faint shrink-0" />
               </div>
@@ -209,7 +241,7 @@ export default function TodayScreen() {
                 </span>
               </div>
               {r.total === 0 && (
-                <div className="mt-1 text-[11px] text-faint">нет выделенных</div>
+                <div className="mt-1 text-[11px] text-faint">выделенных пар нет</div>
               )}
             </div>
           ))
@@ -254,6 +286,7 @@ export default function TodayScreen() {
       <NewLessonSheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
+        initialPair={planPair ?? undefined}
         onCreated={(lesson) => navigate("/lesson/" + lesson.id)}
       />
     </Screen>

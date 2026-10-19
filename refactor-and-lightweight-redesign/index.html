@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#347b5a" />
+    <meta
+      name="description"
+      content="TeachHelper — лёгкий журнал преподавателя. Группы, расписание, оценки и посещаемость в одном месте."
+    />
+    <title>TeachHelper — Журнал преподавателя</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      (function () {
+        var chrome = navigator.userAgent.match(/Chrom(?:e|ium)\/(\d+)/);
+        if (
+          !("noModule" in document.createElement("script")) ||
+          (chrome && Number(chrome[1]) < 107)
+        ) {
+          window.__teachHelperLegacy = true;
+          var script = document.createElement("script");
+          script.src = "./legacy.js";
+          document.body.appendChild(script);
+        }
+      })();
+    </script>
+  </body>
+</html>
