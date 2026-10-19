@@ -846,6 +846,71 @@ def _hours_exhausted_notice(db, lesson_id: int) -> dict:
         return {}
 
 
+def _student_fio(row) -> str:
+    """«Фамилия И.» — как в остальных пушах куратору и студенту."""
+    last = row_get(row, 'last_name', '') or ''
+    first = row_get(row, 'first_name', '') or ''
+    return f"{last} {first[0]}." if first else last
+
+
+def _curator_conduct_text(db, lesson_id: int) -> str:
+    """Сводка куратору о проведённой паре: кто был и кого не было.
+
+    Строится по ВСЕМУ составу группы, а не по изменённым оценкам: куратору
+    нужны и присутствовавшие без оценок, и отсутствующие. Поэтому сообщение
+    уходит и тогда, когда ни одной оценки не поставили — только отметили
+    посещаемость.
+
+    Присутствие — строка в grades ('0' = был без оценки, '2'–'5' = оценка).
+    Нет строки или 'absent' — студент отсутствовал.
+    Пустая строка — урок/группа не разрешаются.
+    """
+    lesson = db.get_lesson(lesson_id)
+    if not lesson:
+        return ''
+    raw_date = row_get(lesson, 'date', '') or ''
+    date_str = f'{raw_date[8:10]}.{raw_date[5:7]}' if len(raw_date) >= 10 else ''
+    subject = (row_get(lesson, 'actual_subject_name', '')
+               or row_get(lesson, 'planned_subject', '') or '')
+    ln = row_get(lesson, 'lesson_number', None)
+    lesson_number_str = '' if ln is None else str(ln)
+
+    marks: dict[int, str] = {}
+    for r in db.get_attendance(lesson_id):
+        try:
+            marks[int(r['student_id'])] = str(r['grade'] or '')
+        except Exception:
+            continue
+
+    present: list[tuple[Any, str]] = []
+    absent: list[Any] = []
+    for st in db.get_group_students(lesson_id):
+        grade = marks.get(int(st['id']), '')
+        if grade in ('', 'absent'):
+            absent.append(st)
+        else:
+            present.append((st, grade))
+
+    lines = [
+        f'Дата: {date_str}',
+        f'Название предмета: {subject}',
+        f'Номер пары: {lesson_number_str}',
+        'Список студентов и через дефис оценка',
+    ]
+    if present:
+        for st, grade in present:
+            # '0' — присутствовал без оценки; куратору понятнее прочерк.
+            lines.append(f'{_student_fio(st)} - {grade if grade != "0" else "—"}')
+    else:
+        lines.append('—')
+    lines.append('Ниже список отсутствующих:')
+    if absent:
+        lines.extend(_student_fio(st) for st in absent)
+    else:
+        lines.append('нет')
+    return '\n'.join(lines)
+
+
 @lessons_bp.route('/<int:lesson_id>/conduct', methods=['POST'])
 def conduct_lesson(lesson_id: int):
     """Провести занятие: записать оценки и разослать пуши немедленно.
@@ -941,10 +1006,11 @@ def conduct_lesson(lesson_id: int):
         changed.append((sid_int, new_grade))
 
     notified = len(changed)
-    if notified == 0:
-        return jsonify({'ok': True, 'notified': 0, **notice})
 
-    # Проверить активность бота — если не активен, не считаем уведомления
+    # Проверить активность бота — если не активен, не считаем уведомления.
+    # Раньше здесь был ранний выход при notified == 0, из-за него куратор
+    # не получал сводку, когда оценки не ставили — только отмечали
+    # посещаемость. Сводка теперь уходит всегда, студентам — только changed.
     try:
         token = db.get_setting('max_bot_token')
         enabled = db.get_setting('max_bot_enabled')
@@ -981,21 +1047,19 @@ def conduct_lesson(lesson_id: int):
 
     # Подготовить данные для фоновой отправки (чтобы не зависеть от нового DB в тесте)
     cur_chat = None
-    fio_map: dict[int, str] = {}
     try:
         if group_id is not None:
             cur_chat = db.get_curator_chat(group_id)
     except Exception:
         cur_chat = None
-    for sid, _grade in changed:
-        try:
-            st = db.get_student(sid)
-            if st:
-                fio_map[sid] = f"{st['last_name']} {st['first_name'][0]}." if st['first_name'] else f"{st['last_name']}"
-            else:
-                fio_map[sid] = str(sid)
-        except Exception:
-            fio_map[sid] = str(sid)
+
+    # Сводку собираем здесь, в контексте запроса: в фоновом потоке БД уже не та.
+    curator_text = ''
+    try:
+        if cur_chat is not None:
+            curator_text = _curator_conduct_text(db, lesson_id)
+    except Exception as exc:
+        print(f"[curator-push] build error: {exc}", flush=True)
 
     # Отправить пуши в фоне, не блокируя HTTP
     def _run_conduct():
@@ -1006,36 +1070,11 @@ def conduct_lesson(lesson_id: int):
                     _maxbot.notify_grade(token, sid, grade, date_str, subject)
                 except Exception:
                     pass
-            # Куратору — одно сообщение после нажатия "Провести"
+            # Куратору — одна сводка после нажатия «Провести»: кто был и кого
+            # не было. Уходит и тогда, когда оценки не ставили.
             try:
-                if cur_chat is not None and changed:
-                    # Формируем текст по требованию:
-                    # Дата:
-                    # Название предмета:
-                    # Номер пары:
-                    # Список студентов и через дефис оценка 
-                    # Ниже список отсутствующих:
-                    lesson_number_str = ''
-                    try:
-                        if lesson is not None and 'lesson_number' in lesson.keys():
-                            ln = lesson['lesson_number']
-                            if ln is not None:
-                                lesson_number_str = str(ln)
-                    except Exception:
-                        pass
-                    lines = []
-                    lines.append(f"Дата: {date_str}")
-                    lines.append(f"Название предмета: {subject}")
-                    lines.append(f"Номер пары: {lesson_number_str}")
-                    # Список студентов и через дефис оценка
-                    lines.append("Список студентов и через дефис оценка")
-                    for sid, grade in changed:
-                        fio = fio_map.get(sid, str(sid))
-                        lines.append(f"{fio} - {grade}")
-                    lines.append("Ниже список отсутствующих:")
-                    # По текущему запросу отсутствующие не указаны — оставляем пустым списком
-                    text_cur = '\n'.join(lines)
-                    _maxbot.send_message(token, int(cur_chat), text_cur)
+                if cur_chat is not None and curator_text:
+                    _maxbot.send_message(token, int(cur_chat), curator_text)
             except Exception:
                 pass
             # «Пары вычитаны» — отдельным сообщением куратору (если порог достигнут)
