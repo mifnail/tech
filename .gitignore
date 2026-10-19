@@ -4,11 +4,15 @@ __pycache__/
 *.apk
 bin/
 .buildozer/
-lessons.db-journal
-lessons.db-wal
-lessons.db-shm
+
+# Журнал и его служебные файлы — реальные данные студентов.
+# В репозиторий не попадают ни при каких условиях.
 lessons.db
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
+.recovery/
 
 # логи ручных прогонов e2e стенда
 .e2e-out.log
