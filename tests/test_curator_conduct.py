@@ -52,11 +52,12 @@ class TestCuratorText:
 
         assert 'Дата: 14.09' in lines
         assert 'Номер пары: 1' in lines
-        assert 'Иванов И. - 5' in lines
-        assert 'Петров П. - —' in lines, 'нулевая оценка показывается прочерком'
+        assert f'{_api_module._MARK_GRADED} Иванов И. - 5' in lines
+        assert f'{_api_module._MARK_NOGRADE} Петров П. - —' in lines, \
+            'нулевая оценка показывается прочерком с серым маркером'
 
         idx = lines.index('Ниже список отсутствующих:')
-        assert lines[idx + 1:] == ['Сидоров С.']
+        assert lines[idx + 1:] == [f'{_api_module._MARK_ABSENT} Сидоров С.']
 
     def test_all_absent_still_produces_message(self, db):
         _, _, lid, a, b, c = _journal(db)
@@ -64,7 +65,10 @@ class TestCuratorText:
         text = _api_module._curator_conduct_text(db, lid)
         lines = text.split('\n')
         idx = lines.index('Ниже список отсутствующих:')
-        assert lines[idx + 1:] == ['Иванов И.', 'Петров П.', 'Сидоров С.']
+        mark = _api_module._MARK_ABSENT
+        assert lines[idx + 1:] == [
+            f'{mark} Иванов И.', f'{mark} Петров П.', f'{mark} Сидоров С.',
+        ]
 
     def test_no_absentees_prints_none(self, db):
         _, _, lid, a, b, c = _journal(db)
@@ -79,7 +83,7 @@ class TestCuratorText:
         text = _api_module._curator_conduct_text(db, lid)
         lines = text.split('\n')
         idx = lines.index('Ниже список отсутствующих:')
-        assert 'Иванов И.' in lines[idx + 1:]
+        assert f'{_api_module._MARK_ABSENT} Иванов И.' in lines[idx + 1:]
 
     def test_unknown_lesson_returns_empty(self, db):
         assert _api_module._curator_conduct_text(db, 9999) == ''
@@ -139,9 +143,9 @@ class TestConductSendsCuratorSummary:
         assert len(sent) == 1, 'куратор должен получить сводку'
         text = sent[0]['text']
         assert sent[0]['chat_id'] == 9999
-        assert 'Иванов И. - —' in text
+        assert f'{_api_module._MARK_NOGRADE} Иванов И. - —' in text
         assert 'Ниже список отсутствующих:' in text
-        assert text.rstrip().endswith('Сидоров С.')
+        assert text.rstrip().endswith(f'{_api_module._MARK_ABSENT} Сидоров С.')
 
     def test_lesson_becomes_held(self, client, sent):
         _, lid, a, b, c = self._setup(client)

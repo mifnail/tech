@@ -853,6 +853,15 @@ def _student_fio(row) -> str:
     return f"{last} {first[0]}." if first else last
 
 
+# MAX не поддерживает цвет текста: в HTML-разметке разрешены только b/i/u/s/
+# code/pre/mark/blockquote/a/h1, в markdown — *курсив*, **жирный**, ++подчёркнутый++,
+# ^^красная подсветка^^. Поэтому состояние показываем цветными кружками —
+# они читаются в любом клиенте и не зависят от версии приложения.
+_MARK_GRADED = '🟢'   # оценка выставлена
+_MARK_NOGRADE = '⚪'  # был на паре, но без оценки
+_MARK_ABSENT = '🔴'   # отсутствовал
+
+
 def _curator_conduct_text(db, lesson_id: int) -> str:
     """Сводка куратору о проведённой паре: кто был и кого не было.
 
@@ -900,12 +909,15 @@ def _curator_conduct_text(db, lesson_id: int) -> str:
     if present:
         for st, grade in present:
             # '0' — присутствовал без оценки; куратору понятнее прочерк.
-            lines.append(f'{_student_fio(st)} - {grade if grade != "0" else "—"}')
+            if grade == '0':
+                lines.append(f'{_MARK_NOGRADE} {_student_fio(st)} - —')
+            else:
+                lines.append(f'{_MARK_GRADED} {_student_fio(st)} - {grade}')
     else:
         lines.append('—')
     lines.append('Ниже список отсутствующих:')
     if absent:
-        lines.extend(_student_fio(st) for st in absent)
+        lines.extend(f'{_MARK_ABSENT} {_student_fio(st)}' for st in absent)
     else:
         lines.append('нет')
     return '\n'.join(lines)
