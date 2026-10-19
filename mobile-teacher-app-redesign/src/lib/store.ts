@@ -518,6 +518,7 @@ class Store {
             id: number; day_of_week: number; lesson_number: number;
             subject_id: number; week_type: number;
             subject_name: string; group_name: string;
+            valid_from?: string | null;
           }>>,
           fetchJson("/api/schedule/today") as Promise<{
             lessons: Array<{
@@ -601,6 +602,7 @@ class Store {
         time: "",
         room: "",
         lessonNumber: s.lesson_number,
+        validFrom: s.valid_from ?? "",
       }));
 
       // Маппинг уроков и оценок из gradebook'ов
@@ -841,13 +843,17 @@ class Store {
     return this.db.schedule.find(
       (it) =>
         it.groupId === lesson.groupId && it.subjectId === lesson.subjectId &&
-        it.weekday === wd && (it.parity === 0 || it.parity === par),
+        it.weekday === wd && (it.parity === 0 || it.parity === par) &&
+        // Пара действует только с validFrom — раньше её в шаблоне не было.
+        (!it.validFrom || date >= it.validFrom),
     );
   }
-  /** Пара «предмет—группа» в расписании на день недели (без учёта чёт/нечёт). */
-  scheduleItemForDay(groupId: ID, subjectId: ID, weekday: number): ScheduleItem | undefined {
+  /** Пара «предмет—группа» в расписании на день недели (без учёта чёт/нечёт).
+      Если передан date — учитываем validFrom: до этой даты пары не существовало. */
+  scheduleItemForDay(groupId: ID, subjectId: ID, weekday: number, date?: string): ScheduleItem | undefined {
     return this.db.schedule.find(
-      (it) => it.groupId === groupId && it.subjectId === subjectId && it.weekday === weekday,
+      (it) => it.groupId === groupId && it.subjectId === subjectId && it.weekday === weekday
+        && (!date || !it.validFrom || date >= it.validFrom),
     );
   }
 
@@ -1100,6 +1106,8 @@ class Store {
       reject, чтобы экран показал правдивый тост, а не «добавлено» в пустоту. */
   async addScheduleItem(item: Omit<ScheduleItem, "id">): Promise<ScheduleItem> {
     const it: ScheduleItem = { ...item, id: this.nextId() };
+    // Пара действует с сегодняшнего дня: на прошедших датах её не показываем.
+    if (!it.validFrom) it.validFrom = todayISO();
     this.db.schedule.push(it);
     const g = this.group(item.groupId);
     if (g && !g.subjectIds.includes(item.subjectId)) g.subjectIds.push(item.subjectId);
@@ -1111,6 +1119,7 @@ class Store {
           lesson_number: it.lessonNumber,
           subject_id: item.subjectId,
           week_type: item.parity,
+          valid_from: it.validFrom,
         }) as { id: number };
         if (r.id !== it.id) {
           it.id = r.id;
@@ -1208,6 +1217,8 @@ class Store {
         this.db.lessons = this.db.lessons.filter((l) => l !== lesson);
         this.db.grades = this.db.grades.filter((g) => g.lessonId !== lesson.id);
         this.touch();
+        // Пробрасываем наверх: иначе вызывающий уйдёт на несуществующее занятие.
+        throw e;
       }
     }
     return lesson;

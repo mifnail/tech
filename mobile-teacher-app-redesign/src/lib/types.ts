@@ -35,6 +35,8 @@ export interface ScheduleItem {
   time: string;
   room: string;
   lessonNumber: number; // порядок пары в дне (1, 2, ...)
+  /** Дата (ISO), с которой пара действует. Пусто — без ограничения. */
+  validFrom?: string;
 }
 
 export type LessonStatus = "scheduled" | "held" | "cancelled";

@@ -208,6 +208,9 @@ export function dayRows(db: DB, date: string): DayRow[] {
   for (const it of db.schedule) {
     if (it.weekday !== weekday) continue;
     if (it.parity !== 0 && it.parity !== weekType) continue;
+    // Пара действует только с даты, когда её завели. Раньше этого дня её
+    // не существовало — «задним числом» в журнале она появляться не должна.
+    if (it.validFrom && date < it.validFrom) continue;
     // Занятие без номера пары (старая запись) закрывает шаблон этой
     // группы+предмета целиком — номер слота сравнить не с чем.
     if (usedUnnumbered.has(it.groupId + "/" + it.subjectId)) continue;

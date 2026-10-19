@@ -20,7 +20,7 @@ import {
 } from "../components/ui";
 import { NewLessonSheet } from "../components/NewLessonSheet";
 import { cn } from "../utils/cn";
-import type { Group, LessonStatus } from "../lib/types";
+import type { Group, LessonStatus, ScheduleItem } from "../lib/types";
 
 const WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const DAY_FULL = ["", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
@@ -158,11 +158,12 @@ export default function ScheduleScreen() {
     }
     setAddOpen(false);
 
-    // Сразу показываем день, в который пара попала: если чётность недели
-    // не совпадает — переходим на следующую неделю, иначе пара «невидима».
+    // Сразу показываем день, в который пара попала. Пара действует с
+    // сегодняшнего дня, поэтому целимся не раньше сегодня: иначе после
+    // добавления открывается прошедшая дата, где пары ещё не было.
     let target = addDaysISO(monday, wd - 1);
     let offset = weekOffset;
-    if (parity !== 0 && weekTypeOf(target) !== parity) {
+    while (target < today || (parity !== 0 && weekTypeOf(target) !== parity)) {
       target = addDaysISO(target, 7);
       offset += 1;
     }
@@ -171,6 +172,30 @@ export default function ScheduleScreen() {
 
     const parityNote = parity === 0 ? "" : parity === 2 ? " · чётные недели" : " · нечётные недели";
     toast(`Пара добавлена: ${DAY_FULL[wd]}, ${num}-я пара${parityNote}`);
+  };
+
+  /** Тап по слоту шаблона = открыть занятие этой даты.
+      Если занятия ещё нет — создаём его и сразу ведём в ведомость:
+      преподаватель хочет ставить оценки и отмечать посещаемость, а не
+      редактировать шаблон. Шаблон правится карандашом в строке. */
+  const openPlanRow = async (it: ScheduleItem) => {
+    if (selectedISO > today) {
+      toast("Занятие ещё не наступило");
+      return;
+    }
+    const existing = db.lessons.find(
+      (l) => l.date === selectedISO
+        && l.groupId === it.groupId
+        && l.lessonNumber === it.lessonNumber,
+    );
+    if (existing) { navigate("/lesson/" + existing.id); return; }
+    try {
+      const lesson = await store.createLesson(
+        it.groupId, it.subjectId, selectedISO, it.lessonNumber);
+      navigate("/lesson/" + lesson.id);
+    } catch {
+      toast("Не удалось открыть занятие");
+    }
   };
 
   /** Занятия выбранного дня + незакрытые слоты шаблона расписания (по дню недели),
@@ -287,7 +312,8 @@ export default function ScheduleScreen() {
               const schedItem = row.kind === "plan"
                 ? row.item
                 : store.scheduleItemForDay(
-                    row.lesson.groupId, row.lesson.subjectId, weekdayOf(row.lesson.date),
+                    row.lesson.groupId, row.lesson.subjectId,
+                    weekdayOf(row.lesson.date), row.lesson.date,
                   );
               const manual = row.kind === "lesson" && !schedItem;
               const status: LessonStatus =
@@ -313,7 +339,7 @@ export default function ScheduleScreen() {
                   className="relative p-3.5 mb-2 flex items-center gap-3"
                   onClick={
                     row.kind === "plan"
-                      ? startEdit
+                      ? () => { void openPlanRow(row.item); }
                       : () => navigate("/lesson/" + src.id)
                   }
                 >
@@ -335,7 +361,7 @@ export default function ScheduleScreen() {
                     </div>
                   </div>
                   <StatusDot status={status} />
-                  {row.kind === "lesson" && !manual && (
+                  {(row.kind === "plan" || (row.kind === "lesson" && !manual)) && (
                     <IconBtn
                       icon={Pencil}
                       label="Редактировать пару"

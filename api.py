@@ -468,7 +468,8 @@ def add_schedule_entry():
     data = request.json
     eid = get_db().add_schedule_entry(
         data['day_of_week'], data['lesson_number'],
-        data['subject_id'], data.get('week_type', 0))
+        data['subject_id'], data.get('week_type', 0),
+        data.get('valid_from'))
     return jsonify({'id': eid}), 201
 
 

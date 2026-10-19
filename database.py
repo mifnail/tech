@@ -256,7 +256,8 @@ class Database:
                 day_of_week INTEGER NOT NULL,
                 lesson_number INTEGER NOT NULL,
                 subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
-                week_type INTEGER NOT NULL DEFAULT 0
+                week_type INTEGER NOT NULL DEFAULT 0,
+                valid_from TEXT
             );
 
             CREATE TABLE IF NOT EXISTS lessons (
@@ -321,6 +322,13 @@ class Database:
         # Add lesson_number column for duplicate lessons support
         try:
             self.conn.execute("ALTER TABLE lessons ADD COLUMN lesson_number INTEGER")
+            self.conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        # Дата, с которой пара действует. NULL — без ограничения: пары,
+        # заведённые до появления поля, показываем как раньше.
+        try:
+            self.conn.execute("ALTER TABLE schedule ADD COLUMN valid_from TEXT")
             self.conn.commit()
         except sqlite3.OperationalError:
             pass
@@ -663,10 +671,20 @@ class Database:
             WHERE s.id = ?
         """, (subject_id, subject_id, subject_id, subject_id)).fetchone()
 
-    def add_schedule_entry(self, day_of_week: int, lesson_number: int, subject_id: int, week_type: int = 0) -> int:
+    def add_schedule_entry(self, day_of_week: int, lesson_number: int, subject_id: int,
+                           week_type: int = 0, valid_from: Optional[str] = None) -> int:
+        """Добавить пару в шаблон расписания.
+
+        valid_from — дата, с которой пара появляется в сетке. По умолчанию
+        сегодня: новая пара не должна «задним числом» всплывать на прошедших
+        днях, где её никогда не было. NULL у старых записей = без ограничения.
+        """
+        if not valid_from:
+            valid_from = time.strftime('%Y-%m-%d')
         cur = self.conn.execute(
-            "INSERT INTO schedule (day_of_week, lesson_number, subject_id, week_type) VALUES (?, ?, ?, ?)",
-            (day_of_week, lesson_number, subject_id, week_type))
+            "INSERT INTO schedule (day_of_week, lesson_number, subject_id, week_type, valid_from) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (day_of_week, lesson_number, subject_id, week_type, valid_from))
         self.conn.commit()
         return cur.lastrowid
 

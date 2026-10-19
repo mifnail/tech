@@ -87,9 +87,13 @@ export function NewLessonSheet({
       toast("Нельзя создать занятие в будущем");
       return;
     }
-    const lesson = await store.createLesson(pair.groupId, pair.subjectId, selDate, effNum);
-    close();
-    onCreated(lesson);
+    try {
+      const lesson = await store.createLesson(pair.groupId, pair.subjectId, selDate, effNum);
+      close();
+      onCreated(lesson);
+    } catch {
+      toast("Не удалось создать занятие");
+    }
   };
 
   return (
