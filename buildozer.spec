@@ -9,6 +9,11 @@ package.domain = com.teachhelper4
 
 source.dir = .
 source.include_exts = py,png,jpg,html,css,js,txt
+# Что не тащить в APK. Без этого внутрь уезжали чужие дизайн-итерации,
+# отчёты автотестов и питоновские тесты: ~4,5 МБ мусора из 6,3 МБ полезной
+# части (проверено вскрытием assets/private.tar у v0.285).
+# static/ и templates/ НЕ исключаем — их отдаёт Flask.
+source.exclude_dirs = .git, .buildozer, bin, __pycache__, .pytest_cache, node_modules, tests, playwright-report, test-results, .recovery, refactor-and-lightweight-redesign, refactor-and-redesign-mobile-app, website-redesign-figma-files, visual-redesign-of-tech-project, code-and-design-review, refactoring-and-redesign-prompt
 version = 0.1
 
 # webview bootstrap — встроенный Android WebView, Kivy не нужен
