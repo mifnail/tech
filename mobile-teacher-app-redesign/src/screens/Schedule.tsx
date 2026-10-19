@@ -77,6 +77,16 @@ export default function ScheduleScreen() {
     setSelectedISO(today);
   };
 
+  /** Листание недель: выбранный день недели сохраняется.
+      Без этого лента уезжает, а панель дня остаётся на старой дате —
+      выглядит так, будто добавленная пара «не отображается». */
+  const shiftWeek = (delta: number) => {
+    const nextOffset = weekOffset + delta;
+    setWeekOffset(nextOffset);
+    const sameWeekday = weekdayOf(selectedISO); // 1 = понедельник
+    setSelectedISO(addDaysISO(addDaysISO(mondayOfWeek(today), nextOffset * 7), sameWeekday - 1));
+  };
+
   const openAdd = () => {
     setFGroup(db.groups[0] ? String(db.groups[0].id) : "");
     setFSubject("");
@@ -120,11 +130,17 @@ export default function ScheduleScreen() {
     }
 
     // Мягкая проверка дубля — только внутри своей группы (в одно время у
-    // разных групп бывают пары с одинаковым номером).
-    const dup = db.schedule.some(
+    // разных групп бывают пары с одинаковым номером). Сообщаем, какой
+    // предмет уже занимает слот: иначе «уже есть» выглядит как ошибка,
+    // если строку не видно из-за фильтра по чётности.
+    const dup = db.schedule.find(
       (it) => it.groupId === gid && it.weekday === wd && it.lessonNumber === num,
     );
-    if (dup) { toast("У группы уже есть пара с этим номером в этот день"); return; }
+    if (dup) {
+      const dupName = store.subject(dup.subjectId)?.name ?? "другой предмет";
+      toast(`В ${num}-й паре у группы уже стоит «${dupName}»`, 3200);
+      return;
+    }
 
     try {
       await store.addScheduleItem({
@@ -190,7 +206,7 @@ export default function ScheduleScreen() {
         <IconBtn
           icon={ChevronLeft}
           label="Предыдущая неделя"
-          onClick={() => setWeekOffset((w) => w - 1)}
+          onClick={() => shiftWeek(-1)}
           className="shrink-0 bg-surface border border-line"
         />
         <div className="flex flex-1 gap-1">
@@ -231,7 +247,7 @@ export default function ScheduleScreen() {
         <IconBtn
           icon={ChevronRight}
           label="Следующая неделя"
-          onClick={() => setWeekOffset((w) => w + 1)}
+          onClick={() => shiftWeek(1)}
           className="shrink-0 bg-surface border border-line"
         />
       </div>

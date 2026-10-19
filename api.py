@@ -667,6 +667,17 @@ def mark_attendance(lesson_id: int):
     except (ValueError, TypeError) as exc:
         return jsonify({'error': str(exc)}), 400
 
+    # Ввод оценок = пара проведена. Раньше статус поднимал только явный
+    # «Провести» (/conduct), поэтому занятия, заполненные через ведомость,
+    # оставались 'scheduled' и висели в журнале как запланированные.
+    # Будущие даты не трогаем: там оценок быть не может.
+    try:
+        lesson_row = db.get_lesson(lesson_id)
+        if lesson_row and row_get(lesson_row, 'date', '') <= date.today().isoformat():
+            _mark_lesson_held(db, lesson_id)
+    except Exception:
+        pass
+
     # ---- Schedule debounced grade push via MAX bot ----
     try:
         pairs = []

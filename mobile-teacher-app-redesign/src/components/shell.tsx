@@ -177,9 +177,16 @@ export type DayRow =
 
 /**
  * Занятия даты + слоты шаблона расписания (day_of_week + чёт/нечёт).
- * Реальный lesson приоритетнее шаблона: слот не показывается, если на эту дату
- * уже есть занятие той же группы+предмета или того же номера пары — дублей не
- * бывает. Данные — только локальные db.schedule / db.lessons.
+ * Реальный lesson приоритетнее шаблона: слот не показывается, если на эту
+ * дату уже занят тот же номер пары у той же группы — дублей не бывает.
+ *
+ * Дедуп идёт по слоту «группа#номер пары», а НЕ по паре «группа+предмет»:
+ * один предмет законно стоит дважды в день (1-я и 2-я пара). Дедуп по
+ * группе+предмету прятал вторую пару — в журнале её не было, хотя в шаблоне
+ * она есть и проверка дублей на добавление её видела.
+ *
+ * Занятия без номера пары (старые записи) сравниваем по группе+предмету.
+ * Данные — только локальные db.schedule / db.lessons.
  * Паритет берём в шкале БД через date.ts#weekTypeOf — одна точка перевода.
  */
 export function dayRows(db: DB, date: string): DayRow[] {
@@ -190,22 +197,25 @@ export function dayRows(db: DB, date: string): DayRow[] {
     kind: "lesson", key: "l" + l.id, lesson: l,
   }));
 
-  const usedPairs = new Set<string>();
-  const usedSlots = new Set<string>();
+  const usedSlots = new Set<string>();      // группа#номер пары
+  const usedUnnumbered = new Set<string>(); // группа/предмет — только для пар без номера
   for (const l of lessons) {
-    usedPairs.add(l.groupId + "/" + l.subjectId);
     if (l.lessonNumber > 0) usedSlots.add(l.groupId + "#" + l.lessonNumber);
+    else usedUnnumbered.add(l.groupId + "/" + l.subjectId);
   }
 
-  const plannedPairs = new Set<string>();
+  const plannedSlots = new Set<string>(); // чтобы шаблон не дал два ряда на один слот
   for (const it of db.schedule) {
     if (it.weekday !== weekday) continue;
     if (it.parity !== 0 && it.parity !== weekType) continue;
-    const pair = it.groupId + "/" + it.subjectId;
-    if (usedPairs.has(pair)) continue;
-    if (it.lessonNumber > 0 && usedSlots.has(it.groupId + "#" + it.lessonNumber)) continue;
-    if (plannedPairs.has(pair)) continue; // двойной шаблон одной пары — не дублируем
-    plannedPairs.add(pair);
+    // Занятие без номера пары (старая запись) закрывает шаблон этой
+    // группы+предмета целиком — номер слота сравнить не с чем.
+    if (usedUnnumbered.has(it.groupId + "/" + it.subjectId)) continue;
+    if (it.lessonNumber > 0) {
+      const slot = it.groupId + "#" + it.lessonNumber;
+      if (usedSlots.has(slot) || plannedSlots.has(slot)) continue;
+      plannedSlots.add(slot);
+    }
     rows.push({ kind: "plan", key: "p" + it.id, item: it });
   }
 

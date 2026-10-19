@@ -324,6 +324,43 @@ class Database:
             self.conn.commit()
         except sqlite3.OperationalError:
             pass
+        self._close_past_lessons()
+
+    def _close_past_lessons(self) -> None:
+        """Прошедшие занятия считаются проведёнными.
+
+        Фронт создаёт пару как 'scheduled' (её ещё можно отменить), но если
+        дата прошла и пару не отменили — она состоялась. Без этой нормализации
+        журнал показывает «запланировано» у занятий, по которым уже выставлены
+        оценки: статус менял только явный «Провести», а ввод оценок — нет.
+
+        Сегодняшнюю пару закрываем только при наличии ведомости: grade в
+        grades NOT NULL, поэтому любая строка = посещаемость уже отмечали.
+        Так пара, заполненная утром, не висит «запланированной» до ночи,
+        а ещё не проведённая — остаётся планом.
+
+        Отменённые не трогаем. Вызывается при каждом открытии базы, поэтому
+        нормализация самовосстанавливающаяся: вчерашняя пара закрывается сама.
+        """
+        try:
+            today = time.strftime('%Y-%m-%d')
+            self.conn.execute(
+                "UPDATE lessons SET status = 'held' "
+                "WHERE status = 'scheduled' AND ("
+                "  date < ? OR ("
+                "    date = ? AND EXISTS ("
+                "      SELECT 1 FROM grades g WHERE g.lesson_id = lessons.id"
+                "    )"
+                "  )"
+                ")",
+                (today, today))
+            self.conn.commit()
+        except sqlite3.Error:
+            # Нормализация не должна мешать открытию журнала.
+            try:
+                self.conn.rollback()
+            except sqlite3.Error:
+                pass
 
     def get_setting(self, key: str) -> Optional[str]:
         """Прочитать настройку (токен Яндекса, ссылки публикаций). Нет — None."""
