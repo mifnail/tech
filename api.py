@@ -913,16 +913,38 @@ def conduct_lesson(lesson_id: int):
                     _maxbot.notify_grade(token, sid, grade, date_str, subject)
                 except Exception:
                     pass
-                # Куратору — тот же текст что в _fire_curator_push
-                try:
-                    if cur_chat is not None:
+            # Куратору — одно сообщение после нажатия "Провести"
+            try:
+                if cur_chat is not None and changed:
+                    # Формируем текст по требованию:
+                    # Дата:
+                    # Название предмета:
+                    # Номер пары:
+                    # Список студентов и через дефис оценка 
+                    # Ниже список отсутствующих:
+                    lesson_number_str = ''
+                    try:
+                        if lesson is not None and 'lesson_number' in lesson.keys():
+                            ln = lesson['lesson_number']
+                            if ln is not None:
+                                lesson_number_str = str(ln)
+                    except Exception:
+                        pass
+                    lines = []
+                    lines.append(f"Дата: {date_str}")
+                    lines.append(f"Название предмета: {subject}")
+                    lines.append(f"Номер пары: {lesson_number_str}")
+                    # Список студентов и через дефис оценка
+                    lines.append("Список студентов и через дефис оценка")
+                    for sid, grade in changed:
                         fio = fio_map.get(sid, str(sid))
-                        text = f"{fio}: {subject} — {grade} ({date_str})"
-                        _maxbot.send_message(token, int(cur_chat), text)
-                except Exception:
-                    pass
-                import time as _time
-                _time.sleep(0.6)
+                        lines.append(f"{fio} - {grade}")
+                    lines.append("Ниже список отсутствующих:")
+                    # По текущему запросу отсутствующие не указаны — оставляем пустым списком
+                    text_cur = '\n'.join(lines)
+                    _maxbot.send_message(token, int(cur_chat), text_cur)
+            except Exception:
+                pass
         except Exception:
             pass
 
