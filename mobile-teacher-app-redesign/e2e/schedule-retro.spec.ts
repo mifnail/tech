@@ -38,8 +38,8 @@ test("дата с проведённым занятием: «Начать зан
   await openSchedule(page);
 
   const busy = await findDay(page, hasHeldChip);
-  expect(busy, "за 6 недель назад не нашлась дата с чипом «Проведено»").not.toBeNull();
-  await expect(page.getByText("Проведено", { exact: true }).first()).toBeVisible();
+  expect(busy, "за 6 недель назад не нашлась дата с индикатором «Проведено»").not.toBeNull();
+  await expect(page.getByLabel("Проведено", { exact: true }).first()).toBeVisible();
 
   // На непустой дате кнопка ровно одна (muted, под списком занятий)
   const start = page.getByRole("button", { name: "Начать занятие" });

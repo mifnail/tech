@@ -111,14 +111,15 @@ export async function findDay(
 export const hasEmptyDay = async (page: Page): Promise<boolean> =>
   (await page.getByText("В этот день занятий нет", { exact: true }).count()) > 0;
 
-/** Дата с карточками: чип «Проведено» в списке занятий. */
+/** Дата с карточками: индикатор «Проведено» в списке занятий.
+    Статус компактный (кружок с галочкой), текст живёт в aria-label. */
 export const hasHeldChip = async (page: Page): Promise<boolean> =>
-  (await page.getByText("Проведено", { exact: true }).count()) > 0;
+  (await page.getByLabel("Проведено", { exact: true }).count()) > 0;
 
-/** Открыть прошедшее занятие (клик по чипу внутри карточки) и дождаться ведомости. */
+/** Открыть прошедшее занятие (клик по индикатору внутри карточки) и дождаться ведомости. */
 export async function openHeldLesson(page: Page): Promise<Date> {
   const day = await findDay(page, hasHeldChip);
-  expect(day, "за 6 недель назад не нашлась прошедшая дата с чипом «Проведено»").not.toBeNull();
+  expect(day, "за 6 недель назад не нашлась прошедшая дата с индикатором «Проведено»").not.toBeNull();
 
   const attendance = page.waitForResponse(
     (r) =>
@@ -126,7 +127,7 @@ export async function openHeldLesson(page: Page): Promise<Date> {
       /\/api\/lessons\/\d+\/attendance$/.test(r.url()) &&
       r.status() === 200,
   );
-  await page.getByText("Проведено", { exact: true }).first().click();
+  await page.getByLabel("Проведено", { exact: true }).first().click();
   await page.waitForURL(/#\/lesson\/\d+/);
   await attendance;
   return day as Date;

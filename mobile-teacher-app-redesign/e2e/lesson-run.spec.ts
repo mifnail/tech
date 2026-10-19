@@ -3,7 +3,7 @@ import { gotoApp, openHeldLesson, openSchedule, setGrade } from "./helpers";
 
 /** Занятие: оценка тапом → «Провести», и защита от ухода с грязью. */
 
-test("провести занятие: тап-оценка → «Провести» → тост «Проведено, отправлено N»", async ({
+test("провести занятие: тап-оценка → «Провести» → тост «Проведено · уведомлений: N»", async ({
   page,
 }) => {
   await gotoApp(page);
@@ -22,7 +22,7 @@ test("провести занятие: тап-оценка → «Провест�
 
   await conduct.click();
 
-  await expect(page.getByText(/^Проведено, отправлено \d+$/)).toBeVisible();
+  await expect(page.getByText(/^Проведено · уведомлений: \d+$/)).toBeVisible();
   await expect(page.getByText("не проведено", { exact: true })).toHaveCount(0);
   await expect(conduct).toBeDisabled(); // грязь снята
 });
