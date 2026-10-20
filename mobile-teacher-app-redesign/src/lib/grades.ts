@@ -23,8 +23,13 @@ export function avgOf(values: GradeValue[]): number | null {
   return nums.reduce((a, b) => a + b, 0) / nums.length;
 }
 
+/** Средний балл для показа: запятая как десятичный разделитель.
+    На одном экране соседствуют «4,2» на оси графика и «4.69» в шапке —
+    поэтому формат держим в одном месте. */
 export function formatAvg(v: number | null): string {
-  return v === null ? "—" : v.toFixed(2).replace(/0$/, "").replace(/\.$/, ".0");
+  return v === null
+    ? "—"
+    : v.toFixed(2).replace(/0$/, "").replace(/\.$/, ".0").replace(".", ",");
 }
 
 export type GradeTone = "g5" | "g4" | "g3" | "g2" | "na" | "none";

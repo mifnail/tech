@@ -313,8 +313,8 @@ export default function LessonRunScreen({ id }: { id: number }) {
           </Chip>
           <IconBtn icon={MoreVertical} label="Действия" onClick={() => setMenuOpen(true)} />
         </div>
-        <div className="px-4 pb-1.5 text-[10.5px] text-faint leading-tight">
-          Тап по правой половине — оценка вперёд, по левой — назад. Точка — отсутствие.
+        <div className="px-4 pb-1.5 text-[11.5px] text-muted leading-tight">
+          Правая половина — оценка вперёд, левая — назад. Точка — отсутствие.
         </div>
       </header>
 

@@ -276,7 +276,7 @@ export default function AnalyticsScreen() {
                   className="flex-1 h-8 rounded-md"
                   style={{
                     background: d.v > 0
-                      ? `linear-gradient(180deg, color-mix(in srgb, var(--g3) ${Math.round(25 + d.v * 65)}%, transparent), color-mix(in srgb, var(--g3) ${Math.round(10 + d.v * 25)}%, transparent))`
+                      ? `linear-gradient(180deg, color-mix(in srgb, var(--accent) ${Math.round(25 + d.v * 65)}%, transparent), color-mix(in srgb, var(--accent) ${Math.round(10 + d.v * 25)}%, transparent))`
                       : "var(--surface2)",
                   }}
                 />
