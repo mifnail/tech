@@ -120,7 +120,7 @@ export function PairNumber({
         {n > 0 ? n : "—"}
       </div>
       <div
-        className="mt-1 text-[9.5px] font-bold uppercase tracking-[0.02em] text-faint truncate"
+        className="mt-0.5 text-[10.5px] font-bold uppercase tracking-[0.01em] text-faint truncate"
         style={codeColor ? { color: codeColor } : undefined}
         title={code}
       >
