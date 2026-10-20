@@ -112,8 +112,13 @@ export default function AnalyticsScreen() {
   };
 
   const model = useMemo(() => {
-    // Все проведённые занятия + их оценки
-    const heldLessons = db.lessons.filter((l) => l.status === "held");
+    // Все проведённые занятия + их оценки.
+    // Порядок важен: db.lessons приходит сгруппированным по предметам, поэтому
+    // без сортировки ось X шла вразнобой (30.09 → 26.09 → 15.10). Даты —
+    // ISO-строки, сравниваются лексикографически; id — тай-брейк для одного дня.
+    const heldLessons = db.lessons
+      .filter((l) => l.status === "held")
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id - b.id));
     const heldIds = new Set(heldLessons.map((l) => l.id));
     const allGrades = db.grades.filter((g) => heldIds.has(g.lessonId));
 
