@@ -6,7 +6,7 @@ import { useDB, useVersion, store, lessonAvg } from "../lib/store";
 import { formatLong, todayISO, weekParity, addDaysISO } from "../lib/date";
 import { isDebtor, avgOf, formatAvg } from "../lib/grades";
 import { navigate } from "../lib/router";
-import { BigHeader, PairNumber, Screen, StatusDot, colorForGroup, dayRows } from "../components/shell";
+import { BigHeader, PairNumber, Screen, StatusDot, groupInk, dayRows } from "../components/shell";
 import type { DayRow } from "../components/shell";
 import { Btn, Card, Chip, EmptyState, SectionTitle, Sheet } from "../components/ui";
 import { NewLessonSheet } from "../components/NewLessonSheet";
@@ -56,18 +56,21 @@ function LessonCard({
       <PairNumber
         n={src.lessonNumber}
         code={group ? group.name : "—"}
-        codeColor={group ? colorForGroup(group.name).fg : undefined}
+        codeColor={group ? groupInk(group.name) : undefined}
         className="w-[48px]"
       />
       <div className="w-px self-stretch bg-line" />
       <div className="min-w-0 flex-1">
         <div className="text-[14.5px] font-bold leading-snug line-clamp-2 min-h-[2.6em]">{subject?.name}</div>
         <div className="mt-1 flex items-center gap-1.5 min-w-0">
+          {/* Группа — под номером пары; здесь только время и средний балл. */}
           <span className="min-w-0 truncate text-[12px] text-muted">
-            {plan && src.time ? `${src.time}${src.room ? " · " + src.room : ""}` : group?.name}
-            {lesson && lesson.status === "held" && graded > 0 && (
-              <> · ср. {formatAvg(avg)} из {graded}</>
-            )}
+            {[
+              plan && src.time ? `${src.time}${src.room ? " · " + src.room : ""}` : "",
+              lesson && lesson.status === "held" && graded > 0
+                ? `ср. ${formatAvg(avg)} из ${graded}`
+                : "",
+            ].filter(Boolean).join(" · ")}
           </span>
           {plan && <Chip tone="neutral">по расписанию</Chip>}
         </div>

@@ -114,20 +114,22 @@ function textOn(rgb: [number, number, number]): string {
   return dark >= light ? "rgb(17,23,32)" : "rgb(255,255,255)";
 }
 
+/** Hue специальности: равномерно по кругу, иначе — по хешу названия. */
+function hueFor(name: string): number {
+  const prefix = specialtyOf(name);
+  const n = registry.length;
+  const idx = registry.indexOf(prefix);
+  return n > 0 && idx >= 0
+    ? (HUE_START + Math.round((idx * 360) / n)) % 360
+    : hashHue(prefix);
+}
+
 /**
  * Цвет группы: { bg, fg } как CSS-строки.
  * Одна специальность — одно семейство hue, курс — контрастный тон внутри.
  */
 export function colorForGroup(name: string): { bg: string; fg: string } {
-  const prefix = specialtyOf(name);
-  const n = registry.length;
-  const idx = registry.indexOf(prefix);
-  // Разные специальности — равномерно по кругу (сильно различаются).
-  // Если реестр ещё пуст — детерминированный хеш (стабильный одиночный цвет).
-  const hue = n > 0 && idx >= 0
-    ? (HUE_START + Math.round((idx * 360) / n)) % 360
-    : hashHue(prefix);
-
+  const hue = hueFor(name);
   const tones = isDarkTheme() ? TONES_DARK : TONES_LIGHT;
   const v = (courseOf(name) - 1) % tones.length;
   const { s, l } = tones[v];
@@ -136,4 +138,22 @@ export function colorForGroup(name: string): { bg: string; fg: string } {
     bg: `hsl(${hue}, ${s}%, ${l}%)`,
     fg: textOn(rgb),
   };
+}
+
+/**
+ * Цвет группы для текста на НЕЙТРАЛЬНОМ фоне (белая карточка, светлая тема).
+ *
+ * colorForGroup().fg подобран под текст ПОВЕРХ цветной плитки: у тёмных
+ * тонов (4 курс) он белый, и на белой карточке подпись группы исчезает.
+ * Здесь тот же hue, но фиксированный тон с контрастом на нейтральном фоне.
+ */
+export function groupInk(name: string): string {
+  const hue = hueFor(name);
+  if (isDarkTheme()) {
+    const l = Math.min(56 + (courseOf(name) - 1) * 6, 80);
+    return `hsl(${hue}, 55%, ${l}%)`;
+  }
+  // Курс различаем тоном, но не светлее 40% — иначе на белом не читается.
+  const l = Math.max(40 - (courseOf(name) - 1) * 5, 24);
+  return `hsl(${hue}, 62%, ${l}%)`;
 }

@@ -12,7 +12,7 @@ import { colorForGroup } from "../lib/groupColors";
 import { IconBtn } from "./ui";
 
 // Цвет группы живёт в lib/groupColors (реестр специальностей обновляет App).
-export { colorForGroup } from "../lib/groupColors";
+export { colorForGroup, groupInk } from "../lib/groupColors";
 
 /* ── Контейнер экрана ─────────────────────────────────────── */
 export function Screen({ children, className }: { children: ReactNode; className?: string }) {

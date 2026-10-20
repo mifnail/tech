@@ -12,7 +12,7 @@ import {
   addDaysISO, formatDotShort, formatLong, mondayOfWeek, todayISO, weekTypeOf, weekdayOf, weekdayShort,
 } from "../lib/date";
 import { navigate } from "../lib/router";
-import { BigHeader, Screen, PairNumber, StatusDot, colorForGroup, dayRows } from "../components/shell";
+import { BigHeader, Screen, PairNumber, StatusDot, groupInk, dayRows } from "../components/shell";
 import type { DayRow } from "../components/shell";
 import {
   Btn, Card, Chip, EmptyState, Field, IconBtn,
@@ -320,10 +320,11 @@ export default function ScheduleScreen() {
                 setFWeekday(String(schedItem.weekday));
                 setAddOpen(true);
               };
+              // Группа подписана под номером пары — строкой ниже не дублируем.
               const meta = src.time
                 ? `${src.time}${src.room ? " · " + src.room : ""}`
-                : groupName;
-              const groupColor = group ? colorForGroup(group.name).fg : undefined;
+                : "";
+              const groupColor = group ? groupInk(group.name) : undefined;
               return (
                 <Card
                   key={row.key}
@@ -346,7 +347,7 @@ export default function ScheduleScreen() {
                       {s.name}
                     </div>
                     <div className="mt-1 flex items-center gap-1.5 min-w-0">
-                      <span className="min-w-0 truncate text-[12px] text-muted">{meta}</span>
+                      {meta && <span className="min-w-0 truncate text-[12px] text-muted">{meta}</span>}
                       {row.kind === "plan" && <Chip tone="neutral">по расписанию</Chip>}
                       {manual && <Chip tone="accent">вручную</Chip>}
                     </div>
