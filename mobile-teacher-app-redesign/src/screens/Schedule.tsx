@@ -20,7 +20,7 @@ import {
 } from "../components/ui";
 import { NewLessonSheet } from "../components/NewLessonSheet";
 import { cn } from "../utils/cn";
-import type { Group, LessonStatus, ScheduleItem } from "../lib/types";
+import type { LessonStatus, ScheduleItem } from "../lib/types";
 
 const WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const DAY_FULL = ["", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
@@ -200,21 +200,14 @@ export default function ScheduleScreen() {
 
   /** Занятия выбранного дня + незакрытые слоты шаблона расписания (по дню недели),
       сгруппированные по группам. Реальные занятия приоритетнее шаблона. */
-  const dayGroups = useMemo(() => {
-    const byGroup = new Map<number, DayRow[]>();
-    for (const row of dayRows(db, selectedISO)) {
-      const gid = row.kind === "lesson" ? row.lesson.groupId : row.item.groupId;
-      const arr = byGroup.get(gid);
-      if (arr) arr.push(row);
-      else byGroup.set(gid, [row]);
-    }
-    return [...byGroup.entries()]
-      .map(([groupId, rows]) => ({
-        group: store.group(groupId),
-        rows,
-      }))
-      .filter((x): x is { group: Group; rows: DayRow[] } => x.group !== undefined)
-      .sort((a, b) => a.group.name.localeCompare(b.group.name));
+  /** Плоский список дня: без группировки по группам, только по номеру пары.
+      Пары без номера (старые записи) уезжают в конец, чтобы не сбивать порядок. */
+  const dayRowsList = useMemo(() => {
+    const num = (row: DayRow) => {
+      const n = row.kind === "lesson" ? row.lesson.lessonNumber : row.item.lessonNumber;
+      return n > 0 ? n : 999;
+    };
+    return dayRows(db, selectedISO).slice().sort((a, b) => num(a) - num(b));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, ver, selectedISO]);
 
@@ -287,7 +280,7 @@ export default function ScheduleScreen() {
         {formatLong(selectedISO)}
       </SectionTitle>
 
-      {dayGroups.length === 0 ? (
+      {dayRowsList.length === 0 ? (
         <EmptyState
           icon={CalendarOff}
           title="В этот день занятий нет"
@@ -299,16 +292,14 @@ export default function ScheduleScreen() {
         </EmptyState>
       ) : (
         <>
-          {dayGroups.map(({ group, rows }) => (
-          <div key={group.id}>
-            <SectionTitle>
-              {/* Цвет заголовка = цвет семьи специальности: день читается по группам. */}
-              <span style={{ color: colorForGroup(group.name).fg }}>{group.name}</span>
-            </SectionTitle>
-            {rows.map((row) => {
+          {dayRowsList.map((row) => {
               const src = row.kind === "lesson" ? row.lesson : row.item;
               const s = store.subject(src.subjectId);
               if (!s) return null;
+              const group = store.group(
+                row.kind === "lesson" ? row.lesson.groupId : row.item.groupId,
+              );
+              const groupName = group?.name ?? "";
               const schedItem = row.kind === "plan"
                 ? row.item
                 : store.scheduleItemForDay(
@@ -331,8 +322,8 @@ export default function ScheduleScreen() {
               };
               const meta = src.time
                 ? `${src.time}${src.room ? " · " + src.room : ""}`
-                : group.name;
-              const groupColor = colorForGroup(group.name).fg;
+                : groupName;
+              const groupColor = group ? colorForGroup(group.name).fg : undefined;
               return (
                 <Card
                   key={row.key}
@@ -345,7 +336,7 @@ export default function ScheduleScreen() {
                 >
                   <PairNumber
                     n={src.lessonNumber}
-                    code={group.name}
+                    code={groupName}
                     codeColor={groupColor}
                     className="w-[48px]"
                   />
@@ -376,8 +367,6 @@ export default function ScheduleScreen() {
                 </Card>
               );
             })}
-          </div>
-          ))}
           <Btn variant="muted" icon={Play} onClick={() => setNewLessonOpen(true)} className="w-full mt-2">
             Начать занятие
           </Btn>
