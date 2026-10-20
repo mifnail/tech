@@ -54,6 +54,10 @@ jobs:
 
       - name: Run stand
         run: python stand.py --phase all
+        env:
+          # Консоль Windows-раннера по умолчанию cp1252 — русский текст в логах
+          # падал с UnicodeEncodeError (stand_seed / e2e_server).
+          PYTHONIOENCODING: utf-8
 
       - name: Playwright report
         if: failure()

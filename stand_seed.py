@@ -29,6 +29,14 @@ if BASE not in sys.path:
 
 from database import Database  # noqa: E402  (проектный класс, свой путь уже добавлен)
 
+# Консоль Windows-раннера по умолчанию cp1252: русский текст в print падает
+# с UnicodeEncodeError ещё до вывода результата, и сид «ломается» без причины.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:  # noqa: BLE001 — поток может быть заморожен/заменён
+        pass
+
 # --- детерминизм -----------------------------------------------------------
 SEED = 20261013
 PROTECTED_DB = os.path.normcase(os.path.realpath(os.path.join(BASE, 'lessons.db')))

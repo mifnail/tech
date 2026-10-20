@@ -31,8 +31,23 @@ PORT = 5111
 FIXTURE_OFFSET_DAYS = 14  # фикстура: ровно 14 дней назад («неделя −2», прошлое)
 
 
+# Консоль Windows-раннера по умолчанию cp1252: кириллица в логе роняет сервер
+# с UnicodeEncodeError ещё до старта, и Playwright падает с «webServer was not
+# able to start». Переводим потоки в UTF-8 и не даём логу уронить процесс.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:  # noqa: BLE001 — поток может быть заморожен/заменён
+        pass
+
+
 def log(msg: str) -> None:
-    print(f"[e2e_server] {msg}", flush=True)
+    try:
+        print(f"[e2e_server] {msg}", flush=True)
+    except UnicodeEncodeError:
+        # Последняя линия обороны: печатаем в текущей кодировке с заменами.
+        enc = sys.stdout.encoding or 'ascii'
+        print(f"[e2e_server] {msg}".encode(enc, 'replace').decode(enc, 'replace'), flush=True)
 
 
 def _db_fingerprint(path: str):
