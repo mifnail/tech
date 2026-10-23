@@ -1011,6 +1011,10 @@ def conduct_lesson(lesson_id: int):
             continue
         if not new_grade:
             continue
+        # '0' — присутствовал без оценки. Студенту про такое писать нечего:
+        # «Новая оценка: … — 0» читается как ноль баллов.
+        if new_grade == '0':
+            continue
         try:
             sid_int = int(sid)
         except Exception:
@@ -1232,6 +1236,17 @@ def _fire_curator_push(token: str, lesson_id: int, student_id: int, group_id: in
                 pass
     except Exception as exc:
         print(f"[curator-push] outer error: {exc}", flush=True)
+
+
+@lessons_bp.route('/pending', methods=['GET'])
+def pending_lessons():
+    """Прошедшие занятия без статуса «проведено»/«отменено».
+
+    Приложение показывает их при запуске: у прошедшей пары не может быть
+    «запланировано» — её надо либо заполнить, либо отменить.
+    """
+    today = date.today().isoformat()
+    return jsonify([dict(r) for r in get_db().list_pending_lessons(today)])
 
 
 @lessons_bp.route('/date/<date_str>', methods=['GET'])

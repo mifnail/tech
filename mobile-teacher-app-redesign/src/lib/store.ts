@@ -402,38 +402,13 @@ class Store {
     }
   }
 
-  /** Best-effort тихая запись при уходе со страницы (без notify-тоста).
+  /** Best-effort тихая запись при уходе со страницы — УДАЛЕНА.
 
-      Данные терять нельзя: прямой bulk POST с keepalive, без флага conduct.
-      Грязь снимаем сразу: данные ушли best-effort, а висячий dirty-флаг
-      молча блокировал бы навигацию (router больше не сторожит). */
-  private bindLifecycleFlush() {
-    if (import.meta.env.DEV) return;
-    const flush = () => {
-      let cleared = false;
-      for (const lessonId of [...this.dirtyLessons]) {
-        const payload = this.db.grades
-          .filter((g) => g.lessonId === lessonId)
-          .map((g) => ({ student_id: g.studentId, grade: gradeToText(g) }));
-        try {
-          fetch(`/api/lessons/${lessonId}/attendance`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-            keepalive: true,
-          }).catch(() => {});
-        } catch {}
-        this.dirtyLessons.delete(lessonId);
-        this.gradeSnapshots.delete(lessonId);
-        cleared = true;
-      }
-      if (cleared) this.touch();
-    };
-    window.addEventListener("pagehide", flush);
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") flush();
-    });
-  }
+      Раньше оценки уходили на сервер при скрытии страницы (pagehide /
+      visibilitychange), из-за чего тап по студенту фактически сохранял
+      ведомость, поднимал статус до «проведено» и рассылал уведомления
+      студенту и куратору. Теперь единственная точка записи — кнопка
+      «Провести» (/conduct); до неё правки живут в памяти. */
 
   constructor() {
     if (import.meta.env.DEV) {
@@ -452,7 +427,10 @@ class Store {
       /* ── PROD: пустая БД + async загрузка с сервера ───── */
       this.db = emptyDB();
       void this.loadFromApi().catch(() => {});
-      this.bindLifecycleFlush();
+      // Фоновой записи оценок больше нет: до нажатия «Провести» оценки живут
+      // только в памяти. Иначе тап по студенту уже писал в базу, поднимал
+      // статус до «проведено» и рассылал уведомления студенту и куратору.
+      // Ушли со страницы без проведения — правки просто отбрасываются.
     }
   }
 

@@ -766,6 +766,28 @@ class Database:
         self.conn.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
         self.conn.commit()
 
+    def list_pending_lessons(self, today: str) -> Sequence[sqlite3.Row]:
+        """Прошедшие занятия, которые не проведены и не отменены.
+
+        Правило журнала: у прошедшей пары может быть только два состояния —
+        проведена или отменена. Всё остальное считается незаполненным, и
+        приложение обязано показать такое занятие преподавателю со ссылкой,
+        чтобы он либо заполнил ведомость, либо отменил пару.
+        """
+        return self.conn.execute("""
+            SELECT l.id, l.date, l.lesson_number, l.status,
+                COALESCE(fs.name, ps.name) AS subject_name,
+                g.name AS group_name,
+                ps.group_id
+            FROM lessons l
+            JOIN subjects ps ON l.subject_id = ps.id
+            LEFT JOIN subjects fs ON l.actual_subject_id = fs.id
+            JOIN groups g ON ps.group_id = g.id
+            WHERE l.date < ?
+              AND l.status NOT IN ('held', 'cancelled', 'replaced')
+            ORDER BY l.date DESC, COALESCE(l.lesson_number, 999), l.id
+        """, (today,)).fetchall()
+
     def list_lessons_by_date(self, date: str) -> Sequence[sqlite3.Row]:
         return self.conn.execute("""
             SELECT l.*, ps.name AS planned_subject,

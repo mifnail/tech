@@ -152,3 +152,19 @@ class TestConductSendsCuratorSummary:
         client.post(f'/api/lessons/{lid}/conduct', json=[
             {'student_id': a, 'grade': '5'}])
         assert _api_module.get_db().get_lesson(lid)['status'] == 'held'
+
+    def test_present_without_grade_is_not_pushed(self, client, sent, monkeypatch):
+        """'0' = был на паре без оценки. «Новая оценка: … — 0» — это шум."""
+        pushed: list[tuple[int, str]] = []
+        monkeypatch.setattr(
+            'maxbot.notify_grade',
+            lambda token, sid, grade, *a, **k: pushed.append((sid, grade)),
+        )
+        _, lid, a, b, c = self._setup(client)
+
+        client.post(f'/api/lessons/{lid}/conduct', json=[
+            {'student_id': a, 'grade': '5'},
+            {'student_id': b, 'grade': '0'},
+        ])
+
+        assert pushed == [(a, '5')]

@@ -10,6 +10,7 @@ import { BigHeader, PairNumber, Screen, StatusDot, groupInk, dayRows } from "../
 import type { DayRow } from "../components/shell";
 import { Btn, Card, Chip, EmptyState, SectionTitle, Sheet } from "../components/ui";
 import { NewLessonSheet } from "../components/NewLessonSheet";
+import { PendingLessonsCard } from "../components/PendingLessonsCard";
 import type { LessonStatus, Student } from "../lib/types";
 
 /** Запись списка должников: студент + его средний балл (2–5). */
@@ -149,6 +150,9 @@ export default function TodayScreen() {
         kicker={`${formatLong(today)} · ${parity === 1 ? "чётная" : "нечётная"} неделя`}
         title="Сегодня"
       />
+
+      {/* Прошедшие пары без «проведено»/«отменено» — напоминание со ссылками. */}
+      <PendingLessonsCard />
 
       <Btn
         size="lg"
