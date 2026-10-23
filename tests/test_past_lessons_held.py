@@ -1,9 +1,14 @@
-"""Прошедшие занятия должны быть проведёнными.
+"""Проведённым занятие делает ведомость, а не прошедшая дата.
 
-Баг: фронт создаёт пару со статусом 'scheduled' («её ещё можно отменить»),
+Баг №1: фронт создаёт пару со статусом 'scheduled' («её ещё можно отменить»),
 а ввод оценок через /attendance статус не поднимал — только явный
 «Провести» (/conduct). В итоге занятия с заполненной ведомостью висели
-в журнале как запланированные, а после обновления «слетали» пачкой.
+в журнале как запланированные.
+
+Баг №2 (обратная сторона): нормализация закрывала ВСЁ прошедшее, включая
+пары без единой отметки. Преподаватель открывал пропущенную пару, ничего
+не заполнял, выходил — и в списке появлялась зелёная галочка «проведено».
+Теперь прошедшая дата сама по себе ничего не значит.
 """
 import time
 
@@ -40,15 +45,31 @@ def client():
 
 
 class TestPastLessonsBecomeHeld:
-    def test_past_scheduled_becomes_held_on_open(self, tmp_path):
+    def test_past_without_attendance_stays_scheduled(self, tmp_path):
+        """Открыл пропущенную пару, ничего не отметил, вышел — не «проведено».
+
+        Раньше здесь срабатывало `date < today` и занятие получало held
+        без единой отметки — в списке появлялась зелёная галочка.
+        """
         path = str(tmp_path / 'journal.db')
         with Database(path) as first:
             gid = first.add_group('АДТ-31')
             sid = first.add_subject('МДК', 30, gid)
             past = first.add_lesson(sid, _shift(-3), status='scheduled')
-            assert first.get_lesson(past)['status'] == 'scheduled'
 
-        # Повторное открытие = старт приложения: нормализация срабатывает.
+        with Database(path) as again:
+            assert again.get_lesson(past)['status'] == 'scheduled'
+
+    def test_past_with_attendance_becomes_held(self, tmp_path):
+        """Ведомость заполнена — пара состоялась, даже без нажатия «Провести»."""
+        path = str(tmp_path / 'journal.db')
+        with Database(path) as first:
+            gid = first.add_group('АДТ-31')
+            sid = first.add_subject('МДК', 30, gid)
+            student = first.add_student(gid, 'Иванов', 'Иван')
+            past = first.add_lesson(sid, _shift(-3), status='scheduled')
+            first.mark_attendance(past, student, '4')
+
         with Database(path) as again:
             assert again.get_lesson(past)['status'] == 'held'
 
@@ -90,18 +111,21 @@ class TestPastLessonsBecomeHeld:
             assert again.get_lesson(held)['status'] == 'held'
 
     def test_idempotent(self, tmp_path):
+        """Повторные открытия не меняют статус ни туда, ни обратно."""
         path = str(tmp_path / 'journal.db')
         with Database(path) as first:
             gid = first.add_group('АДТ-31')
             sid = first.add_subject('МДК', 30, gid)
-            first.add_lesson(sid, _shift(-2), status='scheduled')
+            student = first.add_student(gid, 'Иванов', 'Иван')
+            filled = first.add_lesson(sid, _shift(-2), status='scheduled')
+            first.mark_attendance(filled, student, '5')
+            empty = first.add_lesson(sid, _shift(-1), status='scheduled')
 
         with Database(path):
             pass
         with Database(path) as again:
-            rows = again.conn.execute(
-                "SELECT status, COUNT(*) AS n FROM lessons GROUP BY status").fetchall()
-        assert {r['status']: r['n'] for r in rows} == {'held': 1}
+            assert again.get_lesson(filled)['status'] == 'held'
+            assert again.get_lesson(empty)['status'] == 'scheduled'
 
 
 class TestAttendanceMarksHeld:
