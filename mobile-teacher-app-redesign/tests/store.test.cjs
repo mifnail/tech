@@ -93,17 +93,23 @@ test("all lesson payloads are frozen before a batch awaits network", async () =>
   assert.deepEqual(payloads.map((entry) => entry[1][0].grade), ["5", "5", "4"]);
 });
 
-test("lifecycle flush after a completed pre-restore drain sends no stale attendance", async () => {
-  const { store, fetchWith, listeners, timers } = await fixture();
+test("taps are not persisted before conduct: no lifecycle flush", async () => {
+  const { store, fetchWith, listeners } = await fixture();
   const writes = [];
   fetchWith(async (url) => { writes.push(url); return response({ ok: true }); });
+
   store.cycleGrade(1, 11, 1);
-  await store.flushAttendance();
-  assert.equal(timers.size, 0);
-  listeners.pagehide();
-  listeners.visibilitychange();
   await settle();
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 0, "тап по студенту не должен уходить на сервер");
+  assert.equal(store.isDirty(1), true, "правка висит в памяти как несохранённая");
+
+  // Уход со страницы раньше досылал ведомость через keepalive. Теперь
+  // единственная точка записи — «Провести» (/conduct).
+  listeners.pagehide?.();
+  listeners.visibilitychange?.();
+  await settle();
+  assert.equal(writes.length, 0, "уход со страницы ничего не отправляет");
+  assert.equal(store.isDirty(1), true, "правки остаются до «Провести»");
 });
 
 function apiData(url) {
