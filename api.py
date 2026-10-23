@@ -2798,6 +2798,32 @@ def update_download():
     return jsonify({'path': path, 'uri': uri})
 
 
+def _backup_before_update() -> dict:
+    """Снимок базы перед установкой обновления.
+
+    Обновление APK само по себе данные не стирает (lessons.db лежит в
+    приватном каталоге и переживает переустановку), но новая версия при
+    первом же запросе прогоняет миграции по живой базе. Если миграция
+    окажется с ошибкой, откатиться будет некуда — поэтому копию делаем
+    ДО запуска установщика.
+
+    Возвращает {'path', 'size'} при успехе, {'skipped': ...} если базы ещё
+    нет и {'error': ...} при сбое. Никогда не бросает: проблема с копией
+    не должна запрещать обновление.
+    """
+    try:
+        if not os.path.exists(_DB_PATH):
+            return {'skipped': 'базы ещё нет'}
+        data = snapshot_database(_DB_PATH)
+        stamp = _time.strftime('%Y-%m-%d_%H-%M-%S')
+        filename = f'teachhelper_before_update_{stamp}.db'
+        path, _uri = _save_to_downloads_full(data, filename, 'application/x-sqlite3')
+        return {'path': path, 'size': len(data)}
+    except Exception as e:  # noqa: BLE001 — обновление важнее копии
+        print(f'[update] backup before install failed: {e}', flush=True)
+        return {'error': str(e)}
+
+
 @update_bp.route('/install', methods=['POST'])
 def update_install():
     # Android only
@@ -2834,6 +2860,10 @@ def update_install():
     if not uri_str:
         return jsonify({'error': 'no APK URI found'}), 404
 
+    # Копия базы — до установщика: новая версия при первом запуске прогонит
+    # миграции по живой базе, и откатываться будет некуда.
+    backup = _backup_before_update()
+
     try:
         Uri = autoclass('android.net.Uri')
         Intent = autoclass('android.content.Intent')
@@ -2850,7 +2880,7 @@ def update_install():
     except Exception as e:
         return jsonify({'error': f'install intent failed: {e}'}), 500
 
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'backup': backup})
 
 
 app.register_blueprint(update_bp)
