@@ -862,35 +862,31 @@ _MARK_NOGRADE = '⚪'  # был на паре, но без оценки
 _MARK_ABSENT = '🔴'   # отсутствовал
 
 
-def _curator_conduct_text(db, lesson_id: int) -> str:
-    """Сводка куратору о проведённой паре: кто был и кого не было.
-
-    Строится по ВСЕМУ составу группы, а не по изменённым оценкам: куратору
-    нужны и присутствовавшие без оценок, и отсутствующие. Поэтому сообщение
-    уходит и тогда, когда ни одной оценки не поставили — только отметили
-    посещаемость.
-
-    Присутствие — строка в grades ('0' = был без оценки, '2'–'5' = оценка).
-    Нет строки или 'absent' — студент отсутствовал.
-    Пустая строка — урок/группа не разрешаются.
-    """
+def _lesson_header(db, lesson_id: int):
+    """(дата, предмет, номер пары) для шапки уведомлений. None — урока нет."""
     lesson = db.get_lesson(lesson_id)
     if not lesson:
-        return ''
+        return None
     raw_date = row_get(lesson, 'date', '') or ''
     date_str = f'{raw_date[8:10]}.{raw_date[5:7]}' if len(raw_date) >= 10 else ''
     subject = (row_get(lesson, 'actual_subject_name', '')
                or row_get(lesson, 'planned_subject', '') or '')
     ln = row_get(lesson, 'lesson_number', None)
-    lesson_number_str = '' if ln is None else str(ln)
+    return date_str, subject, ('' if ln is None else str(ln))
 
+
+def _lesson_marks(db, lesson_id: int):
+    """Разбор ведомости: (присутствующие [(строка студента, оценка)], отсутствующие).
+
+    Присутствие — строка в grades ('0' = был без оценки, '2'–'5' = оценка).
+    Нет строки или 'absent' — студент отсутствовал.
+    """
     marks: dict[int, str] = {}
     for r in db.get_attendance(lesson_id):
         try:
             marks[int(r['student_id'])] = str(r['grade'] or '')
         except Exception:
             continue
-
     present: list[tuple[Any, str]] = []
     absent: list[Any] = []
     for st in db.get_group_students(lesson_id):
@@ -899,28 +895,99 @@ def _curator_conduct_text(db, lesson_id: int) -> str:
             absent.append(st)
         else:
             present.append((st, grade))
+    return present, absent
+
+
+def _curator_conduct_text(db, lesson_id: int) -> str:
+    """Сводка куратору о проведённой паре: кто был и кого не было.
+
+    Строится по ВСЕМУ составу группы, а не по изменённым оценкам: куратору
+    нужны и присутствовавшие без оценок, и отсутствующие. Поэтому сообщение
+    уходит и тогда, когда ни одной оценки не поставили — только отметили
+    посещаемость.
+
+    Формат:
+        Дата: 22.10
+        Предмет: МДК_0202_УправлениеПроектами
+        Номер пары: 3
+        Присутствовали:
+        🟢 Гаус Э. — 5
+        ⚪ Черников А.
+        Отсутствовали:
+        🔴 Энгель К.
+
+    Пустая строка — урок/группа не разрешаются.
+    """
+    header = _lesson_header(db, lesson_id)
+    if header is None:
+        return ''
+    date_str, subject, lesson_number_str = header
+    present, absent = _lesson_marks(db, lesson_id)
 
     lines = [
         f'Дата: {date_str}',
-        f'Название предмета: {subject}',
+        f'Предмет: {subject}',
         f'Номер пары: {lesson_number_str}',
-        'Список студентов и через дефис оценка',
+        'Присутствовали:',
     ]
     if present:
         for st, grade in present:
             # '0' — присутствовал без оценки; куратору понятнее прочерк.
             if grade == '0':
-                lines.append(f'{_MARK_NOGRADE} {_student_fio(st)} - —')
+                lines.append(f'{_MARK_NOGRADE} {_student_fio(st)}')
             else:
-                lines.append(f'{_MARK_GRADED} {_student_fio(st)} - {grade}')
+                lines.append(f'{_MARK_GRADED} {_student_fio(st)} — {grade}')
     else:
-        lines.append('—')
-    lines.append('Ниже список отсутствующих:')
+        lines.append('нет')
+    lines.append('Отсутствовали:')
     if absent:
         lines.extend(f'{_MARK_ABSENT} {_student_fio(st)}' for st in absent)
     else:
         lines.append('нет')
     return '\n'.join(lines)
+
+
+def _student_conduct_messages(
+    db, lesson_id: int, header, was_held: bool, changed_ids: set[int],
+) -> list[tuple[int, str]]:
+    """Сообщения студентам о проведённой паре: (chat_id, текст).
+
+    Шапка как у куратора, дальше только собственная строка студента —
+    чужие фамилии и оценки в личку не уходят.
+
+    Однократность: при первом проведении сообщение получает каждый, у кого
+    есть привязка MAX (оценка / без оценки / отсутствие). При повторном —
+    только те, у кого оценка изменилась: иначе «отсутствие» приходило бы
+    второй раз при каждом перепроведении.
+    """
+    date_str, subject, lesson_number_str = header
+    present, absent = _lesson_marks(db, lesson_id)
+    out: list[tuple[int, str]] = []
+
+    def add(st, mark_line: str) -> None:
+        try:
+            chat_id = db.get_max_student_chat(int(st['id']))
+        except Exception:
+            return
+        if chat_id is None:
+            return
+        out.append((int(chat_id), '\n'.join([
+            f'Дата: {date_str}',
+            f'Предмет: {subject}',
+            f'Номер пары: {lesson_number_str}',
+            mark_line,
+        ])))
+
+    for st, grade in present:
+        if grade == '0':
+            if not was_held:
+                add(st, f'{_MARK_NOGRADE} Без оценки')
+        elif not was_held or int(st['id']) in changed_ids:
+            add(st, f'{_MARK_GRADED} Оценка: {grade}')
+    if not was_held:
+        for st in absent:
+            add(st, f'{_MARK_ABSENT} Отсутствие')
+    return out
 
 
 @lessons_bp.route('/<int:lesson_id>/conduct', methods=['POST'])
@@ -989,6 +1056,11 @@ def conduct_lesson(lesson_id: int):
     except (ValueError, TypeError) as exc:
         return jsonify({'error': str(exc)}), 400
 
+    # Первое это проведение или повторное? От этого зависит, кому уходят
+    # уведомления: при первом — всему составу, при повторном — только тем,
+    # у кого оценка изменилась.
+    was_held = row_get(db.get_lesson(lesson_id), 'status', '') == 'held'
+
     # Оценки записаны → урок проведён (status='held' на сервере).
     _mark_lesson_held(db, lesson_id)
     notice = _hours_exhausted_notice(db, lesson_id)
@@ -1021,7 +1093,18 @@ def conduct_lesson(lesson_id: int):
             continue
         changed.append((sid_int, new_grade))
 
-    notified = len(changed)
+    # Кому и что отправить студентам — считаем здесь, в контексте запроса:
+    # шапка одна (дата/предмет/пара), дальше личная строка студента.
+    student_msgs: list[tuple[int, str]] = []
+    header = _lesson_header(db, lesson_id)
+    if header is not None:
+        try:
+            student_msgs = _student_conduct_messages(
+                db, lesson_id, header, was_held, {sid for sid, _ in changed})
+        except Exception as exc:  # noqa: BLE001 — рассылка не должна ронять проведение
+            print(f'[conduct] student messages build error: {exc}', flush=True)
+
+    notified = len(student_msgs)
 
     # Проверить активность бота — если не активен, не считаем уведомления.
     # Раньше здесь был ранний выход при notified == 0, из-за него куратор
@@ -1035,14 +1118,11 @@ def conduct_lesson(lesson_id: int):
     except Exception:
         return jsonify({'ok': True, 'notified': 0, **notice})
 
-    # Контекст для пушей
+    # Контекст для пушей: нужен только чат куратора группы.
     try:
         lesson = db.get_lesson(lesson_id)
         if not lesson:
             return jsonify({'ok': True, 'notified': notified, **notice})
-        raw_date = lesson['date'] or ''
-        date_str = f'{raw_date[8:10]}.{raw_date[5:7]}' if len(raw_date) >= 10 else ''
-        subject = row_get(lesson, 'actual_subject_name', '') or row_get(lesson, 'planned_subject', '') or ''
         group_id = None
         try:
             if 'group_id' in lesson.keys():
@@ -1081,9 +1161,9 @@ def conduct_lesson(lesson_id: int):
     def _run_conduct():
         try:
             import maxbot as _maxbot
-            for sid, grade in changed:
+            for chat_id, text in student_msgs:
                 try:
-                    _maxbot.notify_grade(token, sid, grade, date_str, subject)
+                    _maxbot.send_message(token, chat_id, text)
                 except Exception:
                     pass
             # Куратору — одна сводка после нажатия «Провести»: кто был и кого

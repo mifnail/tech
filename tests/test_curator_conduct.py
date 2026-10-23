@@ -1,10 +1,7 @@
-"""Сводка куратору о проведённой паре: присутствующие и отсутствующие.
+"""Сводка куратору и личные сообщения студентам о проведённой паре.
 
-Раньше сообщение собиралось из изменённых оценок, поэтому:
-  * список отсутствующих всегда был пустым (заголовок без строк);
-  * если оценки не ставили, а только отмечали посещаемость, куратор
-    не получал ничего.
-Теперь текст строится по всему составу группы и уходит всегда.
+Формат единый: шапка «Дата / Предмет / Номер пары», дальше строки с маркерами.
+Куратор видит весь состав, студент — только свою строку.
 """
 import pytest
 
@@ -36,68 +33,119 @@ def _journal(db):
     a = db.add_student(gid, 'Иванов', 'Иван')
     b = db.add_student(gid, 'Петров', 'Пётр')
     c = db.add_student(gid, 'Сидоров', 'Семён')
-    lid = db.add_lesson(sid, '2026-09-14', status='held', lesson_number=1)
+    lid = db.add_lesson(sid, '2026-09-14', status='scheduled', lesson_number=3)
     return gid, sid, lid, a, b, c
 
 
 class TestCuratorText:
-    def test_lists_present_with_grade_and_absent_by_name(self, db):
+    def test_full_format(self, db):
         _, _, lid, a, b, c = _journal(db)
         db.mark_attendance(lid, a, '5')
         db.mark_attendance(lid, b, '0')  # был без оценки
-        # c — строки нет → отсутствовал
 
         text = _api_module._curator_conduct_text(db, lid)
-        lines = text.split('\n')
 
-        assert 'Дата: 14.09' in lines
-        assert 'Номер пары: 1' in lines
-        assert f'{_api_module._MARK_GRADED} Иванов И. - 5' in lines
-        assert f'{_api_module._MARK_NOGRADE} Петров П. - —' in lines, \
-            'нулевая оценка показывается прочерком с серым маркером'
-
-        idx = lines.index('Ниже список отсутствующих:')
-        assert lines[idx + 1:] == [f'{_api_module._MARK_ABSENT} Сидоров С.']
-
-    def test_all_absent_still_produces_message(self, db):
-        _, _, lid, a, b, c = _journal(db)
-        # ни одной строки — все отсутствовали
-        text = _api_module._curator_conduct_text(db, lid)
-        lines = text.split('\n')
-        idx = lines.index('Ниже список отсутствующих:')
-        mark = _api_module._MARK_ABSENT
-        assert lines[idx + 1:] == [
-            f'{mark} Иванов И.', f'{mark} Петров П.', f'{mark} Сидоров С.',
+        assert text.split('\n') == [
+            'Дата: 14.09',
+            'Предмет: МДК 02.01',
+            'Номер пары: 3',
+            'Присутствовали:',
+            f'{_api_module._MARK_GRADED} Иванов И. — 5',
+            f'{_api_module._MARK_NOGRADE} Петров П.',
+            'Отсутствовали:',
+            f'{_api_module._MARK_ABSENT} Сидоров С.',
         ]
 
     def test_no_absentees_prints_none(self, db):
         _, _, lid, a, b, c = _journal(db)
         for st in (a, b, c):
             db.mark_attendance(lid, st, '4')
-        text = _api_module._curator_conduct_text(db, lid)
-        assert text.split('\n')[-1] == 'нет'
 
-    def test_absent_marker_is_treated_as_absent(self, db):
+        lines = _api_module._curator_conduct_text(db, lid).split('\n')
+
+        assert lines[-2:] == ['Отсутствовали:', 'нет']
+
+    def test_all_absent_prints_none_present(self, db):
+        _, _, lid, a, b, c = _journal(db)
+
+        lines = _api_module._curator_conduct_text(db, lid).split('\n')
+
+        assert lines[3:5] == ['Присутствовали:', 'нет']
+        assert lines[5] == 'Отсутствовали:'
+        assert len(lines) == 9, 'шапка + два раздела и три отсутствующих'
+
+    def test_absent_marker_is_absent(self, db):
         _, _, lid, a, b, c = _journal(db)
         db.mark_attendance(lid, a, 'absent')
+
         text = _api_module._curator_conduct_text(db, lid)
-        lines = text.split('\n')
-        idx = lines.index('Ниже список отсутствующих:')
-        assert f'{_api_module._MARK_ABSENT} Иванов И.' in lines[idx + 1:]
+
+        assert f'{_api_module._MARK_ABSENT} Иванов И.' in text.split('\n')
 
     def test_unknown_lesson_returns_empty(self, db):
         assert _api_module._curator_conduct_text(db, 9999) == ''
 
 
-class TestConductSendsCuratorSummary:
-    """Проверка через HTTP: сообщение уходит, даже если оценки не изменились."""
+class TestStudentMessages:
+    def _bind_all(self, db, a, b, c):
+        db.bind_max(101, a)
+        db.bind_max(102, b)
+        db.bind_max(103, c)
 
+    def test_first_conduct_notifies_everyone(self, db):
+        _, _, lid, a, b, c = _journal(db)
+        db.mark_attendance(lid, a, '5')
+        db.mark_attendance(lid, b, '0')
+        self._bind_all(db, a, b, c)
+
+        header = _api_module._lesson_header(db, lid)
+        msgs = dict(_api_module._student_conduct_messages(db, lid, header, False, set()))
+
+        assert msgs[101].split('\n')[-1] == f'{_api_module._MARK_GRADED} Оценка: 5'
+        assert msgs[102].split('\n')[-1] == f'{_api_module._MARK_NOGRADE} Без оценки'
+        assert msgs[103].split('\n')[-1] == f'{_api_module._MARK_ABSENT} Отсутствие'
+
+    def test_header_matches_curator(self, db):
+        _, _, lid, a, b, c = _journal(db)
+        db.mark_attendance(lid, a, '4')
+        db.bind_max(101, a)
+
+        header = _api_module._lesson_header(db, lid)
+        msg = dict(_api_module._student_conduct_messages(db, lid, header, False, set()))[101]
+
+        assert msg.split('\n')[:3] == ['Дата: 14.09', 'Предмет: МДК 02.01', 'Номер пары: 3']
+
+    def test_repeat_conduct_skips_absence_and_nograde(self, db):
+        """Повторное «Провести» не дублирует отсутствие и «без оценки»."""
+        _, _, lid, a, b, c = _journal(db)
+        db.mark_attendance(lid, a, '5')
+        db.mark_attendance(lid, b, '0')
+        self._bind_all(db, a, b, c)
+
+        header = _api_module._lesson_header(db, lid)
+        msgs = dict(_api_module._student_conduct_messages(db, lid, header, True, {a}))
+
+        assert set(msgs) == {101}, 'только изменившаяся оценка'
+        assert msgs[101].endswith(f'{_api_module._MARK_GRADED} Оценка: 5')
+
+    def test_unbound_student_is_skipped(self, db):
+        _, _, lid, a, b, c = _journal(db)
+        db.mark_attendance(lid, a, '5')
+        db.bind_max(101, a)  # b и c без привязки
+
+        header = _api_module._lesson_header(db, lid)
+        msgs = _api_module._student_conduct_messages(db, lid, header, False, set())
+
+        assert [chat for chat, _ in msgs] == [101]
+
+
+class TestConductOverHttp:
     @pytest.fixture
     def sent(self, monkeypatch):
         messages = []
 
         def fake_send_message(token, chat_id, text, urlopen=None):
-            messages.append({'token': token, 'chat_id': chat_id, 'text': text})
+            messages.append({'chat_id': chat_id, 'text': text})
 
         class SyncThread:
             def __init__(self, target=None, args=(), kwargs=None, daemon=None):
@@ -108,7 +156,6 @@ class TestConductSendsCuratorSummary:
                     self._target(*self._args, **self._kwargs)
 
         monkeypatch.setattr('maxbot.send_message', fake_send_message)
-        monkeypatch.setattr('maxbot.notify_grade', lambda *a, **k: None)
         monkeypatch.setattr(_api_module.threading, 'Thread', SyncThread)
         return messages
 
@@ -123,29 +170,28 @@ class TestConductSendsCuratorSummary:
         a = db.add_student(gid, 'Иванов', 'Иван')
         b = db.add_student(gid, 'Петров', 'Пётр')
         c = db.add_student(gid, 'Сидоров', 'Семён')
-        lid = db.add_lesson(sid, '2026-09-14', status='scheduled', lesson_number=1)
+        lid = db.add_lesson(sid, '2026-09-14', status='scheduled', lesson_number=3)
         return gid, lid, a, b, c
 
-    def test_sends_when_nothing_changed(self, client, sent):
+    def test_curator_gets_summary_and_students_get_own_lines(self, client, sent):
         _, lid, a, b, c = self._setup(client)
         db = _api_module.get_db()
-        # Состояние уже записано: у a и b «был без оценки», c отсутствует.
-        db.mark_attendance(lid, a, '0')
-        db.mark_attendance(lid, b, '0')
+        db.bind_max(101, a)
+        db.bind_max(103, c)
 
         rv = client.post(f'/api/lessons/{lid}/conduct', json=[
-            {'student_id': a, 'grade': '0'},
+            {'student_id': a, 'grade': '5'},
             {'student_id': b, 'grade': '0'},
         ])
         assert rv.status_code == 200
-        assert rv.json['notified'] == 0, 'оценки не менялись'
+        assert rv.json['notified'] == 2, 'двое привязанных студентов'
 
-        assert len(sent) == 1, 'куратор должен получить сводку'
-        text = sent[0]['text']
-        assert sent[0]['chat_id'] == 9999
-        assert f'{_api_module._MARK_NOGRADE} Иванов И. - —' in text
-        assert 'Ниже список отсутствующих:' in text
-        assert text.rstrip().endswith(f'{_api_module._MARK_ABSENT} Сидоров С.')
+        by_chat = {m['chat_id']: m['text'] for m in sent}
+        assert set(by_chat) == {9999, 101, 103}
+        assert by_chat[9999].startswith(
+            'Дата: 14.09\nПредмет: МДК 02.01\nНомер пары: 3\nПрисутствовали:')
+        assert by_chat[101].endswith('Оценка: 5')
+        assert by_chat[103].endswith('Отсутствие')
 
     def test_lesson_becomes_held(self, client, sent):
         _, lid, a, b, c = self._setup(client)
@@ -153,18 +199,19 @@ class TestConductSendsCuratorSummary:
             {'student_id': a, 'grade': '5'}])
         assert _api_module.get_db().get_lesson(lid)['status'] == 'held'
 
-    def test_present_without_grade_is_not_pushed(self, client, sent, monkeypatch):
-        """'0' = был на паре без оценки. «Новая оценка: … — 0» — это шум."""
-        pushed: list[tuple[int, str]] = []
-        monkeypatch.setattr(
-            'maxbot.notify_grade',
-            lambda token, sid, grade, *a, **k: pushed.append((sid, grade)),
-        )
+    def test_second_conduct_does_not_repeat_absence(self, client, sent):
         _, lid, a, b, c = self._setup(client)
+        db = _api_module.get_db()
+        db.bind_max(101, a)
+        db.bind_max(103, c)
 
         client.post(f'/api/lessons/{lid}/conduct', json=[
-            {'student_id': a, 'grade': '5'},
-            {'student_id': b, 'grade': '0'},
-        ])
+            {'student_id': a, 'grade': '5'}])
+        sent.clear()
 
-        assert pushed == [(a, '5')]
+        client.post(f'/api/lessons/{lid}/conduct', json=[
+            {'student_id': a, 'grade': '4'}])
+
+        to_students = [m for m in sent if m['chat_id'] != 9999]
+        assert [m['chat_id'] for m in to_students] == [101]
+        assert to_students[0]['text'].endswith('Оценка: 4')
