@@ -21,3 +21,6 @@ mobile-teacher-app-redesign/.e2e-out.log
 mobile-teacher-app-redesign/.e2e-err.log
 mobile-teacher-app-redesign/playwright-report/
 mobile-teacher-app-redesign/test-results/
+
+# Рабочие заметки агента — не часть проекта
+.workbuddy-ai/memory/
