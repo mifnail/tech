@@ -1065,22 +1065,25 @@ def conduct_lesson(lesson_id: int):
     _mark_lesson_held(db, lesson_id)
     notice = _hours_exhausted_notice(db, lesson_id)
 
-    # Вычислить изменённые (grade != old и новая не пустая)
-    changed: list[tuple[int, str]] = []
+    # Сравниваем состояния. '' и 'absent' — одно и то же (студента не было):
+    # без нормализации «отметил присутствие → отменил» выглядело бы как
+    # изменение, и повторное «Провести» рассылало бы уведомления заново.
+    def _norm_grade(value) -> str:
+        if value is None:
+            return ''
+        text = str(value)
+        return '' if text in ('', 'absent') else text
+
+    changed: list[tuple[int, str]] = []   # оценки 2–5: кому писать
+    state_changed = False                 # изменилось ли что-то вообще
+
     for r in records:
         sid = r['student_id']
-        new_grade = r['grade']
-        if new_grade is None:
-            new_grade = ''
-        else:
-            new_grade = str(new_grade)
-        old_grade = old_map.get(sid, '')
-        if old_grade is None:
-            old_grade = ''
-        else:
-            old_grade = str(old_grade)
+        new_grade = _norm_grade(r['grade'])
+        old_grade = _norm_grade(old_map.get(sid, ''))
         if new_grade == old_grade:
             continue
+        state_changed = True
         if not new_grade:
             continue
         # '0' — присутствовал без оценки. Студенту про такое писать нечего:
@@ -1092,6 +1095,11 @@ def conduct_lesson(lesson_id: int):
         except Exception:
             continue
         changed.append((sid_int, new_grade))
+
+    # Уже проведённое занятие перепровели, но по факту ничего не поменялось —
+    # молчим: ни студенты, ни куратор не должны получать сообщение второй раз.
+    if was_held and not state_changed:
+        return jsonify({'ok': True, 'notified': 0, **notice})
 
     # Кому и что отправить студентам — считаем здесь, в контексте запроса:
     # шапка одна (дата/предмет/пара), дальше личная строка студента.

@@ -215,3 +215,67 @@ class TestConductOverHttp:
         to_students = [m for m in sent if m['chat_id'] != 9999]
         assert [m['chat_id'] for m in to_students] == [101]
         assert to_students[0]['text'].endswith('Оценка: 4')
+
+    def test_second_conduct_without_changes_is_silent(self, client, sent):
+        """Перепровели то же самое — ни студентам, ни куратору ничего."""
+        _, lid, a, b, c = self._setup(client)
+        db = _api_module.get_db()
+        db.bind_max(101, a)
+        db.bind_max(103, c)
+
+        client.post(f'/api/lessons/{lid}/conduct', json=[
+            {'student_id': a, 'grade': '5'}])
+        sent.clear()
+
+        rv = client.post(f'/api/lessons/{lid}/conduct', json=[
+            {'student_id': a, 'grade': '5'},
+            {'student_id': b, 'grade': 'absent'},
+            {'student_id': c, 'grade': 'absent'},
+        ])
+
+        assert rv.json['notified'] == 0
+        assert sent == [], 'куратор и студенты молчат'
+
+    def test_absence_toggled_back_is_not_a_change(self, client, sent):
+        """Отметил присутствие и отменил — студент не получает «Отсутствие» снова."""
+        _, lid, a, b, c = self._setup(client)
+        db = _api_module.get_db()
+        db.bind_max(101, a)
+        db.bind_max(103, c)
+
+        # первое проведение: c отсутствовал
+        client.post(f'/api/lessons/{lid}/conduct', json=[
+            {'student_id': a, 'grade': '5'},
+            {'student_id': c, 'grade': 'absent'},
+        ])
+        sent.clear()
+
+        # «поставил присутствие → отменил»: в записи снова absent
+        rv = client.post(f'/api/lessons/{lid}/conduct', json=[
+            {'student_id': a, 'grade': '5'},
+            {'student_id': c, 'grade': 'absent'},
+        ])
+
+        assert rv.json['notified'] == 0
+        assert sent == []
+        assert not any('Отсутствие' in m['text'] for m in sent)
+
+    def test_real_change_still_notifies(self, client, sent):
+        """Настоящее изменение пробивается: молчание только когда правда ничего нет."""
+        _, lid, a, b, c = self._setup(client)
+        db = _api_module.get_db()
+        db.bind_max(101, a)
+
+        client.post(f'/api/lessons/{lid}/conduct', json=[
+            {'student_id': a, 'grade': '5'},
+            {'student_id': c, 'grade': 'absent'},
+        ])
+        sent.clear()
+
+        # c перевели из отсутствия в присутствие — это изменение
+        client.post(f'/api/lessons/{lid}/conduct', json=[
+            {'student_id': a, 'grade': '5'},
+            {'student_id': c, 'grade': '0'},
+        ])
+
+        assert any(m['chat_id'] == 9999 for m in sent), 'куратор должен узнать'
