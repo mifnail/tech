@@ -711,6 +711,115 @@ def _poll_error_line(exc, consecutive):
     return f"[maxbot-poll] error: {type(exc).__name__}: {text} (consecutive={consecutive}){hint}"
 
 
+# ── Состояние поллинга ──────────────────────────────────────────────
+# Нужно, чтобы в приложении было видно, живой ли бот: раньше единственным
+# признаком поломки было «студенты пишут, а ответа нет».
+_poll_lock = threading.RLock()
+_poll_thread = None
+_poll_stop = None
+_poll_token = None
+_supervisor_started = False
+_poll_state = {
+    'started_at': None,        # когда запущен текущий поток
+    'last_poll_ok': None,      # последний успешный GET /updates
+    'last_update_at': None,    # последнее обработанное сообщение
+    'updates_total': 0,        # сколько обработано за жизнь потока
+    'last_error': None,
+    'last_error_at': None,
+    'consecutive_errors': 0,
+}
+
+
+def _now_iso() -> str:
+    return time.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def poll_state() -> dict:
+    """Снимок состояния поллинга для экрана настроек."""
+    with _poll_lock:
+        state = dict(_poll_state)
+        thread = _poll_thread
+    state['alive'] = bool(thread is not None and thread.is_alive())
+    return state
+
+
+def _reset_poll_state() -> None:
+    with _poll_lock:
+        _poll_state.update({
+            'started_at': _now_iso(),
+            'last_poll_ok': None,
+            'last_update_at': None,
+            'updates_total': 0,
+            'last_error': None,
+            'last_error_at': None,
+            'consecutive_errors': 0,
+        })
+
+
+def _poll_factory():
+    """Запустить поток поллинга. Идемпотентно: живой поток не дублируется.
+
+    Идемпотентность важна: фабрику вызывает и супервизор, и ручной
+    перезапуск из настроек — второй экземпляр дал бы двойную обработку.
+    """
+    global _poll_stop, _poll_thread
+    from database import Database
+
+    with _poll_lock:
+        if _poll_thread is not None and _poll_thread.is_alive():
+            return _poll_thread
+        stop = threading.Event()
+        _poll_stop = stop
+        thread = threading.Thread(
+            target=run_polling, args=(_poll_token, Database, stop),
+            daemon=True, name='max-poll',
+        )
+        _poll_thread = thread
+        _reset_poll_state()
+        thread.start()
+        return thread
+
+
+def restart_polling(token: str) -> None:
+    """Перезапустить поллинг: погасить текущий поток и поднять новый.
+
+    Текущий поток может висеть в long-poll до 35 с, поэтому ожидание
+    вынесено в фон — HTTP-запрос не блокируем.
+    """
+    global _poll_token, _poll_stop
+    with _poll_lock:
+        _poll_token = token
+        old = _poll_thread
+        stop = _poll_stop
+
+    def _do():
+        if stop is not None:
+            stop.set()
+        if old is not None:
+            old.join(timeout=40)
+        _poll_factory()
+
+    threading.Thread(target=_do, daemon=True, name='max-poll-restart').start()
+
+
+def reset_marker_and_restart(token: str) -> None:
+    """Сбросить сохранённый маркер и перезапустить поллинг.
+
+    Маркер живёт в памяти потока, поэтому одного UPDATE в базе мало —
+    без перезапуска он продолжит использоваться.
+    """
+    from database import Database
+    try:
+        db = Database()
+        try:
+            db.set_setting('max_last_marker', None)
+        finally:
+            db.close()
+    except Exception:
+        pass
+    restart_polling(token)
+
+
 def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
     """Цикл long-polling. db_factory() -> свежий Database (потокобезопасно)."""
     consecutive = 0
@@ -730,14 +839,18 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
             try:
                 updates, new_marker = get_updates(token, marker, urlopen=urlopen)
                 consecutive = 0
+                _poll_state['last_poll_ok'] = _now_iso()
+                _poll_state['consecutive_errors'] = 0
             except MaxError as e:
                 consecutive += 1
+                _poll_state['last_error'] = f'{type(e).__name__}: {e}'
+                _poll_state['last_error_at'] = _now_iso()
+                _poll_state['consecutive_errors'] = consecutive
                 print(_poll_error_line(e, consecutive), flush=True)
                 time.sleep(ERROR_PAUSE)
                 continue
             for u in updates or []:
-                msg_type = u.get('update_type') or u.get('type')
-                # ---- message_created ----
+                msg_type = u.get('update_type') or u.get('type')                # ---- message_created ----
                 if msg_type == 'message_created':
                     msg = u.get('message') or {}
                     body = msg.get('body') or {}
@@ -915,18 +1028,18 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                         send_with_buttons(token, cid, reply, urlopen=urlopen)
                     except Exception:
                         pass
-                if new_marker is not None:
-                    marker = new_marker
+            if updates:
+                _poll_state['last_update_at'] = _now_iso()
+                _poll_state['updates_total'] = _poll_state.get('updates_total', 0) + len(updates)
+            if new_marker is not None:
+                marker = new_marker
         except Exception as e:
+            # Ловим всё, включая сетевые TimeoutError/URLError: одиночный
+            # таймаут не должен убивать поток — иначе бот замолкает молча.
             consecutive += 1
-            print(_poll_error_line(e, consecutive), flush=True)
-            try:
-                time.sleep(ERROR_PAUSE)
-            except Exception:
-                pass
-            continue
-        except Exception as e:
-            consecutive += 1
+            _poll_state['last_error'] = f'{type(e).__name__}: {e}'
+            _poll_state['last_error_at'] = _now_iso()
+            _poll_state['consecutive_errors'] = consecutive
             print(_poll_error_line(e, consecutive), flush=True)
             try:
                 time.sleep(ERROR_PAUSE)
@@ -936,16 +1049,19 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
 
 
 def start_polling(token: str):
-    """Запустить polling в daemon-потоке. Импорты только внутри — модуль без тяжёлых deps."""
-    from database import Database
+    """Запустить polling в daemon-потоке (идемпотентно)."""
+    global _poll_token, _supervisor_started
     from botcore import supervise
 
-    def _factory():
-        t = threading.Thread(target=run_polling, args=(token, Database), daemon=True, name='max-poll')
-        t.start()
-        return t
+    with _poll_lock:
+        _poll_token = token
+        already = _supervisor_started
+        _supervisor_started = True
+    if already:
+        _poll_factory()
+        return _poll_thread
 
-    worker, supervisor = supervise('max-poll', _factory, interval=60)
+    worker, _supervisor = supervise('max-poll', _poll_factory, interval=60)
     return worker
 
 

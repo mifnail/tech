@@ -142,6 +142,105 @@ function BotStatusLine({ checkUrl, checkKey }: {
   return <Chip tone="warn" className="text-[11px] normal-case">Нет связи с сервером</Chip>;
 }
 
+/* ── Состояние поллинга MAX: живой ли бот прямо сейчас ──
+   Без этого поломку видно только по «студенты пишут, а ответа нет». */
+interface MaxPoll {
+  alive: boolean;
+  started_at: string | null;
+  last_poll_ok: string | null;
+  last_update_at: string | null;
+  updates_total: number;
+  last_error: string | null;
+  last_error_at: string | null;
+  consecutive_errors: number;
+}
+
+function MaxPollBlock({ checkKey }: { checkKey: number }) {
+  const toast = useToast();
+  const [poll, setPoll] = useState<MaxPoll | null>(null);
+  const [busy, setBusy] = useState<null | "restart" | "marker">(null);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/settings/maxbot/status");
+        if (!r.ok) return;
+        const j = (await r.json()) as { poll?: MaxPoll };
+        if (alive && j && j.poll) setPoll(j.poll);
+      } catch (_) { /* тихо: панель не критична */ }
+    };
+    void load();
+    const id = setInterval(load, 15000);
+    return () => { alive = false; clearInterval(id); };
+  }, [checkKey]);
+
+  const act = async (kind: "restart" | "marker") => {
+    setBusy(kind);
+    try {
+      const url = kind === "restart" ? "/api/settings/maxbot/restart" : "/api/settings/maxbot/reset-marker";
+      const r = await fetch(url, { method: "POST" });
+      const j = (await r.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (r.ok && j && j.ok) {
+        toast(kind === "restart" ? "Бот перезапущен" : "Маркер сброшен");
+      } else {
+        toast(j && j.error ? j.error : "Не получилось");
+      }
+    } catch (_) {
+      toast("Ошибка сети");
+    }
+    setBusy(null);
+  };
+
+  if (!poll) return null;
+
+  const hhmm = (s: string | null) => (s && s.length >= 16 ? s.slice(11, 16) : "—");
+  const ok = poll.alive && poll.consecutive_errors === 0;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-line">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[13.5px] font-semibold">Приём сообщений</div>
+        <Chip tone={ok ? "success" : "warn"} className="text-[11px] normal-case">
+          {poll.alive ? (ok ? "работает" : "со сбоями") : "остановлен"}
+        </Chip>
+      </div>
+      <div className="text-[11.5px] text-muted mt-1 leading-relaxed">
+        Опрос MAX: {poll.last_poll_ok ? `успешно в ${hhmm(poll.last_poll_ok)}` : "ещё не было"}
+        {" · "}
+        Сообщений: {poll.updates_total}
+        {poll.last_update_at ? `, последнее в ${hhmm(poll.last_update_at)}` : ""}
+      </div>
+      {poll.consecutive_errors > 0 && poll.last_error && (
+        <div className="text-[11.5px] text-danger mt-1 leading-snug break-words">
+          Ошибка ({poll.consecutive_errors}): {poll.last_error.slice(0, 90)}
+        </div>
+      )}
+      <div className="flex gap-2 mt-2.5">
+        <Btn
+          size="sm"
+          variant="muted"
+          icon={RefreshCw}
+          className="flex-1"
+          disabled={busy !== null}
+          onClick={() => act("restart")}
+        >
+          {busy === "restart" ? "Перезапуск…" : "Перезапустить"}
+        </Btn>
+        <Btn
+          size="sm"
+          variant="muted"
+          className="flex-1"
+          disabled={busy !== null}
+          onClick={() => act("marker")}
+        >
+          {busy === "marker" ? "Сброс…" : "Сбросить маркер"}
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
 /* ── Webhook-подписки MAX: тихий GET /api/settings/maxbot/webhook ── */
 type WebhookStatus =
   | { kind: "checking" }
@@ -520,6 +619,7 @@ export default function SettingsScreen() {
           </div>
           <Toggle checked={s.maxEnabled} onChange={toggleMax} label="Включить MAX-бота" />
         </div>
+        {s.maxHasToken && s.maxEnabled && <MaxPollBlock checkKey={maxCheckKey} />}
         {s.maxHasToken && (
           <Btn variant="danger" icon={Unlink} className="w-full mt-3" onClick={() => setDropMaxOpen(true)}>
             Отвязать токен

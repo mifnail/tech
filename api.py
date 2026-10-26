@@ -1536,6 +1536,52 @@ def check_maxbot():
     return jsonify({'ok': True})
 
 
+@maxbot_bp.route('/status', methods=['GET'])
+def maxbot_status():
+    """Живой ли бот: когда последний раз опрашивали MAX и что сломалось.
+
+    Без этого поломку видно только по «студенты пишут, а ответа нет».
+    """
+    import maxbot
+    db = get_db()
+    return jsonify({
+        'has_token': bool(db.get_setting('max_bot_token')),
+        'enabled': db.get_setting('max_bot_enabled') == '1',
+        'marker': db.get_setting('max_last_marker'),
+        'poll': maxbot.poll_state(),
+    })
+
+
+@maxbot_bp.route('/restart', methods=['POST'])
+def maxbot_restart():
+    """Погасить и заново поднять поллинг — без перезапуска приложения."""
+    import maxbot
+    db = get_db()
+    token = db.get_setting('max_bot_token')
+    if not token:
+        return jsonify({'error': 'токен не задан'}), 400
+    if db.get_setting('max_bot_enabled') != '1':
+        return jsonify({'error': 'бот выключен'}), 400
+    maxbot.restart_polling(token)
+    return jsonify({'ok': True})
+
+
+@maxbot_bp.route('/reset-marker', methods=['POST'])
+def maxbot_reset_marker():
+    """Сбросить сохранённый маркер и перезапустить поллинг.
+
+    Маркер держится и в базе, и в памяти потока: без перезапуска сброс
+    в базе ни на что не влияет.
+    """
+    import maxbot
+    db = get_db()
+    token = db.get_setting('max_bot_token')
+    if not token:
+        return jsonify({'error': 'токен не задан'}), 400
+    maxbot.reset_marker_and_restart(token)
+    return jsonify({'ok': True})
+
+
 @maxbot_bp.route('/teacher/unbind', methods=['POST'])
 def teacher_unbind():
     db = get_db()
