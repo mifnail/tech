@@ -248,6 +248,7 @@ class Database:
                 name TEXT NOT NULL,
                 total_hours INTEGER NOT NULL DEFAULT 0,
                 group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+                closed_at TEXT,
                 UNIQUE(name, group_id)
             );
 
@@ -329,6 +330,13 @@ class Database:
         # заведённые до появления поля, показываем как раньше.
         try:
             self.conn.execute("ALTER TABLE schedule ADD COLUMN valid_from TEXT")
+            self.conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        # Дата вычитки предмета. NULL — предмет в расписании; дата — часы
+        # вычитаны, плановые строки шаблона после неё не показываем.
+        try:
+            self.conn.execute("ALTER TABLE subjects ADD COLUMN closed_at TEXT")
             self.conn.commit()
         except sqlite3.OperationalError:
             pass
@@ -591,6 +599,29 @@ class Database:
         self.conn.execute(
             "UPDATE subjects SET name = ?, total_hours = ? WHERE id = ?",
             (name, total_hours, subject_id)
+        )
+        self.conn.commit()
+
+    def get_subject(self, subject_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM subjects WHERE id = ?", (subject_id,)
+        ).fetchone()
+
+    def close_subject(self, subject_id: int, date_str: str) -> None:
+        """Пометить предмет вычитанным с даты: планы шаблона после неё скрываются.
+
+        Часы не проверяем — решение принимает преподаватель, подтверждая
+        диалог. Если он закроет раньше срока, это его осознанный выбор.
+        """
+        self.conn.execute(
+            "UPDATE subjects SET closed_at = ? WHERE id = ?", (date_str, subject_id)
+        )
+        self.conn.commit()
+
+    def reopen_subject(self, subject_id: int) -> None:
+        """Вернуть предмет в расписание (часы поправили или пару отменили)."""
+        self.conn.execute(
+            "UPDATE subjects SET closed_at = NULL WHERE id = ?", (subject_id,)
         )
         self.conn.commit()
 

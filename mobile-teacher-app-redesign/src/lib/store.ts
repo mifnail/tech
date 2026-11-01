@@ -333,7 +333,13 @@ class Store {
       this.dirtyLessons.delete(lessonId);
       this.gradeSnapshots.delete(lessonId);
       const l = this.lesson(lessonId);
+      const wasHeld = l?.status === "held";
       if (l) l.status = "held";
+      // Счётчик часов берётся отсюда — по нему решается «последняя ли пара».
+      if (!wasHeld && l) {
+        const subj = this.db.subjects.find((s) => s.id === l.subjectId);
+        if (subj) subj.heldLessons = (subj.heldLessons ?? 0) + 1;
+      }
       this.heldOnce.add(lessonId);
       this.touch();
       return {
@@ -487,6 +493,7 @@ class Store {
           fetchJson("/api/subjects") as Promise<Array<{
             id: number; name: string; group_id: number;
             total_hours: number; held_lessons: number; average_grade?: number;
+            closed_at?: string | null;
           }>>,
           fetchJson("/api/students") as Promise<Array<{
             id: number; group_id: number;
@@ -568,6 +575,7 @@ class Store {
         id: s.id, name: s.name,
         totalHours: s.total_hours ?? 0,
         heldLessons: s.held_lessons ?? 0,
+        closedAt: s.closed_at ?? null,
       }));
 
       // Маппинг расписания
@@ -1037,8 +1045,42 @@ class Store {
       });
     }
   }
-  removeSubject(id: ID) {
-    const snap = {
+
+  /** Предмет вычитан: плановые строки шаблона после даты больше не показываем. */
+  async closeSubject(id: ID, dateISO: string): Promise<void> {
+    const s = this.db.subjects.find((x) => x.id === id);
+    if (!s) return;
+    const prev = s.closedAt ?? null;
+    s.closedAt = dateISO;
+    this.touch();
+    if (import.meta.env.DEV) return;
+    try {
+      await _post(`/api/subjects/${id}/close`, { date: dateISO });
+    } catch (e) {
+      console.error("[store] closeSubject failed:", e);
+      s.closedAt = prev;
+      this.touch();
+    }
+  }
+
+  /** Вернуть вычитанный предмет в расписание. */
+  async reopenSubject(id: ID): Promise<void> {
+    const s = this.db.subjects.find((x) => x.id === id);
+    if (!s) return;
+    const prev = s.closedAt ?? null;
+    s.closedAt = null;
+    this.touch();
+    if (import.meta.env.DEV) return;
+    try {
+      await _post(`/api/subjects/${id}/reopen`, {});
+    } catch (e) {
+      console.error("[store] reopenSubject failed:", e);
+      s.closedAt = prev;
+      this.touch();
+    }
+  }
+
+  removeSubject(id: ID) {    const snap = {
       subjects: [...this.db.subjects],
       schedule: [...this.db.schedule],
       lessons: [...this.db.lessons],

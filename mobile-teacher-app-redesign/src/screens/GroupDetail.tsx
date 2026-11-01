@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  BookOpen, ChevronRight, Copy, ListChecks, Pencil, Plus, Send, MessageCircle, Trash2, Unlink, UserPlus, X,
+  BookOpen, ChevronRight, Copy, ListChecks, Pencil, Plus, RotateCcw, Send, MessageCircle, Trash2, Unlink, UserPlus, X,
 } from "lucide-react";
 import { useDB, useVersion, store } from "../lib/store";
 import { avgOf, formatAvg, isDebtor } from "../lib/grades";
@@ -289,10 +289,24 @@ export default function GroupDetailScreen({ id }: { id: number }) {
               {count} проведённых занятий · открыть ведомость
             </div>
           </div>
+          {subj.closedAt && (
+            <Chip tone="warn" className="text-[11px] normal-case">вычитан</Chip>
+          )}
           {avg !== null && (
             <Chip tone={avg >= 4 ? "success" : avg >= 3.5 ? "warn" : "danger"}>
               {formatAvg(avg)}
             </Chip>
+          )}
+          {subj.closedAt && (
+            <IconBtn
+              icon={RotateCcw}
+              label={"Вернуть в расписание " + subj.name}
+              className="w-8 h-8 text-faint"
+              onClick={(e) => {
+                e.stopPropagation();
+                void store.reopenSubject(subj.id);
+              }}
+            />
           )}
           <IconBtn
             icon={Pencil}

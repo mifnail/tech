@@ -121,6 +121,7 @@ export default function LessonRunScreen({ id }: { id: number }) {
 
   // Провести flow
   const [conductBusy, setConductBusy] = useState(false);
+  const [lastPairOpen, setLastPairOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [pendingNav, setPendingNav] = useState<string | null>(null);
   const [pendingIsBack, setPendingIsBack] = useState(false);
@@ -166,6 +167,13 @@ export default function LessonRunScreen({ id }: { id: number }) {
   const cancelled = lesson.status === "cancelled";
   const dirty = !cancelled && store.isDirty(lesson.id);
 
+  // Последняя ли это пара по предмету: после проведения часы вычитаны.
+  // Уже проведённое занятие повторно не предупреждает.
+  const totalPairs = subject?.totalHours ?? 0;
+  const heldPairs = subject?.heldLessons ?? 0;
+  const isLastPair =
+    totalPairs > 0 && lesson.status !== "held" && heldPairs + 1 === totalPairs;
+
   const allPairs = store.db.groups.flatMap((g) =>
     g.subjectIds.map((sid) => ({ groupId: g.id, subjectId: sid })),
   );
@@ -183,11 +191,26 @@ export default function LessonRunScreen({ id }: { id: number }) {
 
   const doConduct = async () => {
     if (conductBusy || !dirty || cancelled) return;
+    // Последняя пара: сначала предупреждаем, что предмет уйдёт из расписания.
+    if (isLastPair) {
+      setLastPairOpen(true);
+      return;
+    }
+    await runConduct(false);
+  };
+
+  /** Провести занятие. closeAfter — предмет вычитан, скрыть планы шаблона. */
+  const runConduct = async (closeAfter: boolean) => {
+    if (conductBusy) return;
     setConductBusy(true);
     try {
       const res = await store.conductLesson(lesson.id);
+      if (closeAfter) await store.closeSubject(lesson.subjectId, lesson.date);
+      const done = closeAfter ? " Предмет убран из расписания." : "";
       if (res.hoursExhausted) {
-        toast(res.hoursMessage || "Пары по предмету вычитаны", 4200);
+        toast((res.hoursMessage || "Пары по предмету вычитаны") + done, 4200);
+      } else if (closeAfter) {
+        toast(`Проведено · уведомлений: ${res.notified}.${done}`, 4200);
       } else {
         toast(`Проведено · уведомлений: ${res.notified}`);
       }
@@ -224,6 +247,9 @@ export default function LessonRunScreen({ id }: { id: number }) {
     setLeaveOpen(false);
     try {
       const res = await store.conductLesson(lesson.id);
+      // Ушли через «Провести» на последней паре — предмет тоже вычитан,
+      // иначе он остался бы в расписании без часов.
+      if (isLastPair) await store.closeSubject(lesson.subjectId, lesson.date);
       if (res.hoursExhausted) {
         toast(res.hoursMessage || "Пары по предмету вычитаны", 4200);
       } else {
@@ -459,6 +485,20 @@ export default function LessonRunScreen({ id }: { id: number }) {
         cancelLabel="Уйти без сохранения"
         onConfirm={doLeaveConduct}
         onCancel={doLeaveDiscard}
+      />
+
+      {/* Последняя пара: предупреждаем, что предмет уйдёт из расписания */}
+      <ConfirmSheet
+        open={lastPairOpen}
+        onClose={() => setLastPairOpen(false)}
+        title="Последняя пара по предмету"
+        body={`«${subject?.name ?? ""}»: ${heldPairs} из ${totalPairs} пар. После проведения предмет будет вычитан и исчезнет из будущего расписания.`}
+        confirmLabel="Провести и закрыть"
+        cancelLabel="Отмена"
+        onConfirm={() => {
+          setLastPairOpen(false);
+          void runConduct(true);
+        }}
       />
 
       {/* Выбор предмета для замены */}

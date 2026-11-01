@@ -417,6 +417,36 @@ def update_subject(subject_id: int):
     return jsonify({'ok': True})
 
 
+@subjects_bp.route('/<int:subject_id>/close', methods=['POST'])
+def close_subject(subject_id: int):
+    """Предмет вычитан: плановые строки шаблона после даты больше не показываем.
+
+    Дату берём из тела (по умолчанию сегодня) — это дата последней пары,
+    чтобы сегодняшняя строка не исчезла задним числом.
+    """
+    db = get_db()
+    if not db.get_subject(subject_id):
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json(silent=True) or {}
+    raw = data.get('date') or date.today().isoformat()
+    try:
+        closed = date.fromisoformat(str(raw)).isoformat()
+    except (ValueError, TypeError):
+        return jsonify({'error': 'bad date'}), 400
+    db.close_subject(subject_id, closed)
+    return jsonify({'ok': True, 'closed_at': closed})
+
+
+@subjects_bp.route('/<int:subject_id>/reopen', methods=['POST'])
+def reopen_subject(subject_id: int):
+    """Вернуть вычитанный предмет в расписание."""
+    db = get_db()
+    if not db.get_subject(subject_id):
+        return jsonify({'error': 'not found'}), 404
+    db.reopen_subject(subject_id)
+    return jsonify({'ok': True})
+
+
 @subjects_bp.route('/<int:subject_id>/gradebook')
 def subject_gradebook(subject_id: int):
     db = get_db()

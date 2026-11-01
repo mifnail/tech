@@ -211,6 +211,10 @@ export function dayRows(db: DB, date: string): DayRow[] {
     // Пара действует только с даты, когда её завели. Раньше этого дня её
     // не существовало — «задним числом» в журнале она появляться не должна.
     if (it.validFrom && date < it.validFrom) continue;
+    // Предмет вычитан (часы кончились, преподаватель подтвердил) — плановые
+    // строки с даты закрытия не показываем. Сами занятия остаются в журнале.
+    const subject = db.subjects.find((s) => s.id === it.subjectId);
+    if (subject?.closedAt && date >= subject.closedAt) continue;
     // Занятие без номера пары (старая запись) закрывает шаблон этой
     // группы+предмета целиком — номер слота сравнить не с чем.
     if (usedUnnumbered.has(it.groupId + "/" + it.subjectId)) continue;

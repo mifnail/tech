@@ -23,6 +23,8 @@ export interface Subject {
   name: string;
   totalHours?: number;
   heldLessons?: number;
+  /** Дата вычитки: плановые строки шаблона после неё не показываем. */
+  closedAt?: string | null;
 }
 
 /** parity: 0 — каждую неделю, 1 — чётная, 2 — нечётная */
