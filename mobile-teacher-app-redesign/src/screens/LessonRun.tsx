@@ -122,6 +122,7 @@ export default function LessonRunScreen({ id }: { id: number }) {
   // Провести flow
   const [conductBusy, setConductBusy] = useState(false);
   const [lastPairOpen, setLastPairOpen] = useState(false);
+  const [overshootOpen, setOvershootOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [pendingNav, setPendingNav] = useState<string | null>(null);
   const [pendingIsBack, setPendingIsBack] = useState(false);
@@ -173,6 +174,9 @@ export default function LessonRunScreen({ id }: { id: number }) {
   const heldPairs = subject?.heldLessons ?? 0;
   const isLastPair =
     totalPairs > 0 && lesson.status !== "held" && heldPairs + 1 === totalPairs;
+  // Часы уже кончились, а пару всё равно проводят — предупреждаем отдельно.
+  const isOvershoot =
+    totalPairs > 0 && lesson.status !== "held" && heldPairs + 1 > totalPairs;
 
   const allPairs = store.db.groups.flatMap((g) =>
     g.subjectIds.map((sid) => ({ groupId: g.id, subjectId: sid })),
@@ -196,6 +200,11 @@ export default function LessonRunScreen({ id }: { id: number }) {
       setLastPairOpen(true);
       return;
     }
+    // Часы уже вычитаны — пара сверх программы, спрашиваем отдельно.
+    if (isOvershoot) {
+      setOvershootOpen(true);
+      return;
+    }
     await runConduct(false);
   };
 
@@ -205,8 +214,10 @@ export default function LessonRunScreen({ id }: { id: number }) {
     setConductBusy(true);
     try {
       const res = await store.conductLesson(lesson.id);
-      if (closeAfter) await store.closeSubject(lesson.subjectId, lesson.date);
-      const done = closeAfter ? " Предмет убран из расписания." : "";
+      // Уже закрытый предмет не перезакрываем: дата осталась бы прежней.
+      const willClose = closeAfter && !subject?.closedAt;
+      if (willClose) await store.closeSubject(lesson.subjectId, lesson.date);
+      const done = willClose ? " Предмет убран из расписания." : "";
       if (res.hoursExhausted) {
         toast((res.hoursMessage || "Пары по предмету вычитаны") + done, 4200);
       } else if (closeAfter) {
@@ -247,9 +258,11 @@ export default function LessonRunScreen({ id }: { id: number }) {
     setLeaveOpen(false);
     try {
       const res = await store.conductLesson(lesson.id);
-      // Ушли через «Провести» на последней паре — предмет тоже вычитан,
-      // иначе он остался бы в расписании без часов.
-      if (isLastPair) await store.closeSubject(lesson.subjectId, lesson.date);
+      // Ушли через «Провести» на последней паре или сверх часов — предмет
+      // тоже вычитан, иначе он остался бы в расписании без часов.
+      if ((isLastPair || isOvershoot) && !subject?.closedAt) {
+        await store.closeSubject(lesson.subjectId, lesson.date);
+      }
       if (res.hoursExhausted) {
         toast(res.hoursMessage || "Пары по предмету вычитаны", 4200);
       } else {
@@ -497,6 +510,20 @@ export default function LessonRunScreen({ id }: { id: number }) {
         cancelLabel="Отмена"
         onConfirm={() => {
           setLastPairOpen(false);
+          void runConduct(true);
+        }}
+      />
+
+      {/* Часы вычитаны, а пару проводят сверх программы */}
+      <ConfirmSheet
+        open={overshootOpen}
+        onClose={() => setOvershootOpen(false)}
+        title="Часы по предмету вычитаны"
+        body={`«${subject?.name ?? ""}»: ${heldPairs} из ${totalPairs} пар. Вы проводите пару сверх программы — ${heldPairs + 1}-ю.`}
+        confirmLabel="Провести"
+        cancelLabel="Отмена"
+        onConfirm={() => {
+          setOvershootOpen(false);
           void runConduct(true);
         }}
       />

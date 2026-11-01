@@ -81,3 +81,60 @@ test("последняя пара: предупреждение → закрыт
   await expect(page.getByRole("heading", { name: "Расписание" })).toBeVisible();
   await expect(page.getByText("МДК тест-вычитка")).toHaveCount(0);
 });
+
+test("пара сверх часов: предупреждение вместо молчаливого проведения", async ({ page }) => {
+  const groups = (await (await page.request.get("/api/groups")).json()) as Array<{ id: number }>;
+  const subject = (await (
+    await page.request.post("/api/subjects", {
+      data: { name: "МДК тест-перебор", total_hours: 1, group_id: groups[0].id },
+    })
+  ).json()) as { id: number };
+
+  const makeLesson = async (daysAgo: number) =>
+    (await (
+      await page.request.post("/api/lessons", {
+        data: {
+          subject_id: subject.id,
+          date: isoDaysAgo(daysAgo),
+          status: "scheduled",
+          lesson_number: 4,
+        },
+      })
+    ).json()) as { id: number };
+
+  const first = await makeLesson(14);
+  const second = await makeLesson(7);
+
+  await gotoApp(page);
+
+  // Первая (единственная по программе) пара — обычный диалог «последняя».
+  const firstLoaded = page.waitForResponse(
+    (r) => r.url().endsWith(`/api/lessons/${first.id}/attendance`) && r.status() === 200,
+  );
+  await page.goto(`/#/lesson/${first.id}`);
+  await firstLoaded;
+  await setGrade(page);
+  await page.getByRole("button", { name: "Провести", exact: true }).click();
+  await page.getByRole("button", { name: "Провести и закрыть" }).click();
+  await expect(page.getByText(/Предмет убран из расписания/)).toBeVisible();
+
+  // Вторая пара — уже сверх часов: отдельное предупреждение.
+  const secondLoaded = page.waitForResponse(
+    (r) => r.url().endsWith(`/api/lessons/${second.id}/attendance`) && r.status() === 200,
+  );
+  await page.goto(`/#/lesson/${second.id}`);
+  await secondLoaded;
+  await setGrade(page);
+  await page.getByRole("button", { name: "Провести", exact: true }).click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("Часы по предмету вычитаны")).toBeVisible();
+  await expect(dialog.getByText(/сверх программы/)).toBeVisible();
+
+  await dialog.getByRole("button", { name: "Провести" }).click();
+
+  const status = ((await (await page.request.get(`/api/lessons/${second.id}`)).json()) as {
+    status: string;
+  }).status;
+  expect(status).toBe("held");
+});
