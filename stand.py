@@ -5,7 +5,7 @@
     --phase=static | backend | api | e2e | all   (по умолчанию all)
 
     static  tsc --noEmit + vite build (npx, mobile-teacher-app-redesign)
-            + esprima.parseScript(static/app.js) + node --test tests/*.cjs
+            + node --test tests/*.cjs
     backend python -m pytest tests -q (cwd = проект); красный, если
             passed < 239 (BASELINE_MIN_PASSED)
     api     Flask из main.py на 127.0.0.1:5111 с TEACHHELPER_NO_BOT=1 и
@@ -38,7 +38,6 @@ from datetime import date, timedelta
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 FRONTEND = os.path.join(BASE, 'mobile-teacher-app-redesign')
-STATIC_APP_JS = os.path.join(BASE, 'static', 'app.js')
 
 # Консоль/pipe на Windows часто cp1251 — не умеет стрелки и часть кириллицы.
 for _stream in (sys.stdout, sys.stderr):
@@ -61,13 +60,6 @@ PHASES = ('static', 'backend', 'api', 'e2e')
 
 _NOWINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 _NEWGROUP = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
-
-ESPRIMA_CODE = (
-    'import io, sys, esprima\n'
-    'src = io.open(sys.argv[1], encoding="utf-8").read()\n'
-    'tree = esprima.parseScript(src)\n'
-    'print("esprima OK: %d bytes, %d top-level statements" % (len(src), len(tree.body)))\n'
-)
 
 # Bootstrap сервера: путь к БД подменяется ДО import api, поэтому проектный
 # lessons.db не открывается ни чтением, ни записью (паттерн tests/conftest.py).
@@ -148,14 +140,6 @@ def phase_static() -> int:
     if rc != 0:
         failed.append('vite build')
 
-    if not os.path.isfile(STATIC_APP_JS):
-        print(f'  ! нет {STATIC_APP_JS}')
-        failed.append('static/app.js')
-    else:
-        rc, _ = run([PY, '-c', ESPRIMA_CODE, STATIC_APP_JS], cwd=BASE, timeout=300)
-        if rc != 0:
-            failed.append('esprima static/app.js')
-
     cjs = sorted(glob.glob(os.path.join(FRONTEND, 'tests', '*.cjs')))
     if not cjs:
         print('  ! не найдено mobile-teacher-app-redesign/tests/*.cjs')
@@ -172,7 +156,7 @@ def phase_static() -> int:
     if failed:
         print(f'  СТАТИКА КРАСНАЯ: {", ".join(failed)}')
         return 1
-    print('  статика зелёная: tsc, vite build, esprima, node --test')
+    print('  статика зелёная: tsc, vite build, node --test')
     return 0
 
 

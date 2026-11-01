@@ -35,8 +35,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Python deps (pytest, flask, esprima)
-        run: pip install pytest flask openpyxl esprima
+      - name: Python deps (pytest, flask)
+        run: pip install pytest flask openpyxl
 
       - uses: actions/setup-node@v4
         with:

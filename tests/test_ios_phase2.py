@@ -83,13 +83,6 @@ def test_settings_gated():
     assert "isApkUpdaterAvailable" in t
 
 
-def test_legacy_gate():
-    p = ROOT / "static" / "app.js"
-    t = p.read_text(encoding="utf-8", errors="ignore")
-    assert "_isIOS" in t, "legacy _isIOS missing"
-    assert "TestFlight" in t, "legacy must notify TestFlight on iOS"
-
-
 def test_update_lib_gated():
     p = ROOT / "mobile-teacher-app-redesign" / "src" / "lib" / "update.ts"
     t = p.read_text(encoding="utf-8")

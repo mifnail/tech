@@ -1,4 +1,4 @@
-/* In-app updater: зеркало ванильного App.Update (static/app.js:174-237).
+/* In-app updater: наследник логики удалённого vanilla-фронтенда.
    GET /api/version → GET /api/update/check?current=ver → баннер/тосты.
    Ошибки сети — молча (как в ванили). Бэкенд update_bp не трогаем.
    Phase 2 iOS gate: APK updater выключен на iOS (TestFlight/App Store). */

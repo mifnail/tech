@@ -88,8 +88,6 @@ jobs:
           # UpdateBanner must gate
           grep -q "isIOS" mobile-teacher-app-redesign/src/components/UpdateBanner.tsx || (echo "::error::UpdateBanner iOS gate missing"; exit 1)
           grep -q "TestFlight" mobile-teacher-app-redesign/src/screens/Settings.tsx || (echo "::error::Settings iOS gate missing TestFlight"; exit 1)
-          # Legacy WebView gate
-          grep -q "_isIOS" static/app.js || (echo "::error::static/app.js _isIOS gate missing"; exit 1)
           # Dist must contain gate string (after npm run build)
           if grep -q "TestFlight" mobile-teacher-app-redesign/dist/index.html; then echo "dist gate OK (TestFlight)"; else echo "::warning::dist gate TestFlight not found (rebuild needed?)"; grep -q "isIOS" mobile-teacher-app-redesign/dist/index.html && echo "dist isIOS OK" || echo "::warning::dist isIOS not found"; fi
           ls -lh mobile-teacher-app-redesign/dist/index.html
@@ -283,7 +281,7 @@ jobs:
           VER=$(cat VERSION 2>/dev/null || echo "0.261")
           echo "### iOS Phase 2 — icons / version / APK gate" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Icons: 512/1024 + Briefcase icon=icon-1024.png; Version: $VER (from run_number); Gate: UpdateBanner/Settings gated via platform.ts isIOS + static/app.js _isIOS (TestFlight on iOS)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Icons: 512/1024 + Briefcase icon=icon-1024.png; Version: $VER (from run_number); Gate: UpdateBanner/Settings gated via platform.ts isIOS (TestFlight on iOS)" >> "$GITHUB_STEP_SUMMARY"
           echo "Bundle: com.teachhelper4 / TeachHelper, ATS NSAllowsLocalNetworking=true" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           ls -lh build/*.ipa 2>/dev/null | tee -a "$GITHUB_STEP_SUMMARY" || ls -lh *.ipa 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true

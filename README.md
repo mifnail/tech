@@ -20,7 +20,7 @@
 ## Стек
 
 - **Backend:** Python 3, Flask (REST API), SQLite (WAL)
-- **Frontend:** React + TypeScript + Vite (`mobile-teacher-app-redesign/`), singlefile-сборка под WebView; legacy — Vanilla JS SPA (`static/app.js`)
+- **Frontend:** React + TypeScript + Vite (`mobile-teacher-app-redesign/`), singlefile-сборка под WebView (legacy Vanilla JS удалён)
 - **Экспорт:** openpyxl (только `.xlsx`)
 - **Боты:** только стандартная библиотека Python + certifi (long-polling в фоне, общий транспорт — `botcore.py`)
 - **APK:** Buildozer (python-for-android, WebView bootstrap), сборка и подпись в GitHub Actions
@@ -36,8 +36,7 @@
 | `report_export.py` | Ведомости `.xlsx`: групповая и личная (одна строка студента) |
 | `tgbot.py` | Telegram-бот «Мои оценки» (read-only + постоянная клавиатура) |
 | `maxbot.py` | MAX-бот: сводки, файлы, пуши оценок, напоминания, кураторы |
-| `static/app.js`, `static/style.css` | Legacy SPA-интерфейс (до перехода на React) |
-| `mobile-teacher-app-redesign/` | React-фронт: исходники + `dist/index.html` (то, что раздаёт сервер и едет в APK) |
+| `mobile-teacher-app-redesign/` | Фронт: исходники + `dist/index.html` (то, что раздаёт сервер и едет в APK) |
 | `VERSION` | Версия приложения (читает `/api/version`; CI перезаписывает из номера релиза) |
 | `crash_reporter.py` | Сбор и отправка краш-отчётов |
 | `calendar_export.py` | Экспорт расписания/занятий в ICS |

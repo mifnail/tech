@@ -29,13 +29,13 @@ _pending: dict[tuple[int, int], threading.Timer] = {}
 CURATOR_PUSH_DELAY = 60.0  # grade-push debounce: 60s balances settle-window vs timer survival (was 180, debugged at 10)
 _pending_curator: dict[tuple[int, int], threading.Timer] = {}
 
-from flask import Flask, Blueprint, Response, request, jsonify, send_from_directory, send_file, g, has_request_context
+from flask import Flask, Blueprint, Response, request, jsonify, send_file, g, has_request_context
 
 from database import (Database, DatabaseBusyError, database_maintenance,
                       snapshot_database, _snapshot_database, checkpoint_database,
                       validate_database_file)
 
-app = Flask(__name__, static_folder='static', template_folder='templates')
+app = Flask(__name__)
 MAX_DATABASE_BYTES = 50 * 1024 * 1024
 app.config['MAX_CONTENT_LENGTH'] = MAX_DATABASE_BYTES + 1024 * 1024
 
@@ -250,16 +250,9 @@ def index():
         html = f.read()
     # Vite пишет doctype нижним регистром — нормализуем (валидный HTML).
     html = html.replace('<!doctype html>', '<!DOCTYPE html>', 1)
-    # Маркер версии статики (singlefile: внешних app.js/style.css нет, версия в документе).
-    html = html.replace('</head>', f'<!-- static: app.js?v={STATIC_VER} --></head>', 1)
+    # Маркер версии бандла (singlefile: внешних js/css нет, версия в документе).
+    html = html.replace('</head>', f'<!-- static: app.bundle?v={STATIC_VER} --></head>', 1)
     resp = Response(html, mimetype='text/html')
-    resp.headers['Cache-Control'] = 'no-store'
-    return resp
-
-
-@app.route('/static/<path:path>')
-def serve_static(path: str):
-    resp = send_from_directory('static', path)
     resp.headers['Cache-Control'] = 'no-store'
     return resp
 
