@@ -44,9 +44,8 @@
 | `AGENT.md` | Конституция проекта для разработчиков |
 | `docs/SPECIFICATION.md` | Подробная спецификация и архитектура |
 | `docs/DIAGRAMS.md` | Диаграммы для демонстрации + теория |
-| `docs/BRANCH-DIFF.md` | Расхождения веток main vs redesign (фичи, GAPы) |
+| `docs/archive/` | История: план для удалённого vanilla-фронта, сравнение веток, план переноса на React |
 | `docs/PRIVACY.md` | Политика приватности |
-| `docs/REACT-INTEGRATION-PLAN.md` | План переноса функционала на React |
 
 ## Возможности
 

@@ -734,6 +734,44 @@ def _now_iso() -> str:
     return time.strftime('%Y-%m-%d %H:%M:%S')
 
 
+# ── Журнал бота в файл ──────────────────────────────────────────────
+# print уходит в logcat, а на телефоне его не прочитать. Пишем рядом с базой
+# и показываем последние строки в настройках.
+LOG_MAX_BYTES = 200 * 1024
+
+
+def bot_log_path() -> str:
+    from database import DB_PATH
+    return os.path.join(os.path.dirname(DB_PATH), 'bot.log')
+
+
+def log_line(text: str) -> None:
+    """Дописать строку в журнал бота. Никогда не бросает."""
+    try:
+        path = bot_log_path()
+        try:
+            if os.path.getsize(path) > LOG_MAX_BYTES:
+                os.replace(path, path + '.1')
+        except OSError:
+            pass
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(f'{_now_iso()} {text}\n')
+    except Exception:
+        pass
+
+
+def read_log_tail(limit: int = 60) -> list[str]:
+    """Последние строки журнала (свежие в конце). Нет файла — пустой список."""
+    try:
+        with open(bot_log_path(), encoding='utf-8', errors='replace') as f:
+            rows = f.readlines()
+    except OSError:
+        return []
+    except Exception:
+        return []
+    return [r.rstrip('\n') for r in rows[-limit:]]
+
+
 def poll_state() -> dict:
     """Снимок состояния поллинга для экрана настроек."""
     with _poll_lock:
@@ -777,6 +815,7 @@ def _poll_factory():
         _poll_thread = thread
         _reset_poll_state()
         thread.start()
+        log_line('поллинг запущен')
         return thread
 
 
@@ -847,6 +886,7 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                 _poll_state['last_error_at'] = _now_iso()
                 _poll_state['consecutive_errors'] = consecutive
                 print(_poll_error_line(e, consecutive), flush=True)
+                log_line(_poll_error_line(e, consecutive))
                 time.sleep(ERROR_PAUSE)
                 continue
             for u in updates or []:
@@ -1029,6 +1069,7 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                     except Exception:
                         pass
             if updates:
+                log_line(f'получено сообщений: {len(updates)}')
                 _poll_state['last_update_at'] = _now_iso()
                 _poll_state['updates_total'] = _poll_state.get('updates_total', 0) + len(updates)
             if new_marker is not None:
@@ -1041,6 +1082,7 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
             _poll_state['last_error_at'] = _now_iso()
             _poll_state['consecutive_errors'] = consecutive
             print(_poll_error_line(e, consecutive), flush=True)
+            log_line(_poll_error_line(e, consecutive))
             try:
                 time.sleep(ERROR_PAUSE)
             except Exception:
@@ -1107,29 +1149,64 @@ def due_teacher_digest(hour: int, last_sent: str | None, today: str) -> bool:
     return hour == 7 and last_sent != today
 
 
+def _pending_digest_block(db, today_iso: str, limit: int = 3) -> str:
+    """Блок «незаполненные пары» для утреннего дайджеста.
+
+    Пустая строка, если таких нет — иначе дайджест каждый день заканчивался
+    бы фразой «незаполненных нет», которая ничего не сообщает.
+    """
+    try:
+        rows = [dict(r) for r in db.list_pending_lessons(today_iso)]
+    except Exception:
+        return ''
+    if not rows:
+        return ''
+    total = len(rows)
+    head = f'Незаполненные пары: {total}' if total > 1 else 'Незаполненная пара:'
+    lines = [head]
+    for r in rows[:limit]:
+        raw = r.get('date') or ''
+        day = f'{raw[8:10]}.{raw[5:7]}' if len(raw) >= 10 else raw
+        pair = r.get('lesson_number')
+        parts = [day, f'пара {pair}' if pair else 'без номера']
+        if r.get('group_name'):
+            parts.append(str(r['group_name']))
+        if r.get('subject_name'):
+            parts.append(str(r['subject_name']))
+        lines.append('• ' + ' · '.join(parts))
+    if total > limit:
+        lines.append(f'…и ещё {total - limit}')
+    lines.append('Заполнить или отменить — на экране «Сегодня».')
+    return '\n'.join(lines)
+
+
 def teacher_targets(db, today_iso: str) -> str:
-    """List today's held lessons with marks count."""
+    """Утренний дайджест: сегодняшние пары + незаполненные прошедшие."""
     # held lessons for today
     lessons = [dict(r) for r in db.list_lessons_by_date(today_iso)]
     # filter held
     held = [l for l in lessons if l.get('status') == 'held']
     if not held:
-        return 'Сегодня занятий нет.'
-    lines = []
-    date_label = _fmt_date_short(today_iso)
-    header = f"Дайджест {date_label}:" if date_label else "Дайджест:"
-    # group? just list each
-    for l in held:
-        subj = l.get('actual_subject_name') or l.get('planned_subject') or l.get('subject_name') or '?'
-        try:
-            cnt = db.attendance_count(l['id'])
-        except Exception:
-            cnt = 0
-        if cnt == 0:
-            lines.append(f"• {subj}: ПУСТО")
-        else:
-            lines.append(f"• {subj}: {cnt} оценок")
-    return header + "\n" + "\n".join(lines)
+        text = 'Сегодня занятий нет.'
+    else:
+        lines = []
+        date_label = _fmt_date_short(today_iso)
+        header = f"Дайджест {date_label}:" if date_label else "Дайджест:"
+        # group? just list each
+        for l in held:
+            subj = l.get('actual_subject_name') or l.get('planned_subject') or l.get('subject_name') or '?'
+            try:
+                cnt = db.attendance_count(l['id'])
+            except Exception:
+                cnt = 0
+            if cnt == 0:
+                lines.append(f"• {subj}: ПУСТО")
+            else:
+                lines.append(f"• {subj}: {cnt} оценок")
+        text = header + "\n" + "\n".join(lines)
+
+    pending = _pending_digest_block(db, today_iso)
+    return text + ("\n\n" + pending if pending else "")
 
 
 def run_reminders(token: str, db_factory, stop_event=None):

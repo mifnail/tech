@@ -159,6 +159,17 @@ function MaxPollBlock({ checkKey }: { checkKey: number }) {
   const toast = useToast();
   const [poll, setPoll] = useState<MaxPoll | null>(null);
   const [busy, setBusy] = useState<null | "restart" | "marker">(null);
+  const [logOpen, setLogOpen] = useState(false);
+  const [logLines, setLogLines] = useState<string[]>([]);
+
+  const loadLog = async () => {
+    try {
+      const r = await fetch("/api/settings/maxbot/log?lines=60");
+      if (!r.ok) return;
+      const j = (await r.json()) as { lines?: string[] };
+      setLogLines(Array.isArray(j?.lines) ? j.lines : []);
+    } catch (_) { /* тихо */ }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -237,6 +248,22 @@ function MaxPollBlock({ checkKey }: { checkKey: number }) {
           {busy === "marker" ? "Сброс…" : "Сбросить маркер"}
         </Btn>
       </div>
+
+      <button
+        className="mt-2 text-[12px] font-bold text-accent active:opacity-70"
+        onClick={() => {
+          const next = !logOpen;
+          setLogOpen(next);
+          if (next) void loadLog();
+        }}
+      >
+        {logOpen ? "Скрыть журнал" : "Журнал бота"}
+      </button>
+      {logOpen && (
+        <pre className="mt-1.5 max-h-44 overflow-auto rounded-lg border border-line bg-surface2 p-2 text-[10.5px] leading-snug whitespace-pre-wrap break-words text-muted">
+          {logLines.length ? logLines.join("\n") : "Журнал пуст"}
+        </pre>
+      )}
     </div>
   );
 }

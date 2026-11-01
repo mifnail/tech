@@ -1402,14 +1402,54 @@ def download_report(date: str, fmt: str):
         return _missing_deps_response(e)
 
 
+ICS_MIME = 'text/calendar'
+
+
+def _ics_bytes(kind: str) -> bytes:
+    """Собрать .ics: kind = 'lessons' (проведённые) или 'schedule' (расписание)."""
+    import calendar_export
+
+    if kind == 'lessons':
+        return calendar_export.export_lessons_to_ics(get_db()).encode('utf-8')
+    return calendar_export.generate_schedule_ics(get_db()).encode('utf-8')
+
+
 @export_bp.route('/lessons.ics')
 def download_lessons_ics():
-    return 'Only xlsx is enabled', 400
+    try:
+        data = _ics_bytes('lessons')
+    except Exception as e:
+        return jsonify({'error': f'ics export failed: {e}'}), 500
+    return send_file(io.BytesIO(data), mimetype=ICS_MIME,
+                     as_attachment=True, download_name='lessons.ics')
 
 
 @export_bp.route('/schedule.ics')
 def download_schedule_ics():
-    return 'Only xlsx is enabled', 400
+    try:
+        data = _ics_bytes('schedule')
+    except Exception as e:
+        return jsonify({'error': f'ics export failed: {e}'}), 500
+    return send_file(io.BytesIO(data), mimetype=ICS_MIME,
+                     as_attachment=True, download_name='schedule.ics')
+
+
+@export_bp.route('/schedule.ics/share', methods=['POST'])
+def share_schedule_ics():
+    try:
+        data = _ics_bytes('schedule')
+    except Exception as e:
+        return jsonify({'error': f'ics export failed: {e}'}), 500
+    return _save_and_share(data, 'schedule.ics', ICS_MIME)
+
+
+@export_bp.route('/lessons.ics/share', methods=['POST'])
+def share_lessons_ics():
+    try:
+        data = _ics_bytes('lessons')
+    except Exception as e:
+        return jsonify({'error': f'ics export failed: {e}'}), 500
+    return _save_and_share(data, 'lessons.ics', ICS_MIME)
 
 
 # ---- Telegram bot settings ----
@@ -1543,6 +1583,19 @@ def maxbot_status():
         'marker': db.get_setting('max_last_marker'),
         'poll': maxbot.poll_state(),
     })
+
+
+@maxbot_bp.route('/log', methods=['GET'])
+def maxbot_log():
+    """Последние строки журнала бота.
+
+    Панель состояния показывает текущее, а журнал — историю: без него
+    плавающий сбой виден только в момент, когда его поймали.
+    """
+    import maxbot
+    limit = request.args.get('lines', default=60, type=int) or 60
+    limit = max(1, min(limit, 200))
+    return jsonify({'lines': maxbot.read_log_tail(limit)})
 
 
 @maxbot_bp.route('/restart', methods=['POST'])
@@ -1835,16 +1888,16 @@ def save_report_to_downloads(date: str):
     return jsonify({'ok': True, 'path': where})
 
 
-def _save_and_share(data: bytes, filename: str):
+def _save_and_share(data: bytes, filename: str, mimetype: str = XLSX_MIME):
     """Сохранить в Загрузки и открыть шторку. Файл остаётся, даже если шаринг не вышел."""
     try:
-        where, uri = _save_to_downloads_full(data, filename, XLSX_MIME)
+        where, uri = _save_to_downloads_full(data, filename, mimetype)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     if uri is None:
         return jsonify({'error': 'share available only on Android'}), 400
     try:
-        _share_file(uri, XLSX_MIME, where.rsplit('/', 1)[-1])
+        _share_file(uri, mimetype, where.rsplit('/', 1)[-1])
     except Exception as e:
         return jsonify({'ok': True, 'path': where, 'shared': False, 'error': str(e)})
     return jsonify({'ok': True, 'path': where, 'shared': True})

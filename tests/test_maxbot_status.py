@@ -142,3 +142,93 @@ class TestPollFactory:
     def test_state_reports_not_alive_when_thread_missing(self, monkeypatch):
         monkeypatch.setattr(maxbot, '_poll_thread', None)
         assert maxbot.poll_state()['alive'] is False
+
+
+class TestBotLog:
+    def test_write_and_read(self, tmp_path, monkeypatch):
+        monkeypatch.setattr('database.DB_PATH', str(tmp_path / 'lessons.db'))
+
+        maxbot.log_line('поллинг запущен')
+        maxbot.log_line('ошибка сети')
+
+        lines = maxbot.read_log_tail(10)
+        assert len(lines) == 2
+        assert lines[0].endswith('поллинг запущен')
+        assert 'ошибка сети' in lines[1]
+
+    def test_missing_file_is_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr('database.DB_PATH', str(tmp_path / 'lessons.db'))
+        assert maxbot.read_log_tail() == []
+
+    def test_tail_limit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr('database.DB_PATH', str(tmp_path / 'lessons.db'))
+        for i in range(10):
+            maxbot.log_line(f'строка {i}')
+
+        lines = maxbot.read_log_tail(3)
+
+        assert len(lines) == 3
+        assert lines[-1].endswith('строка 9')
+
+    def test_rotation_keeps_one_backup(self, tmp_path, monkeypatch):
+        monkeypatch.setattr('database.DB_PATH', str(tmp_path / 'lessons.db'))
+        monkeypatch.setattr(maxbot, 'LOG_MAX_BYTES', 80)
+
+        for _ in range(10):
+            maxbot.log_line('x' * 30)
+
+        assert (tmp_path / 'bot.log').exists()
+        assert (tmp_path / 'bot.log.1').exists()
+
+    def test_endpoint_returns_lines(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr('database.DB_PATH', str(tmp_path / 'lessons.db'))
+        maxbot.log_line('строка из теста')
+
+        j = client.get('/api/settings/maxbot/log?lines=5').json
+
+        assert any('строка из теста' in line for line in j['lines'])
+
+
+class TestBotLog:
+    def test_write_and_read(self, tmp_path, monkeypatch):
+        monkeypatch.setattr('database.DB_PATH', str(tmp_path / 'lessons.db'))
+
+        maxbot.log_line('поллинг запущен')
+        maxbot.log_line('ошибка сети')
+
+        lines = maxbot.read_log_tail(10)
+        assert len(lines) == 2
+        assert lines[0].endswith('поллинг запущен')
+        assert 'ошибка сети' in lines[1]
+
+    def test_missing_file_is_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr('database.DB_PATH', str(tmp_path / 'lessons.db'))
+        assert maxbot.read_log_tail() == []
+
+    def test_tail_limit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr('database.DB_PATH', str(tmp_path / 'lessons.db'))
+        for i in range(10):
+            maxbot.log_line(f'строка {i}')
+
+        lines = maxbot.read_log_tail(3)
+
+        assert len(lines) == 3
+        assert lines[-1].endswith('строка 9')
+
+    def test_rotation_keeps_one_backup(self, tmp_path, monkeypatch):
+        monkeypatch.setattr('database.DB_PATH', str(tmp_path / 'lessons.db'))
+        monkeypatch.setattr(maxbot, 'LOG_MAX_BYTES', 80)
+
+        for _ in range(10):
+            maxbot.log_line('x' * 30)
+
+        assert (tmp_path / 'bot.log').exists()
+        assert (tmp_path / 'bot.log.1').exists()
+
+    def test_endpoint_returns_lines(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr('database.DB_PATH', str(tmp_path / 'lessons.db'))
+        maxbot.log_line('строка из теста')
+
+        j = client.get('/api/settings/maxbot/log?lines=5').json
+
+        assert any('строка из теста' in line for line in j['lines'])

@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  CalendarOff, ChevronLeft, ChevronRight, Pencil, Play, Plus,
+  CalendarOff, CalendarPlus, ChevronLeft, ChevronRight, Pencil, Play, Plus,
 } from "lucide-react";
 import { useDB, useVersion, store } from "../lib/store";
 import {
@@ -40,6 +40,35 @@ export default function ScheduleScreen() {
   const [selectedISO, setSelectedISO] = useState(today);
   const [newLessonOpen, setNewLessonOpen] = useState(false);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [exporting, setExporting] = useState(false);
+
+  // Выгрузка расписания в календарь: на Android — файл в Загрузки + шторка,
+  // на десктопе share недоступен (400) — прямая ссылка на .ics.
+  const exportCalendar = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const r = await fetch("/api/export/schedule.ics/share", { method: "POST" });
+      if (!r.ok) throw new Error("share unavailable");
+      const j = (await r.json()) as { shared?: boolean; error?: string };
+      toast(
+        j.shared === false
+          ? `Файл сохранён, шторка не открылась: ${j.error || ""}`
+          : "Файл в Загрузках — откройте его календарём",
+      );
+    } catch (_) {
+      const a = document.createElement("a");
+      a.href = "/api/export/schedule.ics";
+      a.download = "schedule.ics";
+      a.target = "_blank";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 1500);
+      toast("Расписание сохранено (.ics)");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // Форма добавления
   const [fGroup, setFGroup] = useState("");
@@ -216,7 +245,17 @@ export default function ScheduleScreen() {
       <BigHeader
         kicker={`${formatDotShort(monday)} – ${formatDotShort(addDaysISO(monday, 6))}`}
         title="Расписание"
-        actions={<IconBtn icon={Plus} label="Добавить пару" onClick={openAdd} className="bg-surface border border-line" />}
+        actions={
+          <>
+            <IconBtn
+              icon={CalendarPlus}
+              label="Выгрузить в календарь"
+              onClick={exportCalendar}
+              className="bg-surface border border-line"
+            />
+            <IconBtn icon={Plus} label="Добавить пару" onClick={openAdd} className="bg-surface border border-line" />
+          </>
+        }
       />
 
       {/* Лента дат: неделя (пн–вс) со стрелками ←/→ и кнопкой «Сегодня» */}
