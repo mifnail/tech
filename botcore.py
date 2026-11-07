@@ -8,6 +8,10 @@ import time
 import urllib.error
 import urllib.request
 
+from log_config import get_logger
+
+logger = get_logger('botcore')
+
 MAX_TEXT = 4000
 
 WELCOME = ('Привет! Я журнал «Учет занятий».\n'
@@ -28,7 +32,8 @@ def _ctx():
     try:
         import certifi
         return ssl.create_default_context(cafile=certifi.where())
-    except Exception:
+    except Exception as exc:
+        logger.debug("_ctx: пропущено: %s", exc)
         return ssl.create_default_context()
 
 
@@ -38,7 +43,8 @@ _UNVERIFIED_CTX = ssl._create_unverified_context()
 def _read_body(resp) -> dict:
     try:
         raw = resp.read()
-    except Exception:
+    except Exception as exc:
+        logger.debug("_read_body: пропущено: %s", exc)
         return {}
     if not raw:
         return {}
@@ -141,47 +147,48 @@ def supervise(name, target_factory, interval=60):
             try:
                 worker.name = name
                 worker.daemon = True
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("не удалось настроить поток %s: %s", name, exc)
             if not worker.is_alive():
                 try:
                     worker.start()
-                except Exception:
-                    pass
-    except Exception:
-        pass
+                except Exception as exc:
+                    logger.warning("не удалось запустить поток %s: %s", name, exc, exc_info=True)
+    except Exception as exc:
+        logger.warning("не удалось создать поток %s: %s", name, exc, exc_info=True)
 
     def _sup_loop():
         nonlocal worker
         while True:
             try:
                 time.sleep(interval)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("_sup_loop: пропущено: %s", exc)
             try:
                 if worker is None or not worker.is_alive():
                     try:
                         new_worker = target_factory()
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning("не удалось перезапустить поток %s: %s", name, exc, exc_info=True)
                         continue
                     if isinstance(new_worker, threading.Thread):
                         try:
                             new_worker.name = name
                             new_worker.daemon = True
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("_sup_loop: ошибка обработана: %s", exc, exc_info=True)
                         if not new_worker.is_alive():
                             try:
                                 new_worker.start()
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.warning("не удалось поднять перезапущенный поток %s: %s", name, exc, exc_info=True)
                     worker = new_worker
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("_sup_loop: ошибка обработана: %s", exc, exc_info=True)
 
     supervisor = threading.Thread(target=_sup_loop, daemon=True, name=f"{name}-supervisor")
     try:
         supervisor.start()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("не удалось запустить супервизор %s: %s", name, exc, exc_info=True)
     return (worker, supervisor)

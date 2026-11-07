@@ -52,11 +52,9 @@ app_settings (key, value)                          — токены, код пр
 - `main.py` — точка входа Flask + фоновые боты.
 - `botcore.py` — общий HTTP-транспорт ботов (SSL, ретраи, тексты).
 - `maxbot.py` — MAX-бот: сводки, файлы, пуши, напоминания, кураторы, дайджест.
-- `tgbot.py` — Telegram-бот «Мои оценки» (read-only + постоянная клавиатура).
-- `calendar_export.py` — экспорт расписания/занятий в .ics.
+- `tgbot.py` — Telegram-бот «Мои оценки» (read-only + постоянная клавиатура).- `calendar_export.py` — экспорт расписания/занятий в .ics.
 - `report_export.py` — ведомости `.xlsx` (групповая и личная).
 - `schedule_file.py` — парсер schedule.txt.
-- `crash_reporter.py` — обработка исключений.
 - `seed_db.py` — тестовая БД.
 - `mobile-teacher-app-redesign/` — фронтенд: исходники + `dist/index.html` (то, что раздаёт сервер и едет в APK).
 - `tests/` — автотесты (pytest, 586+).
@@ -80,17 +78,29 @@ app_settings (key, value)                          — токены, код пр
   локального запуска; следи, чтобы он не отставал от последнего релиза.
 
 ### Правила журнала и ошибок
-- В бэкенде **нельзя** использовать `print` и `except Exception: pass` —
+- В бэкенде **и в ботах** нельзя использовать `print` и `except ...: pass` —
   только `logger` из `log_config.py`. Это проверяется тестом
-  `tests/test_logging.py`.
-- Журнал (`flask.log`, `bot.log`) лежит рядом с базой и **никуда не
-  отправляется**: на Android это PRIVATE storage приложения.
+  `tests/test_logging.py` (в том числе для `botcore.py`, `maxbot.py`,
+  `tgbot.py`).
+- Два потока: `bot.log` — события для пользователя (запуск, сообщения),
+  `flask.log` — технические WARNING/ERROR всего бэкенда и ботов. Оба лежат
+  рядом с базой и **никуда не отправляются**: на Android это PRIVATE storage.
+  «Журнал бота» в настройках показывает оба потока: события + ошибки.
 - Ошибку, которая «не должна ронять» операцию, логируем явно: уровень
   `warning` — потеряли результат (уведомление, бэкап), `debug` —
   ожидаемый fallback (Android-мост, закрытие дескриптора).
 - **Новую прикладную логику писать в `services.py`**, а не в `api.py`.
   Дублировать реализацию в двух местах нельзя — проверяет
   `tests/test_services.py`.
+
+### Правила сборки APK
+- `source.exclude_dirs` в buildozer 1.6.0 — **префикс относительного пути
+  каталога**, а не имя на любой глубине. Для вложенных каталогов нужен
+  полный путь (`mobile-teacher-app-redesign/node_modules`).
+- `source.exclude_patterns` — fnmatch по полному относительному пути файла.
+- Перед правкой этих списков запускать `tests/test_buildozer_spec.py`: он
+  точно эмулирует `_copy_application_sources` из buildozer 1.6.0 и считает
+  реальный payload (сейчас 16 файлов).
 
 ## 6. Сборка APK (CI)
 - Триггер: push в репозиторий.

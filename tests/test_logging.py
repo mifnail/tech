@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,60 @@ def test_read_log_tail_without_file_is_empty(tmp_path, monkeypatch):
     assert log_config.read_log_tail(10) == []
 
 
+def test_read_bot_errors_tail_filters_by_logger_and_level(tmp_path, monkeypatch):
+    """В «Журнал бота» попадают только WARNING/ERROR модулей ботов."""
+    monkeypatch.setattr(log_config, '_configured', False)
+    monkeypatch.setattr(log_config, '_log_file', None)
+    log = log_config.configure_logging(tmp_path / 'lessons.db', stream=False)
+    try:
+        log.info('teachhelper.maxbot: событие')       # не ошибка — не должно попасть
+        log_config.get_logger('services').warning('ошибка сервиса')  # не бот
+        log_config.get_logger('maxbot').warning('сбой поллинга')
+        log_config.get_logger('tgbot').error('сбой телеграма')
+        for handler in log.handlers:
+            handler.flush()
+        errors = log_config.read_bot_errors_tail(10)
+        joined = '\n'.join(errors)
+        assert 'сбой поллинга' in joined
+        assert 'сбой телеграма' in joined
+        assert 'событие' not in joined
+        assert 'ошибка сервиса' not in joined
+    finally:
+        for handler in list(log.handlers):
+            log.removeHandler(handler)
+            handler.close()
+        monkeypatch.setattr(log_config, '_configured', False)
+        monkeypatch.setattr(log_config, '_log_file', None)
+
+
+def test_read_bot_errors_tail_without_file_is_empty(monkeypatch):
+    monkeypatch.setattr(log_config, '_log_file', None)
+    assert log_config.read_bot_errors_tail(10) == []
+
+
+def test_bot_modules_log_instead_of_swallowing_errors():
+    """Боты не должны молча глотать ошибки — проверяем три модуля."""
+    import botcore
+    import maxbot
+    import tgbot
+    for module in (botcore, maxbot, tgbot):
+        source = Path(module.__file__).read_text(encoding='utf-8')
+        assert 'get_logger' in source, f'{module.__name__} не использует logger'
+        lines = source.split('\n')
+        for i, line in enumerate(lines):
+            if re.match(r'\s*except\b.*:\s*$', line):
+                j = i + 1
+                while j < len(lines) and lines[j].strip() == '':
+                    j += 1
+                if j < len(lines) and lines[j].strip() == 'pass':
+                    raise AssertionError(
+                        f'{module.__name__}:{i + 1} тихий except: {line.strip()}')
+        for i, line in enumerate(source.split('\n')):
+            stripped = line.strip()
+            if stripped.startswith('print(') or ' print(' in stripped:
+                raise AssertionError(f'{module.__name__}:{i + 1} остался print')
+
+
 def test_get_logger_is_silent_without_configuration(caplog):
     """Без настройки журнала записи не должны попадать в stderr."""
     logger = log_config.get_logger('тест')
@@ -106,6 +161,19 @@ def test_api_has_no_print_calls():
         stripped = line.strip()
         if stripped.startswith('print(') or ' print(' in stripped:
             raise AssertionError(f'print на строке {i + 1}: {stripped}')
+
+
+def test_dead_crash_reporter_is_gone():
+    """crash_reporter.py был мёртв и умел слать отчёты в сеть.
+
+    Удалён: приватные данные студентов не должны покидать устройство,
+    а необработанные исключения теперь пишутся в flask.log.
+    """
+    root = Path(api_module.__file__).resolve().parent
+    assert not (root / 'crash_reporter.py').exists()
+    for name in ('AGENT.md', 'README.md', '.github/workflows/build-apk.yml'):
+        text = (root / name).read_text(encoding='utf-8')
+        assert 'crash_reporter' not in text, f'{name} всё ещё ссылается на crash_reporter'
 
 
 # ── api.py: обработчики ошибок ─────────────────────────────────────────────
@@ -168,6 +236,17 @@ def test_app_log_endpoint(client):
     body = rv.get_json()
     assert 'lines' in body
     assert isinstance(body['lines'], list)
+
+
+def test_maxbot_log_endpoint_includes_errors(client, monkeypatch):
+    """Экран настроек получает и события bot.log, и ошибки flask.log."""
+    import log_config
+    monkeypatch.setattr(log_config, 'read_bot_errors_tail', lambda limit=30: ['сбой поллинга'])
+    rv = client.get('/api/settings/maxbot/log?lines=5')
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert isinstance(body['lines'], list)
+    assert body['errors'] == ['сбой поллинга']
 
 
 def test_app_log_endpoint_caps_limit(client):

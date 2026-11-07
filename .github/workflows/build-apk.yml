@@ -23,7 +23,6 @@ on:
       - 'maxbot.py'
       - 'botcore.py'
       - 'tests/**'
-      - 'crash_reporter.py'
       - 'seed_db.py'
       - 'schedule_file.py'
       - '.github/workflows/build-apk.yml'

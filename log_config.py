@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import re
 from pathlib import Path
 
 LOGGER_NAME = 'teachhelper'
@@ -97,6 +98,42 @@ def configure_logging(db_path, *, level: int = logging.INFO,
 def current_log_path() -> Path | None:
     """Путь активного журнала или None, если файла нет."""
     return _log_file
+
+
+# Технические ошибки ботов пишутся в общий flask.log, а события для
+# пользователя — в bot.log. Экран настроек показывает оба потока.
+BOT_LOGGERS = ('teachhelper.botcore', 'teachhelper.maxbot', 'teachhelper.tgbot')
+
+
+def read_bot_errors_tail(limit: int = 30) -> list[str]:
+    """Последние WARNING/ERROR от модулей ботов из flask.log.
+
+    Многострочные traceback-записи сохраняем целиком: без стека по строке
+    «ошибка обработана» невозможно понять, что именно сломалось.
+    """
+    if _log_file is None:
+        return []
+    try:
+        with open(_log_file, encoding='utf-8', errors='replace') as f:
+            rows = [row.rstrip('\n') for row in f.readlines()]
+    except OSError:
+        return []
+
+    records: list[list[str]] = []
+    current: list[str] | None = None
+    for row in rows:
+        # Начало записи: "2026-11-07 14:43:38 WARNING teachhelper.maxbot: ..."
+        if re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ', row):
+            if current:
+                records.append(current)
+            current = [row] if any(n in row for n in BOT_LOGGERS) and (
+                ' WARNING ' in row or ' ERROR ' in row) else None
+        elif current is not None:
+            current.append(row)
+    if current:
+        records.append(current)
+
+    return [line for record in records[-limit:] for line in record]
 
 
 def read_log_tail(limit: int = 60) -> list[str]:

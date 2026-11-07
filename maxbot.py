@@ -16,6 +16,10 @@ import tempfile
 import threading
 import time
 import urllib.error
+
+from log_config import get_logger
+
+logger = get_logger('maxbot')
 import urllib.parse
 import urllib.request
 from datetime import date, timedelta
@@ -271,7 +275,8 @@ def schedule_text(db, student_id: int) -> str:
         week_type = 1 if week_num % 2 == 1 else 2
         try:
             rows = db.get_schedule_for_day(isow, week_type)
-        except Exception:
+        except Exception as exc:
+            logger.debug("schedule_text: пропущено: %s", exc)
             rows = []
         filtered = [dict(r) for r in rows if r['group_id'] == group_id]
         if filtered:
@@ -295,7 +300,8 @@ def avg_text(db, student_id: int) -> str:
         g_str = str(g_raw).strip()
         try:
             g = int(g_str)
-        except Exception:
+        except Exception as exc:
+            logger.debug("avg_text: пропущено: %s", exc)
             continue
         if g < 2 or g > 5:
             continue
@@ -327,13 +333,15 @@ def debts_text(db, student_id: int) -> str:
     group_id = st['group_id']
     try:
         subjects = [dict(r) for r in db.list_subjects(group_id)]
-    except Exception:
+    except Exception as exc:
+        logger.debug("debts_text: пропущено: %s", exc)
         subjects = []
     debts = []
     for subj in subjects:
         try:
             grades = db.student_grades(student_id, subj['id'])
-        except Exception:
+        except Exception as exc:
+            logger.debug("debts_text: пропущено: %s", exc)
             grades = []
         if not grades:
             debts.append(subj['name'])
@@ -400,8 +408,8 @@ def process_text(text: str, chat_id: int, db) -> str:
             grp = db.conn.execute("SELECT name FROM groups WHERE id=?", (gid,)).fetchone()
             name = grp['name'] if grp else str(gid)
             return f'Привязан как куратор группы {name}.'
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("process_text: ошибка обработана: %s", exc, exc_info=True)
     # teacher-bound early routing (after existing /teacher and /curator prefix blocks, BEFORE curator-bound check)
     if str(db.get_setting('max_teacher_chat')) == str(chat_id):
         if low in ('/vedomost', 'ведомость'):
@@ -504,9 +512,10 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
         finally:
             try:
                 db.close()
-            except Exception:
-                pass
-    except Exception:
+            except Exception as exc:
+                logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
+    except Exception as exc:
+        logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
         send_message(token, cid, 'Ошибка восстановления базы.', urlopen=urlopen)
         return
 
@@ -515,8 +524,8 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
             send_message(token, cid,
                          'Полную базу может восстановить только преподаватель.',
                          urlopen=urlopen)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
         return
 
     # Download file bytes
@@ -528,18 +537,19 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
         resp = open_raw_with_fallback(req, urlopen=urlopen, timeout=60)
         with resp:
             data = resp.read(_MAX_FILE_RESTORE_CAP + 1)
-    except Exception:
+    except Exception as exc:
+        logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
         try:
             send_message(token, cid, 'Не удалось загрузить файл.', urlopen=urlopen)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
         return
 
     if len(data) > _MAX_FILE_RESTORE_CAP:
         try:
             send_message(token, cid, 'Файл слишком большой (макс. 50 МБ).', urlopen=urlopen)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
         return
 
     # Validate SQLite + required tables (delegates to api)
@@ -549,19 +559,20 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
     except ValueError as e:
         try:
             send_message(token, cid, 'Это не файл базы. Пришлите .db из Загрузок (обычно teachhelper_…db).', urlopen=urlopen)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
         return
 
     # Restore: delegate to api._restore_from_bytes (includes backup + atomic replace)
     try:
         import api as _api
         _api._restore_from_bytes(data)
-    except Exception:
+    except Exception as exc:
+        logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
         try:
             send_message(token, cid, 'Ошибка восстановления базы.', urlopen=urlopen)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
         return
 
     # Do not copy student/curator bindings by numeric ID into an unrelated
@@ -570,8 +581,8 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
     try:
         with Database() as restored:
             restored.set_setting('max_teacher_chat', str(cid))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
 
     # Report success with counts
     try:
@@ -586,11 +597,12 @@ def _handle_file_restore(token: str, cid: int, file_att: dict, db_factory, urlop
         send_message(token, cid,
                      f'База восстановлена из {fname}: {n_students} студентов, {n_grades} оценок',
                      urlopen=urlopen)
-    except Exception:
+    except Exception as exc:
+        logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
         try:
             send_message(token, cid, 'База восстановлена.', urlopen=urlopen)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("_handle_file_restore: ошибка обработана: %s", exc, exc_info=True)
 
 
 def _handle_vedomost(token: str, chat_id: int, db_factory, urlopen=None):
@@ -622,12 +634,13 @@ def _handle_vedomost(token: str, chat_id: int, db_factory, urlopen=None):
             time.sleep(0.6)
         if not sent_any:
             send_message(token, chat_id, 'Оценок пока нет.', urlopen=urlopen)
-    except Exception:
+    except Exception as exc:
+        logger.warning("_handle_vedomost: ошибка обработана: %s", exc, exc_info=True)
         try:
             send_message(token, chat_id,
                          'Ошибка при формировании ведомости.', urlopen=urlopen)
-        except MaxError:
-            pass
+        except MaxError as exc:
+            logger.warning("сообщение об ошибке не отправлено: %s", exc)
     finally:
         db.close()
 
@@ -648,7 +661,8 @@ def _handle_curator_vedomost(token: str, chat_id: int, db_factory, urlopen=None)
                 cnt = db.conn.execute(
                     "SELECT COUNT(*) FROM grades JOIN lessons ON grades.lesson_id=lessons.id WHERE lessons.actual_subject_id=? AND lessons.status NOT IN ('cancelled','replaced')",
                     (subj['id'],)).fetchone()[0]
-            except Exception:
+            except Exception as exc:
+                logger.warning("_handle_curator_vedomost: ошибка обработана: %s", exc, exc_info=True)
                 cnt = 0
             if cnt == 0:
                 continue
@@ -659,11 +673,12 @@ def _handle_curator_vedomost(token: str, chat_id: int, db_factory, urlopen=None)
             time.sleep(0.6)
         if not sent_any:
             send_message(token, chat_id, 'Оценок пока нет.', urlopen=urlopen)
-    except Exception:
+    except Exception as exc:
+        logger.warning("_handle_curator_vedomost: ошибка обработана: %s", exc, exc_info=True)
         try:
             send_message(token, chat_id, 'Ошибка при формировании ведомости.', urlopen=urlopen)
-        except MaxError:
-            pass
+        except MaxError as exc:
+            logger.warning("сообщение об ошибке не отправлено: %s", exc)
     finally:
         db.close()
 
@@ -684,7 +699,8 @@ def _handle_teacher_vedomost(token: str, chat_id: int, db_factory, urlopen=None)
                 cnt = db.conn.execute(
                     "SELECT COUNT(*) FROM grades JOIN lessons ON grades.lesson_id=lessons.id WHERE lessons.actual_subject_id=? AND lessons.status NOT IN ('cancelled','replaced')",
                     (subj['id'],)).fetchone()[0]
-            except Exception:
+            except Exception as exc:
+                logger.warning("_handle_teacher_vedomost: ошибка обработана: %s", exc, exc_info=True)
                 cnt = 0
             if cnt == 0:
                 continue
@@ -695,11 +711,12 @@ def _handle_teacher_vedomost(token: str, chat_id: int, db_factory, urlopen=None)
             time.sleep(0.6)
         if not sent_any:
             send_message(token, chat_id, 'Оценок пока нет.', urlopen=urlopen)
-    except Exception:
+    except Exception as exc:
+        logger.warning("_handle_teacher_vedomost: ошибка обработана: %s", exc, exc_info=True)
         try:
             send_message(token, chat_id, 'Ошибка при формировании ведомости.', urlopen=urlopen)
-        except MaxError:
-            pass
+        except MaxError as exc:
+            logger.warning("сообщение об ошибке не отправлено: %s", exc)
     finally:
         db.close()
 
@@ -752,12 +769,12 @@ def log_line(text: str) -> None:
         try:
             if os.path.getsize(path) > LOG_MAX_BYTES:
                 os.replace(path, path + '.1')
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("ротация bot.log пропущена: %s", exc)
         with open(path, 'a', encoding='utf-8') as f:
             f.write(f'{_now_iso()} {text}\n')
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("log_line: ошибка обработана: %s", exc, exc_info=True)
 
 
 def read_log_tail(limit: int = 60) -> list[str]:
@@ -767,7 +784,8 @@ def read_log_tail(limit: int = 60) -> list[str]:
             rows = f.readlines()
     except OSError:
         return []
-    except Exception:
+    except Exception as exc:
+        logger.debug("read_log_tail: пропущено: %s", exc)
         return []
     return [r.rstrip('\n') for r in rows[-limit:]]
 
@@ -854,8 +872,8 @@ def reset_marker_and_restart(token: str) -> None:
             db.set_setting('max_last_marker', None)
         finally:
             db.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("reset_marker_and_restart: ошибка обработана: %s", exc, exc_info=True)
     restart_polling(token)
 
 
@@ -869,9 +887,10 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
         finally:
             try:
                 db0.close()
-            except Exception:
-                pass
-    except Exception:
+            except Exception as exc:
+                logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
+    except Exception as exc:
+        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
         marker = None
     while stop_event is None or not stop_event.is_set():
         try:
@@ -885,7 +904,7 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                 _poll_state['last_error'] = f'{type(e).__name__}: {e}'
                 _poll_state['last_error_at'] = _now_iso()
                 _poll_state['consecutive_errors'] = consecutive
-                print(_poll_error_line(e, consecutive), flush=True)
+                logger.warning(_poll_error_line(e, consecutive))
                 log_line(_poll_error_line(e, consecutive))
                 time.sleep(ERROR_PAUSE)
                 continue
@@ -919,14 +938,14 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                                 finally:
                                     try:
                                         db_m.close()
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                pass
+                                    except Exception as exc:
+                                        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
+                            except Exception as exc:
+                                logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                             try:
                                 _handle_file_restore(token, cid, file_att, db_factory, urlopen)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                             continue
                         if has_attachments and not text:
                             try:
@@ -938,17 +957,17 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                                 finally:
                                     try:
                                         db_check.close()
-                                    except Exception:
-                                        pass
+                                    except Exception as exc:
+                                        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                                 if is_tchr or is_crtr:
                                     send_message(token, cid,
                                                  'Не удалось получить файл из сообщения.',
                                                  urlopen=urlopen)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                             continue
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                     if text is None or cid is None:
                         continue
                     db = db_factory()
@@ -969,19 +988,20 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                                             grp = db.conn.execute("SELECT name FROM groups WHERE id=?", (gid,)).fetchone()
                                             if grp and grp['name']:
                                                 txt += f" ({grp['name']})"
-                                        except Exception:
-                                            pass
+                                        except Exception as exc:
+                                            logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                                         teacher_notify = (teacher, txt)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                         db.set_setting('max_last_marker', str(new_marker))
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                         reply = 'Ошибка, попробуй позже.'
                     finally:
                         try:
                             db.close()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                     try:
                         if reply.startswith('VEDOMOST_TEACHER:'):
                             _handle_teacher_vedomost(token, cid, db_factory, urlopen)
@@ -991,14 +1011,14 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                             _handle_vedomost(token, cid, db_factory, urlopen)
                         else:
                             send_with_buttons(token, cid, reply, urlopen=urlopen)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                     if teacher_notify:
                         try:
                             t_chat, t_text = teacher_notify
                             send_message(token, int(t_chat), t_text, urlopen=urlopen)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                 # ---- message_callback ----
                 elif msg_type == 'message_callback':
                     cb = u.get('callback') or {}
@@ -1020,13 +1040,14 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                     try:
                         reply = process_text(payload, cid, db)
                         db.set_setting('max_last_marker', str(new_marker))
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                         reply = 'Ошибка, попробуй позже.'
                     finally:
                         try:
                             db.close()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                     try:
                         if reply.startswith('VEDOMOST_TEACHER:'):
                             _handle_teacher_vedomost(token, cid, db_factory, urlopen)
@@ -1036,14 +1057,14 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                             _handle_vedomost(token, cid, db_factory, urlopen)
                         else:
                             send_with_buttons(token, cid, reply, urlopen=urlopen)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                     if callback_id:
                         try:
                             answer_callback(
                                 token, callback_id, 'Готово', urlopen=urlopen)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                 # ---- bot_started ----
                 elif msg_type == 'bot_started':
                     cid = u.get('chat_id')
@@ -1057,17 +1078,18 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                     try:
                         reply = process_text('/start', cid, db)
                         db.set_setting('max_last_marker', str(new_marker))
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                         reply = 'Ошибка, попробуй позже.'
                     finally:
                         try:
                             db.close()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                     try:
                         send_with_buttons(token, cid, reply, urlopen=urlopen)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
             if updates:
                 log_line(f'получено сообщений: {len(updates)}')
                 _poll_state['last_update_at'] = _now_iso()
@@ -1081,12 +1103,12 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
             _poll_state['last_error'] = f'{type(e).__name__}: {e}'
             _poll_state['last_error_at'] = _now_iso()
             _poll_state['consecutive_errors'] = consecutive
-            print(_poll_error_line(e, consecutive), flush=True)
+            logger.warning(_poll_error_line(e, consecutive))
             log_line(_poll_error_line(e, consecutive))
             try:
                 time.sleep(ERROR_PAUSE)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
             continue
 
 
@@ -1157,7 +1179,8 @@ def _pending_digest_block(db, today_iso: str, limit: int = 3) -> str:
     """
     try:
         rows = [dict(r) for r in db.list_pending_lessons(today_iso)]
-    except Exception:
+    except Exception as exc:
+        logger.debug("_pending_digest_block: пропущено: %s", exc)
         return ''
     if not rows:
         return ''
@@ -1197,7 +1220,8 @@ def teacher_targets(db, today_iso: str) -> str:
             subj = l.get('actual_subject_name') or l.get('planned_subject') or l.get('subject_name') or '?'
             try:
                 cnt = db.attendance_count(l['id'])
-            except Exception:
+            except Exception as exc:
+                logger.debug("teacher_targets: пропущено: %s", exc)
                 cnt = 0
             if cnt == 0:
                 lines.append(f"• {subj}: ПУСТО")
@@ -1226,8 +1250,8 @@ def run_reminders(token: str, db_factory, stop_event=None):
                     for chat_id, text in targets:
                         try:
                             send_message(token, chat_id, text)
-                        except MaxError:
-                            pass
+                        except MaxError as exc:
+                            logger.warning("напоминание не отправлено: %s", exc)
                     db.set_setting('max_last_reminder', today_str)
                 # teacher morning digest
                 teacher_last = db.get_setting('max_teacher_digest_date')
@@ -1243,23 +1267,24 @@ def run_reminders(token: str, db_factory, stop_event=None):
                                     t_chat = int(chat_raw)
                                     text = teacher_targets(db, today_str)
                                     send_message(token, t_chat, text)
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    logger.warning("run_reminders: ошибка обработана: %s", exc, exc_info=True)
                         db.set_setting('max_teacher_digest_date', today_str)
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning("run_reminders: ошибка обработана: %s", exc, exc_info=True)
                         try:
                             db.set_setting('max_teacher_digest_date', today_str)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                        except Exception as exc:
+                            logger.warning("run_reminders: ошибка обработана: %s", exc, exc_info=True)
+            except Exception as exc:
+                logger.warning("run_reminders: ошибка обработана: %s", exc, exc_info=True)
             finally:
                 try:
                     db.close()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as exc:
+                    logger.warning("run_reminders: ошибка обработана: %s", exc, exc_info=True)
+        except Exception as exc:
+            logger.warning("run_reminders: ошибка обработана: %s", exc, exc_info=True)
         time.sleep(600)
 
 
@@ -1287,12 +1312,12 @@ def notify_grade(token: str, student_id: int, grade, date_str: str,
             date_label = _fmt_date(date_str)
             text = f"Новая оценка: {subject_name} — {grade} ({date_label})"
             send_message(token, chat_id, text, urlopen=urlopen)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("notify_grade: ошибка обработана: %s", exc, exc_info=True)
         finally:
             try:
                 db.close()
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as exc:
+                logger.warning("notify_grade: ошибка обработана: %s", exc, exc_info=True)
+    except Exception as exc:
+        logger.warning("notify_grade: ошибка обработана: %s", exc, exc_info=True)

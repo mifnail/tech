@@ -1156,15 +1156,20 @@ def maxbot_status():
 
 @maxbot_bp.route('/log', methods=['GET'])
 def maxbot_log():
-    """Последние строки журнала бота.
+    """Журнал бота + технические ошибки ботов из общего flask.log.
 
-    Панель состояния показывает текущее, а журнал — историю: без него
-    плавающий сбой виден только в момент, когда его поймали.
+    Панель состояния показывает текущее, bot.log — события (запуск,
+    сообщения), а errors — WARNING/ERROR с трассировками из flask.log.
+    Без второго блока плавающий сбой поллинга был бы невидим.
     """
     import maxbot
+    from log_config import read_bot_errors_tail
     limit = request.args.get('lines', default=60, type=int) or 60
     limit = max(1, min(limit, 200))
-    return jsonify({'lines': maxbot.read_log_tail(limit)})
+    return jsonify({
+        'lines': maxbot.read_log_tail(limit),
+        'errors': read_bot_errors_tail(limit),
+    })
 
 
 @maxbot_bp.route('/restart', methods=['POST'])

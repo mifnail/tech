@@ -161,13 +161,15 @@ function MaxPollBlock({ checkKey }: { checkKey: number }) {
   const [busy, setBusy] = useState<null | "restart" | "marker">(null);
   const [logOpen, setLogOpen] = useState(false);
   const [logLines, setLogLines] = useState<string[]>([]);
+  const [logErrors, setLogErrors] = useState<string[]>([]);
 
   const loadLog = async () => {
     try {
       const r = await fetch("/api/settings/maxbot/log?lines=60");
       if (!r.ok) return;
-      const j = (await r.json()) as { lines?: string[] };
+      const j = (await r.json()) as { lines?: string[]; errors?: string[] };
       setLogLines(Array.isArray(j?.lines) ? j.lines : []);
+      setLogErrors(Array.isArray(j?.errors) ? j.errors : []);
     } catch (_) { /* тихо */ }
   };
 
@@ -260,9 +262,19 @@ function MaxPollBlock({ checkKey }: { checkKey: number }) {
         {logOpen ? "Скрыть журнал" : "Журнал бота"}
       </button>
       {logOpen && (
-        <pre className="mt-1.5 max-h-44 overflow-auto rounded-lg border border-line bg-surface2 p-2 text-[10.5px] leading-snug whitespace-pre-wrap break-words text-muted">
-          {logLines.length ? logLines.join("\n") : "Журнал пуст"}
-        </pre>
+        <>
+          <pre className="mt-1.5 max-h-44 overflow-auto rounded-lg border border-line bg-surface2 p-2 text-[10.5px] leading-snug whitespace-pre-wrap break-words text-muted">
+            {logLines.length ? logLines.join("\n") : "Журнал пуст"}
+          </pre>
+          {logErrors.length > 0 && (
+            <>
+              <div className="mt-2 text-[10.5px] font-bold text-g2">Ошибки (журнал приложения)</div>
+              <pre className="mt-1 max-h-44 overflow-auto rounded-lg border border-line bg-surface2 p-2 text-[10.5px] leading-snug whitespace-pre-wrap break-words text-muted">
+                {logErrors.join("\n")}
+              </pre>
+            </>
+          )}
+        </>
       )}
     </div>
   );

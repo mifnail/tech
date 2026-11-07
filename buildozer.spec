@@ -13,7 +13,15 @@ source.include_exts = py,png,jpg,html,css,js,txt
 # отчёты автотестов и питоновские тесты: ~4,5 МБ мусора из 6,3 МБ полезной
 # части (проверено вскрытием assets/private.tar у v0.285).
 # legacy static/ и templates/ удалены — фронт целиком в dist.
-source.exclude_dirs = .git, .buildozer, bin, __pycache__, .pytest_cache, node_modules, tests, playwright-report, test-results, .recovery, .slim, .workbuddy-ai, website-redesign-figma-files, visual-redesign-of-tech-project
+#
+# ВАЖНО (buildozer 1.6.0): exclude_dirs сравнивается как ПРЕФИКС
+# относительного пути каталога, а не как имя каталога на любой глубине.
+# Просто `node_modules` не исключает `mobile-teacher-app-redesign/node_modules`
+# — нужен полный путь. Эмуляция этой логики: tests/test_buildozer_spec.py.
+source.exclude_dirs = .git, .buildozer, bin, __pycache__, .pytest_cache, node_modules, mobile-teacher-app-redesign/node_modules, tests, playwright-report, test-results, mobile-teacher-app-redesign/playwright-report, mobile-teacher-app-redesign/test-results, .recovery, .slim, .workbuddy-ai, website-redesign-figma-files, visual-redesign-of-tech-project
+# Инструменты разработки лежат в репозитории, но в приложении не нужны.
+# exclude_patterns — fnmatch по полному относительному пути файла.
+source.exclude_patterns = stand.py, stand_seed.py, seed_db.py, generate_icon.py, mobile-teacher-app-redesign/e2e_server.py, mobile-teacher-app-redesign/index.html, mobile-teacher-app-redesign/src/*.css, src/teachhelper/*
 version = 0.1
 
 # webview bootstrap — встроенный Android WebView, Kivy не нужен

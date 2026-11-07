@@ -2,7 +2,7 @@
 
 **Trigger:** Working on the "Учет занятий" (Lesson Tracker) project. Read this first.
 
-**Project root:** `c:/Users/user/WorkBuddy AI/2026-09-13-22-13-51/tech`
+**Project root:** `D:/tech/tech-redesign`
 
 ## What This Project Is
 
@@ -10,7 +10,7 @@ Mobile teacher's journal (Android APK + desktop browser). Tracks lessons, attend
 grades, exports to Excel, sends notifications via Telegram and MAX bots.
 Works offline as a WebView app.
 
-**Version:** 0.237 (see `VERSION` file)
+**Version:** 0.309 (see `VERSION` file; CI overwrites it with the run number)
 
 ## Stack — FROZEN (do NOT change without owner approval)
 
@@ -18,13 +18,13 @@ Works offline as a WebView app.
 |-------|-----------|
 | Backend | Python 3, Flask (REST API) |
 | Database | SQLite (`sqlite3` stdlib), WAL mode |
-| Frontend (active) | React + TypeScript + Vite (`mobile-teacher-app-redesign/`) |
-| Frontend (legacy) | Vanilla JS SPA (`static/app.js`) — being replaced |
-| Export | openpyxl (`.xlsx` only; PDF/CSV/ICS disabled) |
-| Bots | stdlib only + certifi (long-polling, no external libs) |
-| Mobile | Buildozer / python-for-android WebView bootstrap |
-| CI/CD | GitHub Actions (`.github/workflows/build-apk.yml`) |
-| Tests | pytest, in-memory SQLite |
+| Frontend | React + TypeScript + Vite (`mobile-teacher-app-redesign/`) — legacy Vanilla JS removed |
+| Export | openpyxl (`.xlsx`) + ICS calendar export |
+| Bots | stdlib only + certifi (long-polling, shared transport `botcore.py`) |
+| Logging | `log_config.py` → `flask.log` next to the DB, `bot.log` for bot events |
+| Mobile | Buildozer 1.6.0 / python-for-android WebView bootstrap |
+| CI/CD | GitHub Actions (`build-apk.yml`, `test-stand.yml`) |
+| Tests | 633 pytest + 34 node tests + 8 Playwright e2e |
 
 ### Forbidden dependencies
 - matplotlib, numpy, pillow — heavy native wheels
@@ -35,27 +35,27 @@ Works offline as a WebView app.
 
 ```
 main.py              → Entry point (Flask + background bot threads)
-api.py               → Flask REST API (~2000 lines, all endpoints)
-database.py          → ALL SQLite access (schema, migrations, queries)
+database.py          → ALL SQLite access (schema, migrations, queries, row_get)
+services.py          → Application logic (conduct rules, texts, push dispatch)
+api.py               → Flask REST API: HTTP routes only (~2650 lines)
+log_config.py        → Logging setup: flask.log next to the DB, rotation
 botcore.py           → Shared HTTP transport for bots (SSL, retries, texts)
 tgbot.py             → Telegram bot "Мои оценки" (read-only for students)
 maxbot.py            → MAX bot (grades, files, reminders, curators, teacher)
 report_export.py     → Excel export (openpyxl, guarded import)
-crash_reporter.py    → Exception handling
+calendar_export.py   → ICS export (schedule + held lessons)
 schedule_file.py     → schedule.txt parser
 seed_db.py           → Test database seeder
 mobile-teacher-app-redesign/  → React/TS frontend (Vite, singlefile build)
-static/app.js        → Legacy vanilla JS SPA
-templates/index.html → Legacy HTML shell
-tests/               → pytest tests (123 tests)
+tests/               → pytest (633), node (34), e2e (8)
 ```
 
 ## DB Schema
 
 ```
 groups (id, name)
-  ├── subjects (id, name, total_hours, group_id, is_free)
-  │     ├── schedule (id, day_of_week, lesson_number, subject_id, week_type)
+  ├── subjects (id, name, total_hours, group_id, closed_at)
+  │     ├── schedule (id, day_of_week, lesson_number, subject_id, week_type, valid_from)
   │     └── lessons (id, subject_id, actual_subject_id, date, status, lesson_number)
   │           └── grades (id, lesson_id, student_id, grade)
   ├── students (id, group_id, last_name, first_name, middle_name)
@@ -107,6 +107,6 @@ All endpoints under `/api/`:
 
 - `AGENT.md` — project constitution (read at start of every session)
 - `docs/SPECIFICATION.md` — detailed spec with API docs
-- `PLAN.md` — implementation roadmap
+- `PLAN.md` → moved to `docs/archive/` (historical)
 - `PROMPT.md` — original project prompt
 - `docs/DIAGRAMS.md` — ER diagrams

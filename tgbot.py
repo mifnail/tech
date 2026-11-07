@@ -14,6 +14,10 @@ import urllib.error
 import urllib.request
 from datetime import date
 
+from log_config import get_logger
+
+logger = get_logger('tgbot')
+
 from botcore import (
     BotError,
     BotRateLimited,
@@ -58,8 +62,8 @@ def _call(token: str, method: str, params: dict | None = None,
             wait = 5
             try:
                 wait = int(json.loads(e.read().decode()).get('parameters', {}).get('retry_after', 5))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("_call: ошибка обработана: %s", exc, exc_info=True)
             raise BotRateLimited(wait)
         raise BotError(f'telegram api HTTP {e.code}')
     except urllib.error.URLError as e:
@@ -193,9 +197,10 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
         finally:
             try:
                 db0.close()
-            except Exception:
-                pass
-    except Exception:
+            except Exception as exc:
+                logger.debug("run_polling: пропущено: %s", exc)
+    except Exception as exc:
+        logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
         offset = 0
     while stop_event is None or not stop_event.is_set():
         try:
@@ -226,22 +231,24 @@ def run_polling(token: str, db_factory, stop_event=None, urlopen=None):
                 try:
                     reply = process_text(text, cid, db)
                     db.set_setting('bot_last_update', str(offset))
-                except Exception:
+                except Exception as exc:
+                    logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
                     reply = 'Ошибка, попробуй позже.'
                 finally:
                     try:
                         db.close()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("run_polling: пропущено: %s", exc)
                 try:
                     send_message(token, cid, reply, urlopen=urlopen)
-                except Exception:
-                    pass
-        except Exception:
+                except Exception as exc:
+                    logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
+        except Exception as exc:
+            logger.warning("run_polling: ошибка обработана: %s", exc, exc_info=True)
             try:
                 time.sleep(ERROR_PAUSE)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("run_polling: пропущено: %s", exc)
             continue
 
 
