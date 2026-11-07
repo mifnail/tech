@@ -12,11 +12,11 @@ on:
     paths:
       - 'api.py'
       - 'database.py'
+      - 'services.py'
+      - 'log_config.py'
       - 'main.py'
       - 'buildozer.spec'
       - 'requirements.txt'
-      - 'static/**'
-      - 'templates/**'
       - 'calendar_export.py'
       - 'report_export.py'
       - 'tgbot.py'

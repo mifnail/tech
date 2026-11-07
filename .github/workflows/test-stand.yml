@@ -10,13 +10,13 @@ on:
       - ".github/workflows/test-stand.yml"
       - "api.py"
       - "database.py"
+      - "services.py"
+      - "log_config.py"
       - "main.py"
       - "seed_db.py"
       - "stand.py"
       - "stand_seed.py"
       - "tests/**"
-      - "static/**"
-      - "templates/**"
       - "mobile-teacher-app-redesign/**"
   workflow_dispatch:
 
