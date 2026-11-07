@@ -1,9 +1,12 @@
+# Кэш и окружение
 __pycache__/
 *.pyc
+.pytest_cache/
+.coverage
 .venv/
-*.apk
 bin/
 .buildozer/
+*.apk
 
 # Журнал и его служебные файлы — реальные данные студентов.
 # В репозиторий не попадают ни при каких условиях.
@@ -14,6 +17,30 @@ lessons.db
 *.db-shm
 .recovery/
 
+# Зависимости фронтендов. Раньше это правило жило только в локальном
+# .git/info/exclude и терялось при клоне — из-за этого в рабочем дереве
+# молча скапливались десятки тысяч untracked-файлов.
+node_modules/
+*/node_modules/
+
+# Служебные папки инструментов. skills/ НЕ игнорируем: это 6 отслеживаемых
+# проектных скиллов, они должны попадать в репозиторий.
+.slim/
+.workbuddy-ai/memory/
+
+# Удалённые дизайн-итерации. Имена оставлены в .gitignore намеренно:
+# если архив с прототипом когда-нибудь распакуют обратно, он не попадёт
+# в индекс и не уедет в APK.
+code-and-design-review/
+refactor-and-lightweight-redesign/
+refactor-and-redesign-mobile-app/
+refactoring-and-redesign-prompt/
+
+# Логи: bot.log / flask.log рядом с БД, журналы ручных прогонов стенда.
+# Приватные данные студентов не должны уйти в сеть — поэтому все логи
+# остаются только на локальной машине.
+*.log
+
 # логи ручных прогонов e2e стенда
 .e2e-out.log
 .e2e-err.log
@@ -21,6 +48,3 @@ mobile-teacher-app-redesign/.e2e-out.log
 mobile-teacher-app-redesign/.e2e-err.log
 mobile-teacher-app-redesign/playwright-report/
 mobile-teacher-app-redesign/test-results/
-
-# Рабочие заметки агента — не часть проекта
-.workbuddy-ai/memory/
