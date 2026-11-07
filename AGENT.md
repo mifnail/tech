@@ -13,8 +13,9 @@
 ## 2. Стек (НЕ менять без явного согласования с владельцем)
 - Язык: **Python 3**
 - Бэкенд: **Flask** (REST API)
-- Фронтенд: **Vanilla JS SPA** (без фреймворков), CSS, HTML
+- Фронтенд: **React + TypeScript + Vite** (`mobile-teacher-app-redesign/`)
 - БД: **SQLite** (модуль `sqlite3` из стандартной библиотеки)
+- Боты: **stdlib + certifi** (long-polling в фоне, общий транспорт — `botcore.py`)
 - Мобильная сборка: **WebView** (python-for-android) / Buildozer
 - Сборка APK: **только GitHub Actions**. Локально APK НЕ собираем.
 
@@ -28,31 +29,37 @@
 ### Схема БД (английские названия)
 ```
 groups (id, name)
-  ├── subjects (id, name, total_hours, group_id)
-  │     └── schedule (id, day_of_week, lesson_number, subject_id, week_type)
-  │     └── lessons (id, subject_id, actual_subject_id, date)
+  ├── subjects (id, name, total_hours, group_id, closed_at)
+  │     └── schedule (id, day_of_week, lesson_number, subject_id, week_type, valid_from)
+  │     └── lessons (id, subject_id, actual_subject_id, date, status, lesson_number)
   │           └── grades (id, lesson_id, student_id, grade)
-  └── students (id, group_id, last_name, first_name, middle_name)
+  ├── students (id, group_id, last_name, first_name, middle_name)
+  ├── curators (group_id, chat_id, code, created)
+  ├── bot_links (chat_id, student_id, created)    — Telegram
+  └── max_links (chat_id, student_id, created)     — MAX
+app_settings (key, value)                          — токены, код преподавателя
 ```
 
 ### Модули
-- `database.py` — ВЕСЬ доступ к SQLite.
-- `api.py` — Flask REST API.
-- `main.py` — точка входа Flask.
-- `static/app.js` — SPA фронтенд.
-- `static/style.css` — мобильный UI.
-- `templates/index.html` — HTML-оболочка.
+- `database.py` — ВЕСЬ доступ к SQLite (схема, миграции, запросы).
+- `api.py` — Flask REST API (HTTP-роуты, валидация, экспорт, бэкап).
+- `main.py` — точка входа Flask + фоновые боты.
+- `botcore.py` — общий HTTP-транспорт ботов (SSL, ретраи, тексты).
+- `maxbot.py` — MAX-бот: сводки, файлы, пуши, напоминания, кураторы, дайджест.
+- `tgbot.py` — Telegram-бот «Мои оценки» (read-only + постоянная клавиатура).
+- `calendar_export.py` — экспорт расписания/занятий в .ics.
+- `report_export.py` — ведомости `.xlsx` (групповая и личная).
 - `schedule_file.py` — парсер schedule.txt.
-- `calendar_export.py` — выгрузка в .ics.
-- `report_export.py` — Excel/PDF отчёты.
-- `tgbot.py` — Telegram-бот «Мои оценки» (только stdlib).
 - `crash_reporter.py` — обработка исключений.
 - `seed_db.py` — тестовая БД.
-- `tests/` — автотесты (pytest).
+- `mobile-teacher-app-redesign/` — фронтенд: исходники + `dist/index.html` (то, что раздаёт сервер и едет в APK).
+- `tests/` — автотесты (pytest, 586+).
+- `mobile-teacher-app-redesign/tests/` — фронтенд-тесты (node --test).
+- `mobile-teacher-app-redesign/e2e/` — Playwright-тесты.
 
 ## 4. Definition of Done
 1. Код запускается на ПК без ошибок.
-2. Автотесты зелёные (`pytest`).
+2. Автотесты зелёные (`python -m pytest tests/ -q`, `node --test tests/*.cjs`).
 3. Изменение закоммичено с осмысленным сообщением.
 4. Проверено в браузере на мобильном viewport.
 
@@ -60,6 +67,7 @@ groups (id, name)
 - **Вертикальные срезы:** доводим один пункт до рабочего состояния и коммитим.
 - **Ручная проверка:** каждый срез перед коммитом проверяется человеком.
 - **Фиксируем маленькие победы:** каждый рабочий срез — отдельный коммит.
+- **Релиз:** при коммите-релизе обновлять `VERSION` и `CHANGELOG.md`.
 
 ## 6. Сборка APK (CI)
 - Триггер: push в репозиторий.
@@ -67,9 +75,10 @@ groups (id, name)
 - Workflow: `.github/workflows/build-apk.yml`.
 
 ## 7. Основные запросы к БД
-- Создать занятие: `INSERT INTO lessons (subject_id, actual_subject_id, date) VALUES (?, ?, date('now'))`
+- Создать занятие: `INSERT INTO lessons (subject_id, actual_subject_id, date, status) VALUES (?, ?, ?, 'scheduled')`
 - Оценки за занятие: `INSERT INTO grades (lesson_id, student_id, grade) VALUES (?, ?, ?)`
 - Остаток часов: `SELECT total_hours - COUNT(*) FROM subjects LEFT JOIN lessons ON ...`
 - Расписание на сегодня: `SELECT ... FROM schedule JOIN subjects WHERE day_of_week = ?`
-- Средний балл: `SELECT AVG(CAST(grade AS REAL)) FROM grades JOIN lessons WHERE grade NOT IN ('absent', 'pass')`
+- Средний балл: `SELECT AVG(CAST(grade AS REAL)) FROM grades JOIN lessons WHERE grade IN ('5','4','3','2')`
 - Замены: `SELECT ... FROM lessons WHERE actual_subject_id != subject_id`
+- Закрытые предметы: `SELECT ... FROM subjects WHERE closed_at IS NOT NULL`

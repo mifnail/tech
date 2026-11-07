@@ -13,7 +13,7 @@ source.include_exts = py,png,jpg,html,css,js,txt
 # отчёты автотестов и питоновские тесты: ~4,5 МБ мусора из 6,3 МБ полезной
 # части (проверено вскрытием assets/private.tar у v0.285).
 # legacy static/ и templates/ удалены — фронт целиком в dist.
-source.exclude_dirs = .git, .buildozer, bin, __pycache__, .pytest_cache, node_modules, tests, playwright-report, test-results, .recovery, refactor-and-lightweight-redesign, refactor-and-redesign-mobile-app, website-redesign-figma-files, visual-redesign-of-tech-project, code-and-design-review, refactoring-and-redesign-prompt
+source.exclude_dirs = .git, .buildozer, bin, __pycache__, .pytest_cache, node_modules, tests, playwright-report, test-results, .recovery, .slim, .workbuddy-ai, website-redesign-figma-files, visual-redesign-of-tech-project
 version = 0.1
 
 # webview bootstrap — встроенный Android WebView, Kivy не нужен
