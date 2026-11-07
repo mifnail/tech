@@ -200,6 +200,32 @@ def _resolve_db_path() -> str:
 
 DB_PATH = _resolve_db_path()
 
+
+def dict_row(row) -> dict:
+    """Строка БД -> обычный dict (None -> None)."""
+    return dict(row) if row else None
+
+
+def row_get(row, key, default=''):
+    """Безопасное чтение поля строки sqlite3.Row.
+
+    Значение None считается отсутствующим и подменяется default-ом.
+    """
+    if row is None:
+        return default
+    try:
+        if key in row.keys():
+            v = row[key]
+            return v if v is not None else default
+        return default
+    except Exception:
+        try:
+            v = row[key]
+            return v if v is not None else default
+        except Exception:
+            return default
+
+
 class Database:
     def __init__(self, db_path: Optional[str] = None) -> None:
         self.db_path = db_path or DB_PATH
