@@ -268,8 +268,45 @@ function MaxPollBlock({ checkKey }: { checkKey: number }) {
   );
 }
 
-/* ── Webhook-подписки MAX: тихий GET /api/settings/maxbot/webhook ── */
-type WebhookStatus =
+/* ── Журнал бэкенда: flask.log рядом с базой ──────────────────────────────
+   Журнал бота показывает, что делал бот; этот — что делал сервер:
+   потерянные уведомления, несохранённые бэкапы, ошибки запросов.
+   Файл лежит на устройстве и никуда не отправляется. */
+function AppLogBlock() {
+  const [open, setOpen] = useState(false);
+  const [lines, setLines] = useState<string[]>([]);
+
+  const load = async () => {
+    try {
+      const r = await fetch("/api/settings/log?lines=60");
+      if (!r.ok) return;
+      const j = (await r.json()) as { lines?: string[] };
+      setLines(Array.isArray(j?.lines) ? j.lines : []);
+    } catch (_) { /* тихо: журнал не критичен */ }
+  };
+
+  return (
+    <div>
+      <button
+        className="text-[12px] font-bold text-accent active:opacity-70"
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          if (next) void load();
+        }}
+      >
+        {open ? "Скрыть журнал" : "Журнал приложения"}
+      </button>
+      {open && (
+        <pre className="mt-1.5 max-h-44 overflow-auto rounded-lg border border-line bg-surface2 p-2 text-[10.5px] leading-snug whitespace-pre-wrap break-words text-muted">
+          {lines.length ? lines.join("\n") : "Журнал пуст"}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/* ── Webhook-подписки MAX: тихий GET /api/settings/maxbot/webhook ── */type WebhookStatus =
   | { kind: "checking" }
   | { kind: "no-token" }
   | { kind: "ok"; count: number }
@@ -675,6 +712,9 @@ export default function SettingsScreen() {
             Скачать базу
           </Btn>
           <RestoreDatabase />
+          <div className="mt-1 border-t border-line pt-2">
+            <AppLogBlock />
+          </div>
         </div>
       </Card>
 

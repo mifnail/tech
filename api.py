@@ -11,7 +11,6 @@ from datetime import date, datetime
 from typing import Any
 import os
 import re as _re
-import sys
 
 import sqlite3
 
@@ -30,10 +29,14 @@ CURATOR_PUSH_DELAY = 60.0  # grade-push debounce: 60s balances settle-window vs 
 _pending_curator: dict[tuple[int, int], threading.Timer] = {}
 
 from flask import Flask, Blueprint, Response, request, jsonify, send_file, g, has_request_context
+from werkzeug.exceptions import HTTPException
 
 from database import (Database, DatabaseBusyError, database_maintenance,
                       snapshot_database, _snapshot_database, checkpoint_database,
                       validate_database_file)
+from log_config import get_logger
+
+logger = get_logger('api')
 
 app = Flask(__name__)
 MAX_DATABASE_BYTES = 50 * 1024 * 1024
@@ -85,6 +88,28 @@ def invalid_database_relation(error):
     return jsonify({'error': 'Недопустимая связь или дубликат записи'}), 400
 
 
+@app.errorhandler(HTTPException)
+def http_exception(error):
+    """Стандартная HTTP-ошибка — JSON, а не HTML-страница werkzeug.
+
+    Фронт ждёт JSON всегда: иначе вместо сообщения пользователь увидит
+    страницу с трассировкой.
+    """
+    return jsonify({'error': error.description}), error.code or 500
+
+
+@app.errorhandler(Exception)
+def unhandled_exception(error):
+    """Необработанная ошибка: 500 + JSON, подробности — в журнал.
+
+    Раньше такое исключение отдавало фронту HTML с трассировкой (и кодом
+    500 без единого слова в журнале). Теперь подробности пишутся в
+    flask.log, а пользователь получает понятный текст.
+    """
+    logger.exception('Необработанная ошибка при обработке запроса: %s', error)
+    return jsonify({'error': 'Внутренняя ошибка сервера, подробности в журнале'}), 500
+
+
 def require_fields(*fields: str) -> Any:
     """Decorator: return 400 if request.json lacks any of the required fields."""
     def decorator(f):
@@ -92,6 +117,8 @@ def require_fields(*fields: str) -> Any:
         def wrapper(*args, **kwargs):
             data = request.get_json(silent=True)
             if not isinstance(data, dict):
+                if request.data:
+                    logger.warning('Некорректный JSON в теле запроса: %s', request.path)
                 return jsonify({'error': 'Expected a JSON object'}), 400
             missing = [f for f in fields if f not in data or data[f] is None]
             if missing:
@@ -147,8 +174,8 @@ def _lesson_notify_context(db, lesson_id):
         try:
             if 'group_id' in lesson.keys():
                 group_id = lesson['group_id']
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Не удалось прочитать group_id из занятия: %s", exc)
         if group_id is None:
             try:
                 sid = row_get(lesson, 'subject_id', None)
@@ -156,8 +183,8 @@ def _lesson_notify_context(db, lesson_id):
                     r = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (sid,)).fetchone()
                     if r:
                         group_id = r['group_id']
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Не удалось определить group_id по предмету: %s", exc)
         return (ddmm, subject_name or '', group_id)
     except Exception:
         return ('', '', None)
@@ -199,15 +226,15 @@ def _notify_group_chats(db, group_id, token, enabled, msg_text):
                 for cid in chat_ids:
                     try:
                         _maxbot.send_message(token, cid, msg_text)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Уведомление в чат %s не отправлено: %s", cid, exc, exc_info=True)
                     _time.sleep(0.6)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Не удалось отправить уведомления группе: %s", exc, exc_info=True)
 
         threading.Thread(target=_run, daemon=True).start()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Не удалось запустить отправку уведомлений: %s", exc, exc_info=True)
 
 
 # ---- SPA shell ----
@@ -231,8 +258,8 @@ def _get_app_version() -> str:
             v = f.read().strip()
             if v:
                 return v
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Не удалось прочитать файл версии: %s", exc)
     env_v = os.environ.get('APP_VERSION', '').strip()
     if env_v:
         return env_v
@@ -609,8 +636,8 @@ def substitute_lesson(lesson_id: int):
         enabled = db.get_setting('max_bot_enabled')
         if _is_bot_active(db, 'max_bot_token', 'max_bot_enabled'):
             _notify_group_chats(db, group_id, token, enabled, msg_text)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Уведомление о замене не отправлено: %s", exc, exc_info=True)
     return jsonify({'ok': True, 'new_lesson_id': new_id})
 
 
@@ -631,8 +658,8 @@ def _cancel_lesson_with_notify(db, lesson_id: int) -> None:
         enabled = db.get_setting('max_bot_enabled')
         if _is_bot_active(db, 'max_bot_token', 'max_bot_enabled'):
             _notify_group_chats(db, group_id, token, enabled, msg_text)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Уведомление об отмене не отправлено: %s", exc, exc_info=True)
 
 
 @lessons_bp.route('/<int:lesson_id>/cancel', methods=['PATCH'])
@@ -699,8 +726,8 @@ def mark_attendance(lesson_id: int):
         lesson_row = db.get_lesson(lesson_id)
         if lesson_row and row_get(lesson_row, 'date', '') <= date.today().isoformat():
             _mark_lesson_held(db, lesson_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Не удалось перевести занятие в статус «проведено»: %s", exc, exc_info=True)
 
     # ---- Schedule debounced grade push via MAX bot ----
     try:
@@ -760,8 +787,8 @@ def mark_attendance(lesson_id: int):
                             if prow:
                                 group_id = prow['group_id']
                                 break
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug("Не удалось определить группу по предмету: %s", exc)
                 # Fallback: pick group from any graded student
                 if group_id is None:
                     for _sid, _g in pairs:
@@ -771,23 +798,22 @@ def mark_attendance(lesson_id: int):
                                 group_id = row_get(st, 'group_id', None)
                                 if group_id is not None:
                                     break
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug("Не удалось определить группу по студенту: %s", exc)
         except Exception as exc:
-            print(f"[curator-push] group_id resolve error: {exc}", flush=True)
+            logger.warning("[curator-push] group_id resolve error: %s", exc)
 
         cur_chat = None
         try:
             if group_id is not None:
                 cur_chat = db.get_curator_chat(group_id)
         except Exception as exc:
-            print(f"[curator-push] get_curator_chat error: {exc}", flush=True)
+            logger.warning("[curator-push] get_curator_chat error: %s", exc)
             cur_chat = None
 
-        print(
-            f"[curator-push] schedule: lesson={lesson_id} group={group_id} "
-            f"cur_chat={cur_chat} pairs={len(pairs)}",
-            flush=True,
+        logger.info(
+            "[curator-push] schedule: lesson=%s group=%s cur_chat=%s pairs=%s",
+            lesson_id, group_id, cur_chat, len(pairs),
         )
 
         if cur_chat is None:
@@ -813,7 +839,7 @@ def mark_attendance(lesson_id: int):
                 _pending_curator[key] = t2
                 t2.start()
     except Exception as exc:
-        print(f"[curator-push] outer error: {exc}", flush=True)
+        logger.warning("[curator-push] outer error: %s", exc)
 
     return jsonify({'ok': True})
 
@@ -1133,7 +1159,7 @@ def conduct_lesson(lesson_id: int):
             student_msgs = _student_conduct_messages(
                 db, lesson_id, header, was_held, {sid for sid, _ in changed})
         except Exception as exc:  # noqa: BLE001 — рассылка не должна ронять проведение
-            print(f'[conduct] student messages build error: {exc}', flush=True)
+            logger.warning('[conduct] student messages build error: %s', exc)
 
     notified = len(student_msgs)
 
@@ -1158,8 +1184,8 @@ def conduct_lesson(lesson_id: int):
         try:
             if 'group_id' in lesson.keys():
                 group_id = lesson['group_id']
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Не удалось прочитать group_id из занятия: %s", exc)
         if group_id is None:
             try:
                 sid_sub = row_get(lesson, 'subject_id', None)
@@ -1167,8 +1193,8 @@ def conduct_lesson(lesson_id: int):
                     prow = db.conn.execute("SELECT group_id FROM subjects WHERE id=?", (sid_sub,)).fetchone()
                     if prow:
                         group_id = prow['group_id']
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Не удалось определить group_id по предмету: %s", exc)
     except Exception:
         return jsonify({'ok': True, 'notified': notified, **notice})
 
@@ -1186,7 +1212,7 @@ def conduct_lesson(lesson_id: int):
         if cur_chat is not None:
             curator_text = _curator_conduct_text(db, lesson_id)
     except Exception as exc:
-        print(f"[curator-push] build error: {exc}", flush=True)
+        logger.warning("[curator-push] build error: %s", exc)
 
     # Отправить пуши в фоне, не блокируя HTTP
     def _run_conduct():
@@ -1195,23 +1221,23 @@ def conduct_lesson(lesson_id: int):
             for chat_id, text in student_msgs:
                 try:
                     _maxbot.send_message(token, chat_id, text)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Уведомление студенту не отправлено (chat=%s): %s", chat_id, exc, exc_info=True)
             # Куратору — одна сводка после нажатия «Провести»: кто был и кого
             # не было. Уходит и тогда, когда оценки не ставили.
             try:
                 if cur_chat is not None and curator_text:
                     _maxbot.send_message(token, int(cur_chat), curator_text)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Уведомление куратору не отправлено: %s", exc, exc_info=True)
             # «Пары вычитаны» — отдельным сообщением куратору (если порог достигнут)
             try:
                 if cur_chat is not None and notice.get('hours_exhausted'):
                     _maxbot.send_message(token, int(cur_chat), notice['hours_message'])
-            except Exception:
-                pass
-        except Exception:
-            pass
+            except Exception as exc:
+                logger.warning("Уведомление об исчерпании часов не отправлено: %s", exc, exc_info=True)
+        except Exception as exc:
+            logger.warning("Ошибка отправки уведомлений при проведении: %s", exc, exc_info=True)
 
     threading.Thread(target=_run_conduct, daemon=True).start()
     return jsonify({'ok': True, 'notified': notified, **notice})
@@ -1258,15 +1284,15 @@ def _fire_grade_push(token: str, lesson_id: int, student_id: int) -> None:
 
             import maxbot as _maxbot
             _maxbot.notify_grade(token, student_id, grade, date_str, subject)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Пуш оценки не отправлен: %s", exc, exc_info=True)
         finally:
             try:
                 db.close()
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as exc:
+                logger.debug("Не удалось закрыть соединение с БД: %s", exc)
+    except Exception as exc:
+        logger.warning("Ошибка пуша оценки: %s", exc, exc_info=True)
 
 
 def _fire_curator_push(token: str, lesson_id: int, student_id: int, group_id: int) -> None:
@@ -1278,7 +1304,8 @@ def _fire_curator_push(token: str, lesson_id: int, student_id: int, group_id: in
         try:
             grade = _read_settled_grade(db, lesson_id, student_id)
             if not grade:
-                print(f"[curator-push] skip: no grade for lesson={lesson_id} student={student_id}", flush=True)
+                logger.debug("[curator-push] skip: no grade for lesson=%s student=%s",
+                           lesson_id, student_id)
                 return
 
             # Resolve cur_chat: prefer the group_id passed from schedule,
@@ -1287,7 +1314,7 @@ def _fire_curator_push(token: str, lesson_id: int, student_id: int, group_id: in
             try:
                 cur_chat = db.get_curator_chat(group_id)
             except Exception as exc:
-                print(f"[curator-push] get_curator_chat({group_id}) error: {exc}", flush=True)
+                logger.warning("[curator-push] get_curator_chat(%s) error: %s", group_id, exc)
 
             if not cur_chat:
                 # Fallback: try to resolve group from lesson's subject
@@ -1307,24 +1334,23 @@ def _fire_curator_push(token: str, lesson_id: int, student_id: int, group_id: in
                                         group_id = prow['group_id']
                                         break
                 except Exception as exc:
-                    print(f"[curator-push] fallback group resolve error: {exc}", flush=True)
+                    logger.warning("[curator-push] fallback group resolve error: %s", exc)
 
             if not cur_chat:
-                print(
-                    f"[curator-push] no cur_chat: lesson={lesson_id} student={student_id} "
-                    f"group={group_id}",
-                    flush=True,
+                logger.info(
+                    "[curator-push] no cur_chat: lesson=%s student=%s group=%s",
+                    lesson_id, student_id, group_id,
                 )
                 return
 
             st = db.get_student(student_id)
             if not st:
-                print(f"[curator-push] no student: id={student_id}", flush=True)
+                logger.warning("[curator-push] no student: id=%s", student_id)
                 return
             fio = f"{st['last_name']} {st['first_name'][0]}." if st['first_name'] else f"{st['last_name']}"
             lesson = db.get_lesson(lesson_id)
             if not lesson:
-                print(f"[curator-push] no lesson: id={lesson_id}", flush=True)
+                logger.warning("[curator-push] no lesson: id=%s", lesson_id)
                 return
             raw_date = lesson['date'] or ''
             date_str = f'{raw_date[8:10]}.{raw_date[5:7]}' if len(raw_date) >= 10 else ''
@@ -1334,19 +1360,16 @@ def _fire_curator_push(token: str, lesson_id: int, student_id: int, group_id: in
             text = f"{fio}: {subject} — {grade} ({date_str})"
             import maxbot as _maxbot
             _maxbot.send_message(token, int(cur_chat), text)
-            print(
-                f"[curator-push] sent: cur_chat={cur_chat} text={text!r}",
-                flush=True,
-            )
+            logger.info("[curator-push] sent: cur_chat=%s text=%r", cur_chat, text)
         except Exception as exc:
-            print(f"[curator-push] inner error: {exc}", flush=True)
+            logger.warning("[curator-push] inner error: %s", exc)
         finally:
             try:
                 db.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Не удалось закрыть соединение с БД: %s", exc)
     except Exception as exc:
-        print(f"[curator-push] outer error: {exc}", flush=True)
+        logger.warning("[curator-push] outer error: %s", exc)
 
 
 @lessons_bp.route('/pending', methods=['GET'])
@@ -1533,6 +1556,20 @@ def check_bot():
         code = 401 if '401' in msg else 502
         return jsonify({'error': msg}), code
     return jsonify({'ok': True, 'username': info.get('username', '')})
+
+
+@settings_bp.route('/log', methods=['GET'])
+def app_log():
+    """Последние строки журнала бэкенда (flask.log).
+
+    Журнал бота показывает, что делал бот; этот — что делал сервер:
+    потерянные уведомления, несохранённые бэкапы, ошибки запросов.
+    Файл лежит рядом с базой и никуда не отправляется.
+    """
+    from log_config import read_log_tail
+    limit = request.args.get('lines', default=60, type=int) or 60
+    limit = max(1, min(limit, 200))
+    return jsonify({'lines': read_log_tail(limit)})
 
 
 app.register_blueprint(settings_bp)
@@ -1805,12 +1842,12 @@ def _mediastore_delete_name(resolver, collection, filename: str) -> None:
             while cursor.moveToNext():
                 try:
                     resolver.delete(ContentUris.withAppendedId(collection, cursor.getLong(idx)), None, None)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Не удалось удалить файл из MediaStore: %s", exc)
         finally:
             cursor.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Ошибка очистки MediaStore: %s", exc)
 
 
 def _save_to_downloads_full(data: bytes, filename: str, mimetype: str):
@@ -2093,8 +2130,8 @@ def _restore_from_bytes(data: bytes) -> None:
             # when Android's scoped storage denies exporting the backup.
             try:
                 _save_to_downloads_full(old_data, bak_name, 'application/x-sqlite3')
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Автобэкап перед восстановлением не сохранён: %s", exc, exc_info=True)
         for pending in (_pending, _pending_curator):
             for timer in list(pending.values()):
                 timer.cancel()
@@ -2108,8 +2145,8 @@ def _drain_pfd(pfd) -> bytes:
     except Exception:
         try:
             pfd.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Не удалось закрыть дескриптор: %s", exc)
         raise
     chunks: list[bytes] = []
     total = 0
@@ -2125,8 +2162,8 @@ def _drain_pfd(pfd) -> bytes:
     finally:
         try:
             os.close(fd)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Не удалось закрыть файловый дескриптор: %s", exc)
     return b''.join(chunks)
 
 
@@ -2185,8 +2222,8 @@ def _list_backup_files() -> list[dict]:
                     'mtime': st.st_mtime,
                     'path': path,
                 })
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Ошибка сканирования каталога бэкапов: %s", exc, exc_info=True)
         _sort_backups(entries)
         return entries
 
@@ -2221,18 +2258,18 @@ def _list_backup_files() -> list[dict]:
                     size = None
                     try:
                         mtime = cursor.getLong(idx_added)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("В MediaStore нет колонки времени изменения: %s", exc)
                     try:
                         size = cursor.getLong(idx_size)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("В MediaStore нет колонки размера: %s", exc)
                     entries.append({'name': name, 'size': size, 'mtime': mtime, 'path': None})
         finally:
             if cursor is not None:
                 cursor.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Ошибка чтения списка бэкапов: %s", exc, exc_info=True)
 
     # Fallback: MediaStore didn't index the folder — read Download/ directly.
     try:
@@ -2255,7 +2292,7 @@ def _list_backup_files() -> list[dict]:
                 continue
             entries.append({'name': name, 'size': st.st_size, 'mtime': st.st_mtime, 'path': path})
     except Exception as e:
-        print(f'[backup/list] fs scan failed: {e}', file=sys.stderr)
+        logger.warning('[backup/list] fs scan failed: %s', e)
 
     _sort_backups(entries)
     return entries
@@ -2291,8 +2328,8 @@ def _read_backup_bytes(name: str) -> bytes:
         finally:
             if cursor is not None:
                 cursor.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Не удалось прочитать бэкап %s: %s", name, exc, exc_info=True)
     try:
         from jnius import autoclass  # noqa — Android only
         env = autoclass('android.os.Environment')
@@ -2306,7 +2343,7 @@ def _read_backup_bytes(name: str) -> bytes:
     except BackupNotFound:
         raise
     except Exception as e:
-        print(f'[restore] fs read failed for {name}: {e}', file=sys.stderr)
+        logger.warning('[restore] fs read failed for %s: %s', name, e)
         raise BackupNotFound(f'no backup file: {name}') from e
 
 
@@ -2374,8 +2411,8 @@ def _resolve_display_name(resolver, uri):
         finally:
             if cursor is not None:
                 cursor.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Не удалось получить имя файла: %s", exc)
     return None
 
 
@@ -2438,14 +2475,14 @@ def _read_picked_uri(uri) -> bytes:
             finally:
                 try:
                     stream.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Не удалось закрыть поток: %s", exc)
             if data:
                 return data
     except ValueError:
         raise
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Не удалось прочитать выбранный файл: %s", exc, exc_info=True)
     pfd = resolver.openFileDescriptor(uri, 'r')
     return _drain_pfd(pfd)
 
@@ -2477,8 +2514,8 @@ def _on_pick_result(code, result_code, intent):
             _file_pick['name'] = None
         try:
             _file_pick['name'] = _resolve_display_name(_android_resolver(), uri) or _file_pick['name']
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Не удалось получить имя выбранного файла: %s", exc)
         _file_pick['event'].set()
     except Exception as e:
         _file_pick['stage'] = 'result'
@@ -2510,15 +2547,15 @@ def _get_picker_activity():
         if act is not None:
             _activity_source_name = 'PythonActivity'
             return act
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Не удалось получить Activity: %s", exc)
     try:
         from android import mActivity as _mActivity  # noqa — Android only
         if _mActivity is not None:
             _activity_source_name = 'android.mActivity'
             return _mActivity
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Не удалось получить Activity: %s", exc)
     return None
 
 
@@ -2772,11 +2809,11 @@ def restore_request_access():
                 context.startActivity(intent)
                 opened = True
             except Exception as e:
-                print(f'[restore/request-access] {e}', file=sys.stderr)
+                logger.warning('[restore/request-access] %s', e)
 
         run_on_ui_thread(_ui)()
     except Exception as e:
-        print(f'[restore/request-access] {e}', file=sys.stderr)
+        logger.warning('[restore/request-access] %s', e)
     return jsonify({'ok': True, 'granted': _has_all_files_access(), 'opened': opened})
 
 
@@ -2897,8 +2934,8 @@ def _fetch_github_release():
                         _upd_cache = result
                         _upd_ts = _time_mod.monotonic()
                         return result
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Не удалось получить сведения о релизе: %s", exc, exc_info=True)
             # No fallback data available
             raise
         raise
@@ -3045,7 +3082,7 @@ def _backup_before_update() -> dict:
         path, _uri = _save_to_downloads_full(data, filename, 'application/x-sqlite3')
         return {'path': path, 'size': len(data)}
     except Exception as e:  # noqa: BLE001 — обновление важнее копии
-        print(f'[update] backup before install failed: {e}', flush=True)
+        logger.warning('[update] backup before install failed: %s', e)
         return {'error': str(e)}
 
 
@@ -3079,8 +3116,8 @@ def update_install():
                 uri = ContentUris.withAppendedId(collection, cursor.getLong(idx_id))
                 uri_str = uri.toString()
                 cursor.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Ошибка установки обновления: %s", exc, exc_info=True)
 
     if not uri_str:
         return jsonify({'error': 'no APK URI found'}), 404

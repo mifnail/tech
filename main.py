@@ -6,6 +6,9 @@ Android:  p4a webview bootstrap
 import sys
 import os
 from api import app
+from log_config import configure_logging, get_logger
+
+logger = get_logger('main')
 
 
 def _maybe_start_bot(debug: bool) -> None:
@@ -28,16 +31,16 @@ def _maybe_start_bot(debug: bool) -> None:
         finally:
             db.close()
     except Exception as e:
-        print('bot not started (db):', e)
+        logger.warning('Telegram-бот не запущен (нет настроек): %s', e)
         return
     if not token or enabled != '1':
         return
     try:
         import tgbot
         tgbot.start_polling(token)
-        print('telegram bot polling started')
+        logger.info('Telegram-бот запущен')
     except Exception as e:
-        print('bot not started:', e)
+        logger.warning('Telegram-бот не запущен: %s', e)
 
 
 def _maybe_start_maxbot(debug: bool) -> None:
@@ -55,7 +58,7 @@ def _maybe_start_maxbot(debug: bool) -> None:
         finally:
             db.close()
     except Exception as e:
-        print('maxbot not started (db):', e)
+        logger.warning('MAX-бот не запущен (нет настроек): %s', e)
         return
     if not token or enabled != '1':
         return
@@ -63,9 +66,9 @@ def _maybe_start_maxbot(debug: bool) -> None:
         import maxbot
         maxbot.start_polling(token)
         maxbot.start_reminders(token)
-        print('max bot polling started')
+        logger.info('MAX-бот запущен')
     except Exception as e:
-        print('maxbot not started:', e)
+        logger.warning('MAX-бот не запущен: %s', e)
 
 
 if __name__ == '__main__':
@@ -83,6 +86,12 @@ if __name__ == '__main__':
             time.sleep(1.5)
             webbrowser.open(f'http://127.0.0.1:{port}')
         threading.Thread(target=open_browser, daemon=True).start()
+
+    # Журнал — рядом с базой: на десктопе в папке проекта, на Android
+    # в PRIVATE storage приложения. Никуда наружу не отправляется.
+    from database import DB_PATH
+    configure_logging(DB_PATH)
+    logger.info('Запуск TeachHelper4 (prod=%s, port=%s)', prod, port)
 
     _maybe_start_bot(debug)
     _maybe_start_maxbot(debug)
