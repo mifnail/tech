@@ -1202,6 +1202,22 @@ class Store {
   /** Создание занятия с датой (прошлое + сегодня). Дубли разрешены.
       PROD: POST /api/lessons, сервер назначает ID (рекониляция).
       lessonNumber — явный номер пары (1–5); по умолчанию из расписания. */
+  /** Тап по строке шаблона расписания: открыть занятие этой даты.
+
+      Если занятия ещё нет — создаём его сразу и ведём в ведомость:
+      преподаватель хочет ставить оценки и отмечать посещаемость, а не
+      выбирать дату и номер пары в отдельном окне. Если занятие уже есть
+      (в т.ч. отменённое) — возвращаем его, чтобы тап не плодил дубли. */
+  async startPlanLesson(item: ScheduleItem, date: string): Promise<Lesson> {
+    const existing = this.db.lessons.find(
+      (l) => l.date === date
+        && l.groupId === item.groupId
+        && l.lessonNumber === item.lessonNumber,
+    );
+    if (existing) return existing;
+    return this.createLesson(item.groupId, item.subjectId, date, item.lessonNumber);
+  }
+
   async createLesson(groupId: ID, subjectId: ID, date: string, lessonNumber?: number): Promise<Lesson> {
     const fromSchedule = this.scheduleItemFor({ groupId, subjectId }, date);
     const lesson: Lesson = {

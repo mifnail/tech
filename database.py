@@ -675,13 +675,22 @@ class Database:
         return self.conn.execute(base + where + order).fetchall()
 
     def subject_gradebook(self, subject_id: int) -> tuple[list, list, dict]:
+        """Студенты, занятия и оценки по предмету.
+
+        Отменённые занятия (status='cancelled') в списке ОСТАЮТСЯ: приложение
+        должно знать, что слот закрыт и показывать «Отменено», а не
+        «Запланировано». Раньше они отфильтровывались, после перезагрузки
+        слот освобождался и плановая строка снова выглядела как
+        «непроведённое занятие». Оценок у отменённых нет — они удалены
+        при отмене, поэтому в grades они не попадают.
+        """
         group_id = self.conn.execute("SELECT group_id FROM subjects WHERE id = ?", (subject_id,)).fetchone()['group_id']
         students = [dict(r) for r in self.conn.execute("""
             SELECT id, last_name, first_name, middle_name FROM students WHERE group_id = ? ORDER BY last_name, first_name
         """, (group_id,)).fetchall()]
         lessons = [dict(r) for r in self.conn.execute("""
             SELECT l.id, l.date, l.lesson_number, l.status FROM lessons l
-            WHERE l.actual_subject_id = ? AND l.status NOT IN ('cancelled', 'replaced')
+            WHERE l.actual_subject_id = ? AND l.status != 'replaced'
             ORDER BY l.date, COALESCE(l.lesson_number, 999), l.id
         """, (subject_id,)).fetchall()]
         grades = {}

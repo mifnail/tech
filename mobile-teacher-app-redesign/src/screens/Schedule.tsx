@@ -12,6 +12,7 @@ import {
   addDaysISO, formatDotShort, formatLong, mondayOfWeek, todayISO, weekTypeOf, weekdayOf, weekdayShort,
 } from "../lib/date";
 import { navigate } from "../lib/router";
+import { readScheduleDate, saveScheduleDate } from "../lib/scheduleDate";
 import { BigHeader, Screen, PairNumber, StatusDot, groupInk, dayRows } from "../components/shell";
 import type { DayRow } from "../components/shell";
 import {
@@ -37,10 +38,17 @@ export default function ScheduleScreen() {
   const today = todayISO();
 
   const [addOpen, setAddOpen] = useState(false);
-  const [selectedISO, setSelectedISO] = useState(today);
+  // Выбранная дата сохраняется между заходами на экран: после возврата
+  // из ведомости (свайп назад) пользователь должен попасть на ту же дату.
+  const [selectedISO, setSelectedISOState] = useState(() => readScheduleDate() ?? today);
   const [newLessonOpen, setNewLessonOpen] = useState(false);
   const [weekOffset, setWeekOffset] = useState(0);
   const [exporting, setExporting] = useState(false);
+
+  const setSelectedISO = (value: string) => {
+    saveScheduleDate(value);
+    setSelectedISOState(value);
+  };
 
   // Выгрузка расписания в календарь: на Android — файл в Загрузки + шторка,
   // на десктопе share недоступен (400) — прямая ссылка на .ics.
@@ -219,8 +227,7 @@ export default function ScheduleScreen() {
     );
     if (existing) { navigate("/lesson/" + existing.id); return; }
     try {
-      const lesson = await store.createLesson(
-        it.groupId, it.subjectId, selectedISO, it.lessonNumber);
+      const lesson = await store.startPlanLesson(it, selectedISO);
       navigate("/lesson/" + lesson.id);
     } catch {
       toast("Не удалось открыть занятие");

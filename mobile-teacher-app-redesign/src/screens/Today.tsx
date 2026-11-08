@@ -8,10 +8,10 @@ import { isDebtor, avgOf, formatAvg } from "../lib/grades";
 import { navigate } from "../lib/router";
 import { BigHeader, PairNumber, Screen, StatusDot, groupInk, dayRows } from "../components/shell";
 import type { DayRow } from "../components/shell";
-import { Btn, Card, Chip, EmptyState, SectionTitle, Sheet } from "../components/ui";
+import { Btn, Card, Chip, EmptyState, SectionTitle, Sheet, useToast } from "../components/ui";
 import { NewLessonSheet } from "../components/NewLessonSheet";
 import { PendingLessonsCard } from "../components/PendingLessonsCard";
-import type { LessonStatus, Student } from "../lib/types";
+import type { LessonStatus, ScheduleItem, Student } from "../lib/types";
 
 /** Запись списка должников: студент + его средний балл (2–5). */
 interface DebtorRow {
@@ -32,8 +32,8 @@ function LessonCard({
   row, onStartPlan,
 }: {
   row: DayRow;
-  /** Тап по строке шаблона: открыть «Начать занятие» с уже выбранной парой. */
-  onStartPlan: (pair: { groupId: number; subjectId: number }) => void;
+  /** Тап по строке шаблона: открыть ведомость этой пары (без лишних окон). */
+  onStartPlan: (item: ScheduleItem) => void;
 }) {
   const src = row.kind === "lesson" ? row.lesson : row.item;
   const lesson = row.kind === "lesson" ? row.lesson : null;
@@ -51,7 +51,7 @@ function LessonCard({
       onClick={() =>
         lesson
           ? navigate("/lesson/" + lesson.id)
-          : onStartPlan({ groupId: src.groupId, subjectId: src.subjectId })
+          : onStartPlan(src as ScheduleItem)
       }
     >
       <PairNumber
@@ -85,11 +85,22 @@ function LessonCard({
 export default function TodayScreen() {
   const db = useDB();
   const ver = useVersion();
+  const toast = useToast();
   const today = todayISO();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [debtorsOpen, setDebtorsOpen] = useState(false);
-  /** Пара, выбранная тапом по строке шаблона (для листа «Начать занятие»). */
-  const [planPair, setPlanPair] = useState<{ groupId: number; subjectId: number } | null>(null);
+
+  /** Тап по строке шаблона: создаём занятие (если его нет) и сразу ведём
+      в ведомость. Лишнее окно выбора даты/номера пары не показываем:
+      в строке расписания уже есть и группа, и предмет, и номер пары. */
+  const startFromPlan = async (item: ScheduleItem) => {
+    try {
+      const lesson = await store.startPlanLesson(item, today);
+      navigate("/lesson/" + lesson.id);
+    } catch {
+      toast("Не удалось открыть занятие");
+    }
+  };
 
   // Занятия дня + слоты шаблона расписания, которых ещё нет в журнале.
   const rows = dayRows(db, today);
@@ -159,7 +170,6 @@ export default function TodayScreen() {
         icon={Play}
         className="w-full mb-1 tracking-[0.01em]"
         onClick={() => {
-          setPlanPair(null);
           setSheetOpen(true);
         }}
       >
@@ -183,9 +193,8 @@ export default function TodayScreen() {
         <LessonCard
           key={row.key}
           row={row}
-          onStartPlan={(pair) => {
-            setPlanPair(pair);
-            setSheetOpen(true);
+          onStartPlan={(item) => {
+            void startFromPlan(item);
           }}
         />
       ))}
@@ -293,7 +302,6 @@ export default function TodayScreen() {
       <NewLessonSheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
-        initialPair={planPair ?? undefined}
         onCreated={(lesson) => navigate("/lesson/" + lesson.id)}
       />
     </Screen>

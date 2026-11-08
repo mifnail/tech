@@ -15,15 +15,13 @@ import { AvatarTile } from "./shell";
 const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
 export function NewLessonSheet({
-  open, onClose, onCreated, date, initialPair,
+  open, onClose, onCreated, date,
 }: {
   open: boolean;
   onClose: () => void;
   onCreated: (lesson: Lesson) => void;
   /** Начальная дата для открытия (по умолчанию — сегодня). */
   date?: string;
-  /** Сразу выбрать пару «группа+предмет» (строка шаблона расписания). */
-  initialPair?: { groupId: ID; subjectId: ID };
 }) {
   const today = todayISO();
   const toast = useToast();
@@ -32,14 +30,14 @@ export function NewLessonSheet({
   const [selDate, setSelDate] = useState(today);
   const [fNum, setFNum] = useState(0); // 0 = авто (из расписания)
 
-  // При каждом открытии — дата из пропа (по умолчанию сегодня) и выбранная пара.
+  // При каждом открытии — дата из пропа (по умолчанию сегодня).
   useEffect(() => {
     if (open) {
       const d = date ?? todayISO();
       const clamped = d > today ? today : d;
       setSelDate(clamped);
       setMonth(clamped.slice(0, 7));
-      setPair(initialPair ?? null);
+      setPair(null);
       setFNum(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
