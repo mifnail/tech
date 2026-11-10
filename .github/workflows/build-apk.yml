@@ -49,7 +49,10 @@ jobs:
   build-apk:
     name: Build debug APK
     needs: tests
-    runs-on: ubuntu-latest
+    # ubuntu-latest переехал на 26.04 с JDK 25 по умолчанию: Gradle 8.14.3
+    # из python-for-android не читает class-файлы Java 25 (major version 69).
+    # Держим 24.04 — среду последней зелёной сборки (v0.311, 8 ноября).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -68,11 +71,36 @@ jobs:
             libncurses5-dev ccache git unzip curl \
             openjdk-17-jdk
 
-      - name: Set JAVA_HOME to Java 17
+      # Явный выбор JDK 17. Раньше здесь стояло `readlink -f $(which java)`,
+      # которое возвращало дефолтную JDK раннера (25), а не установленную 17.
+      # JAVA_HOME + PATH указывают на 17 и для buildozer, и для gradlew,
+      # и для keytool; шаг падает сразу, если JDK 17 не нашлась.
+      - name: Select JDK 17
         run: |
-          JAVA_17_PATH=$(dirname $(dirname $(readlink -f $(which java))))
-          echo "JAVA_HOME=$JAVA_17_PATH" >> $GITHUB_ENV
-          echo "Java version: $(java -version 2>&1 | head -1)"
+          set -eu
+          JAVA_17_HOME="${JAVA_HOME_17_X64:-}"
+          if [ -z "$JAVA_17_HOME" ] || [ ! -x "$JAVA_17_HOME/bin/javac" ]; then
+            JAVA_17_HOME=""
+            for d in /usr/lib/jvm/java-17-openjdk-*; do
+              if [ -x "$d/bin/javac" ]; then JAVA_17_HOME="$d"; break; fi
+            done
+          fi
+          if [ -z "$JAVA_17_HOME" ]; then
+            echo "::error::JDK 17 not found (checked \$JAVA_HOME_17_X64 and /usr/lib/jvm/java-17-openjdk-*)"
+            ls -la /usr/lib/jvm || true
+            exit 1
+          fi
+          echo "JAVA_HOME=$JAVA_17_HOME" >> "$GITHUB_ENV"
+          echo "$JAVA_17_HOME/bin" >> "$GITHUB_PATH"
+          echo "Selected JAVA_HOME=$JAVA_17_HOME"
+          "$JAVA_17_HOME/bin/java" -version
+
+      - name: Verify Java 17 is active
+        run: |
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version 2>&1 | grep -q 'version "17' \
+            || { echo "::error::Java 17 is not the active JDK"; exit 1; }
 
       - name: Cache Buildozer
         uses: actions/cache@v6
@@ -127,9 +155,6 @@ jobs:
             code=$?
             if [ "$attempt" -lt 5 ]; then wait_time=$((30 * attempt)); echo "Build failed, retrying in ${wait_time}s..."; sleep $wait_time; else exit $code; fi
           done
-        env:
-          JAVA_HOME: ${{ env.JAVA_HOME }}
-          GRADLE_OPTS: "-Dorg.gradle.java.home=${{ env.JAVA_HOME }}"
 
       - name: Sign release APK (stable key)
         run: |
