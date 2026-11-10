@@ -106,11 +106,15 @@ jobs:
           sudo mkswap /swapfile 2>/dev/null || true
           sudo swapon /swapfile 2>/dev/null || true
           free -h
+          # Use faster pip index and longer timeout
+          pip config set global.index-url https://pypi.org/simple
+          pip config set global.timeout 120
+          pip config set global.retries 5
           # Retry pip install up to 5 times with longer timeout
           for i in 1 2 3 4 5; do
-            pip install --user --timeout=120 --retries=3 --no-cache-dir buildozer==1.6.0 cython && break
+            pip install --user buildozer==1.6.0 cython && break
             echo "pip install failed, retry $i/5..."
-            sleep 15
+            sleep 20
           done
           export PATH="$HOME/.local/bin:$PATH"
           echo "--- Tool versions ---"
