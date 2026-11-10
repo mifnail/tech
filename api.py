@@ -569,19 +569,34 @@ def _cancel_lesson_with_notify(db, lesson_id: int) -> None:
     Оба пути должны вести себя одинаково: удаление оценок (в set_lesson_status)
     и уведомление группы — иначе PATCH /status {cancelled} молча расходился
     бы с PATCH /cancel.
+
+    Уведомление отправляется только для занятий с датой >= сегодня.
+    Для прошлых занятий (date < today) уведомление пропускается.
     """
-    ddmm, subject_name, group_id = _lesson_notify_context(db, lesson_id)
-    msg_text = f"Отменено занятие: {subject_name} {ddmm}".strip() if subject_name else f"Отменено занятие: {ddmm}".strip()
-    if not ddmm:
-        msg_text = f"Отменено занятие: {subject_name}".strip()
+    # Получаем урок до отмены, чтобы узнать дату
+    lesson = db.get_lesson(lesson_id)
+    if not lesson:
+        return
+
+    lesson_date_str = row_get(lesson, 'date', '')
+    today = date.today().isoformat()
+
+    # Отмена в БД выполняется всегда
     db.cancel_lesson(lesson_id)
-    try:
-        token = db.get_setting('max_bot_token')
-        enabled = db.get_setting('max_bot_enabled')
-        if _is_bot_active(db, 'max_bot_token', 'max_bot_enabled'):
-            _notify_group_chats(db, group_id, token, enabled, msg_text)
-    except Exception as exc:
-        logger.warning("Уведомление об отмене не отправлено: %s", exc, exc_info=True)
+
+    # Уведомление только для даты >= сегодня
+    if lesson_date_str and lesson_date_str >= today:
+        ddmm, subject_name, group_id = _lesson_notify_context(db, lesson_id)
+        msg_text = f"Отменено занятие: {subject_name} {ddmm}".strip() if subject_name else f"Отменено занятие: {ddmm}".strip()
+        if not ddmm:
+            msg_text = f"Отменено занятие: {subject_name}".strip()
+        try:
+            token = db.get_setting('max_bot_token')
+            enabled = db.get_setting('max_bot_enabled')
+            if _is_bot_active(db, 'max_bot_token', 'max_bot_enabled'):
+                _notify_group_chats(db, group_id, token, enabled, msg_text)
+        except Exception as exc:
+            logger.warning("Уведомление об отмене не отправлено: %s", exc, exc_info=True)
 
 
 @lessons_bp.route('/<int:lesson_id>/cancel', methods=['PATCH'])
