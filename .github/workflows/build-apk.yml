@@ -106,7 +106,12 @@ jobs:
           sudo mkswap /swapfile 2>/dev/null || true
           sudo swapon /swapfile 2>/dev/null || true
           free -h
-          pip install --user buildozer==1.6.0 cython
+          # Retry pip install up to 3 times
+          for i in 1 2 3; do
+            pip install --user buildozer==1.6.0 cython && break
+            echo "pip install failed, retry $i/3..."
+            sleep 10
+          done
           export PATH="$HOME/.local/bin:$PATH"
           echo "--- Tool versions ---"
           java -version 2>&1 || true
